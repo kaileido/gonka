@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"common/storage/payloads"
@@ -14,22 +15,29 @@ import (
 )
 
 type memoryPayloads struct {
+	mu    sync.Mutex
 	rows  map[uint64][2][]byte
 	reads []uint64
 	err   error
 }
 
+// Store keeps the first payload per epoch and reports a conflict, as Postgres does.
 func (m *memoryPayloads) Store(_ context.Context, _ string, _, epochID uint64, prompt, response []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.rows == nil {
 		m.rows = map[uint64][2][]byte{}
 	}
-	if _, exists := m.rows[epochID]; !exists {
-		m.rows[epochID] = [2][]byte{prompt, response}
+	if _, exists := m.rows[epochID]; exists {
+		return payloads.ErrAlreadyStored
 	}
+	m.rows[epochID] = [2][]byte{prompt, response}
 	return nil
 }
 
 func (m *memoryPayloads) Retrieve(_ context.Context, _ string, _, epochID uint64) ([]byte, []byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.reads = append(m.reads, epochID)
 	if m.err != nil {
 		return nil, nil, m.err
@@ -105,6 +113,9 @@ func TestRecoveryRebuildsTheResultTheFirstExecutionCommitted(t *testing.T) {
 	}
 	if string(result.ResponseHash) != string(original.ResponseHash) {
 		t.Fatal("the recovered hash differs from the one the first execution committed")
+	}
+	if len(result.ServedHash) != sha256.Size || string(result.ServedHash) != string(original.ServedHash) {
+		t.Fatalf("recovered served hash %x, first execution %x: checkFinishLocked needs both hashes", result.ServedHash, original.ServedHash)
 	}
 	if result.InputTokens != original.InputTokens || result.OutputTokens != original.OutputTokens {
 		t.Fatalf("recovered usage %d/%d, first execution %d/%d", result.InputTokens, result.OutputTokens, original.InputTokens, original.OutputTokens)
