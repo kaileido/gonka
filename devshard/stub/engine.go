@@ -7,12 +7,15 @@ import (
 	"fmt"
 	"net/http"
 
+	"common/completionapi"
+
 	"devshard"
 )
 
 // InferenceEngine returns fixed values for testing.
 type InferenceEngine struct {
 	ResponseHash          []byte
+	ServedHash            []byte
 	InputTokens           uint64
 	OutputTokens          uint64
 	ResponseBody          []byte
@@ -36,6 +39,7 @@ func NewInferenceEngine() *InferenceEngine {
 	h := sha256.Sum256(body)
 	return &InferenceEngine{
 		ResponseHash: h[:],
+		ServedHash:   mustHashServedView(body),
 		InputTokens:  80,
 		OutputTokens: 40,
 		ResponseBody: body,
@@ -47,12 +51,17 @@ func (e *InferenceEngine) Execute(ctx context.Context, req devshard.ExecuteReque
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
+	// The stub stores nothing, so there is never a response to recover.
+	if req.Recovery == devshard.RecoveryStoredOnly {
+		return nil, devshard.ErrNoStoredResponse
+	}
 
-	body, responseHash := e.ResponseBody, e.ResponseHash
+	body, responseHash, servedHash := e.ResponseBody, e.ResponseHash, e.ServedHash
 	if e.EchoRequest {
 		body = echoedRequestBody(req.Prompt)
 		sum := sha256.Sum256(body)
 		responseHash = sum[:]
+		servedHash = mustHashServedView(body)
 	}
 
 	if req.ResponseWriter != nil {
@@ -67,10 +76,28 @@ func (e *InferenceEngine) Execute(ctx context.Context, req devshard.ExecuteReque
 
 	return &devshard.ExecuteResult{
 		ResponseHash: responseHash,
+		ServedHash:   servedHash,
 		InputTokens:  e.InputTokens,
 		OutputTokens: e.OutputTokens,
 		ResponseBody: body,
 	}, nil
+}
+
+func HashServedView(body []byte) ([]byte, error) {
+	served, err := completionapi.StripForGateway(body)
+	if err != nil {
+		return nil, fmt.Errorf("strip the stub body for the gateway: %w", err)
+	}
+	sum := sha256.Sum256(served)
+	return sum[:], nil
+}
+
+func mustHashServedView(body []byte) []byte {
+	sum, err := HashServedView(body)
+	if err != nil {
+		panic(err)
+	}
+	return sum
 }
 
 // ConfigurableEngine allows per-inference overrides for testing with

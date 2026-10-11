@@ -53,7 +53,7 @@ func TestHandleTimeoutClassifiesVoteFailuresWithoutExposingWeights(t *testing.T)
 
 	t.Run("insufficient votes", func(t *testing.T) {
 		env := setupTestProxy(t, 3, nil, false)
-		prepared, err := env.session.PrepareInference(defaultParams())
+		prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 		require.NoError(t, err)
 		result, err := env.session.HandleTimeout(
 			context.Background(),
@@ -72,7 +72,7 @@ func TestHandleTimeoutClassifiesVoteFailuresWithoutExposingWeights(t *testing.T)
 			timeoutErrorClient{},
 		}
 		env := setupTestProxyWithClients(t, clients)
-		prepared, err := env.session.PrepareInference(defaultParams())
+		prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 		require.NoError(t, err)
 		result, err := env.session.HandleTimeout(
 			context.Background(),
@@ -86,7 +86,7 @@ func TestHandleTimeoutClassifiesVoteFailuresWithoutExposingWeights(t *testing.T)
 
 	t.Run("canceled wait", func(t *testing.T) {
 		env := setupTestProxy(t, 3, nil, false)
-		prepared, err := env.session.PrepareInference(defaultParams())
+		prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 		require.NoError(t, err)
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
@@ -152,7 +152,7 @@ func TestAccountingObserverTracksCommittedSessionDiffs(t *testing.T) {
 	require.NoError(t, err)
 	recorder.RealSend("escrow-proxy", 1, time.Now(), "")
 	recorder.Usage("escrow-proxy", 1, 1, "")
-	_, err = env.session.PrepareInference(defaultParams())
+	_, err = env.session.PrepareInference(context.Background(), defaultParams())
 	require.NoError(t, err)
 
 	var finished uint64
@@ -181,8 +181,7 @@ func TestAccountingObserverSyncsActiveProtocolMisses(t *testing.T) {
 	// agree with the send: a record stamped now is one no verifier would accept a refusal for yet.
 	sentAt := time.Now().Add(-2 * time.Second)
 	params := defaultParams()
-	params.StartedAt = sentAt.Unix()
-	prepared, err := env.session.PrepareInference(params)
+	prepared, err := env.session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	recorder.RealSend("escrow-proxy", prepared.Nonce(), sentAt, "")
 
@@ -223,7 +222,7 @@ func TestAccountingProductionPendingClassification(t *testing.T) {
 		TimeoutBuffer: user.TimeoutBuffer,
 	}, env.session, env.sm)
 
-	prepared, err := env.session.PrepareInference(defaultParams())
+	prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 	require.NoError(t, err)
 	record := accountingRecordForParticipant(t, tracker, 23, env.group[prepared.HostIdx()].ValidatorAddress)
 	require.Equal(t, uint64(1), record.PendingClassification)
@@ -255,6 +254,7 @@ func TestAccountingProductionGhostFact(t *testing.T) {
 
 	prepared := prepareForGhost(t, env.session, "llama")
 	env.proxy.redundancy.runGhostProbe(
+		context.Background(),
 		prepared,
 		ghostThrottled,
 		ghostThrottled.reason(),
@@ -294,6 +294,7 @@ func TestAccountingStateDivergenceRemainsUnknownPolicy(t *testing.T) {
 
 	prepared := prepareForGhost(t, env.session, "llama")
 	env.proxy.redundancy.runGhostProbe(
+		context.Background(),
 		prepared,
 		ghostStateDiverged,
 		"escrow_state_root_diverged",
@@ -323,7 +324,7 @@ func TestAccountingCarriesTheRequestIDFromTheDispatchContext(t *testing.T) {
 	env.proxy.redundancy.accounting = recorder
 
 	params := defaultParams()
-	prepared, err := env.session.PrepareInference(params)
+	prepared, err := env.session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	attempt := &inflight{
 		escrowID: "escrow-proxy",
@@ -358,7 +359,7 @@ func TestAccountingProductionUsedAndUnusedAttempts(t *testing.T) {
 	env.proxy.redundancy.accounting = recorder
 	params := defaultParams()
 
-	prepared1, err := env.session.PrepareInference(params)
+	prepared1, err := env.session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	attempt1 := &inflight{
 		escrowID: "escrow-proxy",
@@ -371,7 +372,7 @@ func TestAccountingProductionUsedAndUnusedAttempts(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, env.session.ProcessResponse(prepared1.HostIdx(), response1, prepared1.Nonce()))
 
-	prepared2, err := env.session.PrepareInference(params)
+	prepared2, err := env.session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	attempt2 := &inflight{
 		escrowID: "escrow-proxy",
@@ -383,7 +384,7 @@ func TestAccountingProductionUsedAndUnusedAttempts(t *testing.T) {
 	response2, err := env.session.SendOnly(context.Background(), prepared2, nil, nil)
 	require.NoError(t, err)
 	require.NoError(t, env.session.ProcessResponse(prepared2.HostIdx(), response2, prepared2.Nonce()))
-	_, err = env.session.PrepareInference(params)
+	_, err = env.session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 
 	env.proxy.redundancy.recordGatewayAttemptTerminal(attempt1, params, prepared1.Nonce(), true, nil)
@@ -464,7 +465,7 @@ func TestAccountingObserverSyncsActiveInvalidation(t *testing.T) {
 	apply(2, &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: confirm}})
 	finish := &types.MsgFinishInference{
 		InferenceId:  1,
-		ResponseHash: []byte("response"),
+		ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens:  80,
 		OutputTokens: 40,
 		ExecutorSlot: executorSlot,

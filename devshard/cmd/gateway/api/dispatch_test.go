@@ -73,8 +73,8 @@ func newLiveSession(t *testing.T, hostClients ...user.HostClient) (*user.Session
 // prepareNonce commits one real nonce through the session, for use as a genuine prepared inference.
 func prepareNonce(t *testing.T, session *user.Session) *user.PreparedInference {
 	t.Helper()
-	prepared, err := session.PrepareInferenceFn(func(user.HostBinding) (user.InferenceParams, bool, error) {
-		return liveParams(), false, nil
+	prepared, err := session.PrepareInferenceFn(func(user.HostBinding) (user.InferenceParams, bool, context.Context, error) {
+		return liveParams(), false, nil, nil
 	})
 	if err != nil {
 		t.Fatalf("PrepareInferenceFn = %v, want nil", err)

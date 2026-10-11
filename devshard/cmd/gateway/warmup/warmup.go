@@ -178,8 +178,8 @@ func dispatchProbe(ctx context.Context, session registry.EscrowSession, params u
 	sendCtx, cancelSend := context.WithTimeout(ctx, probeTimeout)
 	defer cancelSend()
 
-	prepared, err := session.PrepareInferenceFn(func(user.HostBinding) (user.InferenceParams, bool, error) {
-		return params, false, nil
+	prepared, err := session.PrepareInferenceFn(func(user.HostBinding) (user.InferenceParams, bool, context.Context, error) {
+		return params, false, nil, nil
 	})
 	if err != nil || prepared == nil {
 		return 0, false, err

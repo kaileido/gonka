@@ -187,7 +187,7 @@ func (s nonceStream) TokenPrice() uint64         { return s.session.TokenPrice()
 func (s nonceStream) FeePerNonce() uint64        { return s.session.FeePerNonce() }
 
 func (s nonceStream) Advance(decide func(scheduler.HostBinding) scheduler.NonceIntent) (scheduler.Prepared, error) {
-	prepared, err := s.session.PrepareInferenceFn(func(binding user.HostBinding) (user.InferenceParams, bool, error) {
+	prepared, err := s.session.PrepareInferenceFn(func(binding user.HostBinding) (user.InferenceParams, bool, context.Context, error) {
 		intent := decide(scheduler.HostBinding{
 			Nonce:       binding.Nonce,
 			HostIdx:     binding.HostIdx,
@@ -195,15 +195,15 @@ func (s nonceStream) Advance(decide func(scheduler.HostBinding) scheduler.NonceI
 		})
 		switch {
 		case !intent.Commit:
-			return user.InferenceParams{}, false, errNonceDeclined
+			return user.InferenceParams{}, false, nil, errNonceDeclined
 		case intent.Ghost:
-			return s.ghostParams(), false, nil
+			return s.ghostParams(), false, nil, nil
 		}
 		params, isInference := intent.Params.(user.InferenceParams)
 		if !isInference {
-			return user.InferenceParams{}, false, fmt.Errorf("dispatch params are %T, want user.InferenceParams", intent.Params)
+			return user.InferenceParams{}, false, nil, fmt.Errorf("dispatch params are %T, want user.InferenceParams", intent.Params)
 		}
-		return params, false, nil
+		return params, false, nil, nil
 	})
 	switch {
 	case errors.Is(err, errNonceDeclined):

@@ -41,6 +41,16 @@ func validateDiffRange(records []types.DiffRecord, from, to uint64) error {
 	return nil
 }
 
+// unrecoverableRange turns a paged-read hole into the deactivate-and-skip
+// sentinel. Other errors (store failures, apply failures) pass through.
+func unrecoverableRange(scope string, from, to uint64, err error) error {
+	var gap *storage.DiffGapError
+	if errors.As(err, &gap) {
+		return fmt.Errorf("%s %d..%d: %w: %s", scope, from, to, ErrLocalStateUnrecoverable, gap.Error())
+	}
+	return err
+}
+
 // snapshotInterval controls how often a state snapshot is saved -- both
 // during diff replay at recovery time AND during runtime via
 // Session.maybeSaveSnapshotLocked. After replay finishes, a final
@@ -62,12 +72,9 @@ const snapshotInterval = 500
 // the snapshot at restart time then reject with "invalid nonce: must be
 // sequential: expected M, got N" because we never re-send the gap diffs.
 //
-// Backward compatibility: older snapshots stored a bare types.EscrowState
-// JSON. On load, if the wrapper unmarshal yields State == nil, we retry
-// as a bare EscrowState and treat HostSyncNonce as unknown. Every host then
-// starts at cursor 0 and is caught up from the store, so a host stranded
-// behind the prior snapshot self-heals via host-side silent-skip
-// (host.applyAndPersist drops diffs whose Nonce <= currentNonce).
+// A blob with no state is not restored; recovery replays from nonce 1. A host
+// the cursor does not name has never answered, so it is at 0 and its prefix
+// is backfilled from the store.
 type sessionSnapshot struct {
 	State            *types.EscrowState     `json:"state"`
 	HostSyncNonce    map[int]uint64         `json:"host_sync_nonce,omitempty"`
@@ -76,24 +83,33 @@ type sessionSnapshot struct {
 	HeightSyncFloor  *types.FloorIndexProto `json:"height_sync_floor,omitempty"`
 }
 
-// decodeSnapshot decodes the on-disk snapshot blob. Returns the state and
-// the per-host sync cursor (nil for legacy bare-EscrowState snapshots).
+// decodeSnapshot decodes a wrapped session snapshot. A bare EscrowState, or a
+// wrapper whose state is missing, is rejected.
 func decodeSnapshot(data []byte) (*types.EscrowState, map[int]uint64, map[uint64][]byte, map[uint64]uint64, *types.FloorIndexProto, error) {
 	var blob sessionSnapshot
-	if err := json.Unmarshal(data, &blob); err == nil && blob.State != nil {
-		return blob.State, blob.HostSyncNonce, blob.CommittedEntries, blob.SealedNonces, blob.HeightSyncFloor, nil
-	}
-	// Legacy format: top-level EscrowState fields. Re-unmarshal as bare.
-	var bare types.EscrowState
-	if err := json.Unmarshal(data, &bare); err != nil {
+	if err := json.Unmarshal(data, &blob); err != nil {
 		return nil, nil, nil, nil, nil, err
 	}
-	return &bare, nil, nil, nil, nil, nil
+	if blob.State == nil {
+		return nil, nil, nil, nil, nil, errors.New("snapshot state missing")
+	}
+	return blob.State, blob.HostSyncNonce, blob.CommittedEntries, blob.SealedNonces, blob.HeightSyncFloor, nil
 }
 
-// minHostSyncNonce returns the smallest cursor value across all hosts
-// in the group. Any host not present in the cursor map is treated as
-// "unknown" -> 0, which forces full diff backfill on recovery.
+// restoredHostCursor names every host in the group. A host the snapshot does
+// not name is at 0. A value past snapNonce can only be a host's unverified
+// claim, so it is clamped: no host can hold a nonce the journal does not.
+func restoredHostCursor(cursor map[int]uint64, groupSize int, snapNonce uint64) map[int]uint64 {
+	out := make(map[int]uint64, groupSize)
+	for h := 0; h < groupSize; h++ {
+		out[h] = min(cursor[h], snapNonce)
+	}
+	return out
+}
+
+// minHostSyncNonce returns the smallest cursor value across the group. A
+// missing host counts as 0. A host at 0 pulls the minimum to 0, and recovery
+// backfills that host from nonce 1.
 func minHostSyncNonce(cursor map[int]uint64, groupSize int) uint64 {
 	if len(cursor) == 0 || groupSize == 0 {
 		return 0
@@ -170,15 +186,11 @@ func RecoverSession(
 	}
 
 	if meta.LatestNonce == 0 {
-		return finishRecover(sess, sm)
+		return finishRecover(sess, sm, 1)
 	}
 
 	// Try to restore from a snapshot to skip replaying old diffs.
-	// snapshotCursor==nil indicates either no snapshot or a legacy
-	// bare-EscrowState snapshot; either case forces full diff backfill
-	// below so any stranded host can self-heal.
 	var snapshotCursor map[int]uint64
-	legacySnapshot := false
 	snapshotRestored := false
 	replayFrom := uint64(1)
 	snapNonce, snapData, snapErr := store.LoadSnapshot(escrowID)
@@ -199,15 +211,43 @@ func RecoverSession(
 			if restErr := sm.RestoreStateWithFloor(snapState, floor); restErr != nil {
 				return nil, nil, fmt.Errorf("restore snapshot nonce %d: %w", snapNonce, restErr)
 			}
-			sm.RestoreCommittedEntries(committedEntries)
-			sm.RestoreSealedNonces(sealedNonces)
-			replayFrom = snapNonce + 1
-			sess.nonce = snapNonce
-			snapshotCursor = cursor
-			legacySnapshot = cursor == nil
-			snapshotRestored = true
-			log.Printf("recover_session escrow=%s snapshot_restored nonce=%d replay_from=%d total=%d skipped=%d host_cursors=%d legacy=%t",
-				escrowID, snapNonce, replayFrom, meta.LatestNonce, snapNonce, len(cursor), legacySnapshot)
+			// A rejected blob has already advanced the machine, so replay from 1
+			// needs a fresh one. The snapshot root is not compared to the diff
+			// hash: a seal can fold into that nonce after the diff was stored,
+			// and replaying the diffs would drop it.
+			recreate := func() error {
+				fresh, ferr := state.NewStateMachine(
+					escrowID, meta.Config, meta.Group, meta.InitialBalance,
+					meta.CreatorAddr, verifier, store,
+					stateOpts...,
+				)
+				if ferr != nil {
+					return fmt.Errorf("recreate state machine: %w", ferr)
+				}
+				freshSess, ferr := NewSession(fresh, signer, escrowID, meta.Group, clients, verifier,
+					WithStorage(store), WithHeartbeatConfig(fresh.HeartbeatConfig()))
+				if ferr != nil {
+					return fmt.Errorf("recreate session: %w", ferr)
+				}
+				sm = fresh
+				sess = freshSess
+				return nil
+			}
+			if commitErr := sm.RestoreCommittedEntries(committedEntries); commitErr != nil {
+				log.Printf("recover_session escrow=%s snapshot_nonce=%d committed_entries_rejected=%v (replaying from 1)",
+					escrowID, snapNonce, commitErr)
+				if recErr := recreate(); recErr != nil {
+					return nil, nil, recErr
+				}
+			} else {
+				sm.RestoreSealedNonces(sealedNonces)
+				replayFrom = snapNonce + 1
+				sess.nonce = snapNonce
+				snapshotCursor = restoredHostCursor(cursor, len(group), snapNonce)
+				snapshotRestored = true
+				log.Printf("recover_session escrow=%s snapshot_restored nonce=%d replay_from=%d total=%d skipped=%d host_cursors=%d",
+					escrowID, snapNonce, replayFrom, meta.LatestNonce, snapNonce, len(cursor))
+			}
 		}
 	} else if snapErr != nil && !errors.Is(snapErr, storage.ErrSnapshotNotFound) {
 		log.Printf("recover_session escrow=%s snapshot_load_error=%v (replaying from 1)", escrowID, snapErr)
@@ -218,41 +258,44 @@ func RecoverSession(
 		sess.hostSyncNonce[h] = n
 	}
 
-	// Backfill the in-memory window of pre-snapshot diffs a lagging host
-	// needs; closeStoredGap reads anything older from the store by pages.
-	// Gated on snapshotRestored, not snapNonce: an ignored snapshot (future
-	// nonce, decode failure) replays from 1, which already covers the range.
+	// Backfill sess.diffs with pre-snapshot diffs that some host may still
+	// need. sess.diffs must contain a contiguous range covering every
+	// host's expected next-nonce, otherwise diffsForHost produces a
+	// non-contiguous slice and the host rejects (it requires sequential
+	// nonces, only silent-skipping diffs <= its currentNonce).
+	//
+	// A cursor whose slowest host is behind snapNonce backfills that suffix
+	// into sess.diffs. A host at 0, named or not, is included; the read is
+	// paged and sess.diffs stays capped. An ignored snapshot (future nonce,
+	// decode failure) replays from 1, which already covers the range, so
+	// this block does not run.
 	if snapshotRestored {
 		backfillFrom := minHostSyncNonce(sess.hostSyncNonce, len(group)) + 1
-		if snapNonce >= uint64(sess.diffsKeptInMemory) {
-			backfillFrom = max(backfillFrom, snapNonce-uint64(sess.diffsKeptInMemory)+1)
-		}
 		if backfillFrom <= snapNonce {
-			backfillErr := forEachDiffPage(store, escrowID, backfillFrom, snapNonce, func(pageFrom, pageTo uint64, records []types.DiffRecord) error {
-				if err := validateDiffRange(records, pageFrom, pageTo); err != nil {
-					return err
+			var backfilled int
+			berr := storage.ReadDiffPages(store, escrowID, backfillFrom, snapNonce, func(page []types.DiffRecord) error {
+				for _, rec := range page {
+					sess.diffs = append(sess.diffs, rec.Diff)
+					for slotID, sig := range rec.Signatures {
+						sess.recordSignatureLocked(rec.Nonce, slotID, sig)
+					}
 				}
-				for _, record := range records {
-					sess.diffs = append(sess.diffs, record.Diff)
-					restoreRecordSignatures(sess, record)
-				}
+				sess.dropDiffPrefixLocked()
+				backfilled += len(page)
 				return nil
 			})
-			if backfillErr != nil {
-				return nil, nil, fmt.Errorf("backfill diffs %d..%d: %w", backfillFrom, snapNonce, backfillErr)
+			if berr != nil {
+				if uerr := unrecoverableRange("backfill diffs", backfillFrom, snapNonce, berr); uerr != berr {
+					return nil, nil, uerr
+				}
+				return nil, nil, fmt.Errorf("get backfill diffs %d..%d: %w", backfillFrom, snapNonce, berr)
 			}
 			log.Printf("recover_session escrow=%s diff_backfill from=%d to=%d count=%d",
-				escrowID, backfillFrom, snapNonce, len(sess.diffs))
+				escrowID, backfillFrom, snapNonce, backfilled)
 		}
 	}
 
 	if replayFrom > meta.LatestNonce {
-		// No post-snapshot diffs to replay. Save a fresh snapshot if the
-		// existing one is legacy (or missing) so it gets upgraded to the
-		// new format with the (possibly-empty) cursor for next time.
-		if legacySnapshot || snapshotCursor == nil {
-			saveSnapshot(store, sm, escrowID, meta.LatestNonce, sess.hostSyncNonce)
-		}
 		// Snapshot-only path never runs the replay loop that restores
 		// signatures from DiffRecords. Reload the final-nonce signatures
 		// from the store so settlement can proceed without host round-trips
@@ -260,17 +303,14 @@ func RecoverSession(
 		if err := restoreSignaturesFromStore(sess, store, escrowID, meta.LatestNonce); err != nil {
 			return nil, nil, err
 		}
-		return finishRecover(sess, sm)
+		return finishRecover(sess, sm, replayFrom)
 	}
 
-	replayCount := meta.LatestNonce - replayFrom + 1
-	log.Printf("recover_session escrow=%s replaying diffs %d..%d (%d records)", escrowID, replayFrom, meta.LatestNonce, replayCount)
+	log.Printf("recover_session escrow=%s replaying diffs %d..%d", escrowID, replayFrom, meta.LatestNonce)
 
-	replayErr := forEachDiffPage(store, escrowID, replayFrom, meta.LatestNonce, func(pageFrom, pageTo uint64, records []types.DiffRecord) error {
-		if err := validateDiffRange(records, pageFrom, pageTo); err != nil {
-			return fmt.Errorf("replay diffs %d..%d: %w", replayFrom, meta.LatestNonce, err)
-		}
-		for _, rec := range records {
+	var replayed int
+	err = storage.ReadDiffPages(store, escrowID, replayFrom, meta.LatestNonce, func(page []types.DiffRecord) error {
+		for _, rec := range page {
 			sm.InjectWarmKeys(rec.WarmKeyDelta)
 			root, applyErr := sm.ApplyLocalPersisted(rec.Nonce, rec.Txs)
 			if applyErr != nil {
@@ -288,26 +328,29 @@ func RecoverSession(
 			}
 
 			sess.diffs = append(sess.diffs, rec.Diff)
-			sess.trimDiffsLocked()
 			sess.nonce = rec.Nonce
-			restoreRecordSignatures(sess, rec)
+
+			for slotID, sig := range rec.Signatures {
+				sess.recordSignatureLocked(rec.Nonce, slotID, sig)
+			}
 		}
+		sess.dropDiffPrefixLocked()
+		replayed += len(page)
 		return nil
 	})
-	if replayErr != nil {
-		return nil, nil, replayErr
+	if err != nil {
+		if uerr := unrecoverableRange("replay diffs", replayFrom, meta.LatestNonce, err); uerr != err {
+			return nil, nil, uerr
+		}
+		return nil, nil, err
 	}
 
 	// Save a snapshot at the latest nonce so subsequent restarts are fast.
-	// We always save when we encountered a legacy snapshot so it gets
-	// upgraded to the new wrapper format on the very first restart with
-	// this code, removing the "bare EscrowState" footgun without manual
-	// snapshot deletion on the server.
-	if replayFrom == 1 || replayCount >= snapshotInterval || legacySnapshot {
+	if replayFrom == 1 || uint64(replayed) >= snapshotInterval {
 		saveSnapshot(store, sm, escrowID, meta.LatestNonce, sess.hostSyncNonce)
 	}
 
-	return finishRecover(sess, sm)
+	return finishRecover(sess, sm, replayFrom)
 }
 
 // restoreSignaturesFromStore loads persisted signatures for nonce into the
@@ -333,81 +376,102 @@ func restoreSignaturesFromStore(sess *Session, store storage.Storage, escrowID s
 	return nil
 }
 
-func finishRecover(sess *Session, sm *state.StateMachine) (*Session, *state.StateMachine, error) {
+func finishRecover(sess *Session, sm *state.StateMachine, replayFrom uint64) (*Session, *state.StateMachine, error) {
 	if err := sm.RebuildSealedInferenceIndex(); err != nil {
 		return nil, nil, fmt.Errorf("rebuild sealed inference index: %w", err)
 	}
 	restoreHeartbeatProducer(sess, sm)
+	// Signatures are loaded only from the slowest cursor on; the trim marks
+	// the nonces below it as read-from-store.
+	sess.dropDiffPrefixLocked()
 	if sess.store == nil {
-		restoreAppliedTxKeys(sess, sess.diffs)
 		return sess, sm, nil
 	}
 	meta, err := sess.store.GetSessionMeta(sess.escrowID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("get session meta for validation obs rebuild: %w", err)
 	}
-	eachPage := func(add func([]types.DiffRecord) error) error {
-		return forEachDiffPage(sess.store, sess.escrowID, 1, meta.LatestNonce, func(_, _ uint64, records []types.DiffRecord) error {
-			restoreAppliedTxKeysFromRecords(sess, records)
-			return add(records)
+	rebuildObs := func() error {
+		return storage.RunValidationObsRebuild(sess.store, sess.escrowID, func() error {
+			return storage.RebuildValidationObsFromJournal(
+				sess.store,
+				sess.escrowID,
+				1,
+				meta.LatestNonce,
+				storage.SealedInferenceIDsSorted(sm.ExportSealedNonces()),
+				func(page []types.DiffRecord) error {
+					noteAppliedTxKeys(sess, page)
+					return nil
+				},
+			)
 		})
 	}
-	sealedInferenceIDs := storage.SealedInferenceIDsSorted(sm.ExportSealedNonces())
-	if err := storage.RebuildValidationObs(sess.store, sess.escrowID, eachPage, sealedInferenceIDs); err != nil {
-		return nil, nil, fmt.Errorf("rebuild validation obs: %w", err)
+	if replayFrom == 1 {
+		if err := rebuildObs(); err != nil {
+			return nil, nil, fmt.Errorf("rebuild validation obs: %w", err)
+		}
+		return sess, sm, nil
+	}
+	// A tail replay or a snapshot restore keeps the obs rows on disk, so it
+	// rebuilds only when an earlier rebuild cleared them and never finished.
+	// That retry is best effort: obs is not state, and a failure keeps the
+	// mark for the next start instead of stopping the session.
+	pending, err := sess.store.ValidationObsRebuildPending(sess.escrowID)
+	if err != nil {
+		log.Printf("recover_session escrow=%s obs_rebuild_pending_read_failed=%v", sess.escrowID, err)
+	} else if pending {
+		log.Printf("recover_session escrow=%s obs_rebuild_retry from=1 to=%d", sess.escrowID, meta.LatestNonce)
+		retryErr := rebuildObs()
+		if retryErr == nil {
+			return sess, sm, nil
+		}
+		log.Printf("recover_session escrow=%s obs_rebuild_retry_failed=%v", sess.escrowID, retryErr)
+	}
+	if err := restoreAppliedTxKeys(sess, meta.LatestNonce); err != nil {
+		return nil, nil, err
 	}
 	return sess, sm, nil
 }
 
-// restoreRecordSignatures copies a stored diff's host signatures into the session.
-func restoreRecordSignatures(sess *Session, record types.DiffRecord) {
-	for slotID, signature := range record.Signatures {
-		sess.recordSignatureLocked(record.Nonce, slotID, signature)
+// restoreAppliedTxKeys re-seeds the applied-key set from the journal so a host
+// mempool copy of an already-included tx is not re-queued. A hole leaves the
+// keys read so far: dedup is best effort, the state is already recovered.
+func restoreAppliedTxKeys(sess *Session, latest uint64) error {
+	err := storage.ReadDiffPages(sess.store, sess.escrowID, 1, latest, func(page []types.DiffRecord) error {
+		noteAppliedTxKeys(sess, page)
+		return nil
+	})
+	var gap *storage.DiffGapError
+	if errors.As(err, &gap) {
+		log.Printf("recover_session escrow=%s applied_tx_keys_partial: %v", sess.escrowID, gap)
+		return nil
 	}
-}
-
-// forEachDiffPage reads diffs fromNonce..toNonce from the store one page of diffPageSize at a time.
-func forEachDiffPage(store storage.Storage, escrowID string, fromNonce, toNonce uint64, visit func(pageFrom, pageTo uint64, records []types.DiffRecord) error) error {
-	for pageFrom := fromNonce; pageFrom <= toNonce; pageFrom += diffPageSize {
-		pageTo := min(pageFrom+diffPageSize-1, toNonce)
-		records, err := store.GetDiffs(escrowID, pageFrom, pageTo)
-		if err != nil {
-			return fmt.Errorf("get diffs %d..%d: %w", pageFrom, pageTo, err)
-		}
-		if err := visit(pageFrom, pageTo, records); err != nil {
-			return err
-		}
+	if err != nil {
+		return fmt.Errorf("restore applied tx keys 1..%d: %w", latest, err)
 	}
 	return nil
 }
 
-// restoreAppliedTxKeys re-seeds the applied-key set from the reconstructed diff
-// log so a host mempool copy of an already-included tx is not re-queued.
-func restoreAppliedTxKeys(sess *Session, diffs []types.Diff) {
+// noteAppliedTxKeys records keys from one journal page. The page is not retained.
+func noteAppliedTxKeys(sess *Session, page []types.DiffRecord) {
 	if sess == nil {
 		return
 	}
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
-	for _, diff := range diffs {
-		addAppliedTxKeysLocked(sess, diff.Txs)
+	for _, rec := range page {
+		noteAppliedTxsLocked(sess, rec.Txs)
 	}
 }
 
-// restoreAppliedTxKeysFromRecords is restoreAppliedTxKeys over one page of the store's journal.
-func restoreAppliedTxKeysFromRecords(sess *Session, records []types.DiffRecord) {
-	sess.mu.Lock()
-	defer sess.mu.Unlock()
-	for _, record := range records {
-		addAppliedTxKeysLocked(sess, record.Txs)
-	}
-}
-
-func addAppliedTxKeysLocked(sess *Session, txs []*types.DevshardTx) {
+func noteAppliedTxsLocked(sess *Session, txs []*types.DevshardTx) {
 	for _, tx := range txs {
 		if key := devshardTxKey(tx); key != "" {
 			sess.appliedTxKeys[key] = struct{}{}
 		}
+	}
+	if len(sess.appliedTxKeys) > maxAppliedTxKeys {
+		clear(sess.appliedTxKeys)
 	}
 }
 

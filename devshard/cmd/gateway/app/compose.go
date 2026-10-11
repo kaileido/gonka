@@ -2,6 +2,7 @@
 package app
 
 import (
+	"common/observability"
 	"context"
 	"errors"
 	"fmt"
@@ -52,7 +53,7 @@ const (
 
 // Main runs the gateway until SIGINT or SIGTERM and exits the process with status 1 when it fails.
 func Main() {
-	logging.ConfigureFormat(env.LogFormat())
+	observability.InstallLogger(env.LogFormat())
 	applyDialGuard()
 	if err := serve(); err != nil {
 		logging.Error("gateway exited", logkey.Error, err)

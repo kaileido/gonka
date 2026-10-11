@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -69,6 +70,15 @@ func TestHostPingRefcountExhaustivenessTeardownPaths(t *testing.T) {
 			name: "deactivateDevshardByIDWithReason",
 			run: func(t *testing.T, g *Gateway, escrowID string) {
 				require.True(t, g.deactivateDevshardByIDWithReason(escrowID, "test"))
+			},
+		},
+		{
+			name: "deactivateDepletedEscrow",
+			run: func(t *testing.T, g *Gateway, escrowID string) {
+				g.store = newGatewayStoreWithActiveEscrow(t, escrowID)
+				isTakenOutOfService, err := g.deactivateDepletedEscrow(context.Background(), escrowID, "", "test", GatewaySettings{})
+				require.NoError(t, err)
+				require.True(t, isTakenOutOfService)
 			},
 		},
 		{

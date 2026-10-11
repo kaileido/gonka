@@ -7,8 +7,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// A restart empties the in-memory map while the committed record keeps the stamp. Reading the map
-// alone named the timeout refused, and the chain rejects a refused timeout against a started record.
+// Test flow:
+//  1. Start an inference whose executor receipt has landed in the record.
+//  2. Forget the session's in-memory outcome for it, as a gateway restart does.
+//  3. Expect an execution deadline counted from the record's confirmation stamp, since the chain rejects a refused timeout against a started record.
 func TestTimeoutDeadlineReadsTheConfirmStampFromTheRecordAfterARestart(t *testing.T) {
 	session, hosts, _ := setupSession(t, 3, 1_000_000, 0)
 	confirmedAt := time.Now().Unix()
@@ -21,12 +23,13 @@ func TestTimeoutDeadlineReadsTheConfirmStampFromTheRecordAfterARestart(t *testin
 	reason, deadline := session.TimeoutDeadline(nonce, time.Now())
 
 	require.Equal(t, "execution", reason, "the record carries the receipt this session forgot")
-	want := time.Unix(confirmedAt, 0).
-		Add(time.Duration(session.sm.Config().ExecutionTimeout)*time.Second + TimeoutBuffer)
+	want := time.Unix(confirmedAt, 0).Add(time.Duration(session.sm.Config().ExecutionTimeout)*time.Second + TimeoutBuffer)
 	require.Equal(t, want, deadline, "the deadline is counted from the record's own stamp")
 }
 
-// A record without the stamp stays refused: that is the reason the chain admits for it.
+// Test flow:
+//  1. Prepare an inference that no host has confirmed.
+//  2. Expect a refusal deadline counted from the send time, the only reason the chain admits for it.
 func TestTimeoutDeadlineKeepsARecordWithoutTheStampRefused(t *testing.T) {
 	session, _, _ := setupSession(t, 3, 1_000_000, 0)
 	nonce := prepareNonce(t, session)
@@ -35,11 +38,12 @@ func TestTimeoutDeadlineKeepsARecordWithoutTheStampRefused(t *testing.T) {
 	reason, deadline := session.TimeoutDeadline(nonce, sendTime)
 
 	require.Equal(t, "refused", reason)
-	want := sendTime.Add(time.Duration(session.sm.Config().RefusalTimeout)*time.Second + TimeoutBuffer)
-	require.Equal(t, want, deadline)
+	require.Equal(t, sendTime.Add(time.Duration(session.sm.Config().RefusalTimeout)*time.Second+TimeoutBuffer), deadline)
 }
 
-// A nonce no record tracks is judged by the send time, as it was before.
+// Test flow:
+//  1. Ask for the deadline of a nonce no record tracks.
+//  2. Expect a refusal deadline counted from the send time.
 func TestTimeoutDeadlineJudgesAnUntrackedNonceByTheSendTime(t *testing.T) {
 	session, _, _ := setupSession(t, 3, 1_000_000, 0)
 	sendTime := time.Now()
@@ -47,11 +51,12 @@ func TestTimeoutDeadlineJudgesAnUntrackedNonceByTheSendTime(t *testing.T) {
 	reason, deadline := session.TimeoutDeadline(9999, sendTime)
 
 	require.Equal(t, "refused", reason)
-	want := sendTime.Add(time.Duration(session.sm.Config().RefusalTimeout)*time.Second + TimeoutBuffer)
-	require.Equal(t, want, deadline)
+	require.Equal(t, sendTime.Add(time.Duration(session.sm.Config().RefusalTimeout)*time.Second+TimeoutBuffer), deadline)
 }
 
-// The map still answers for a nonce whose confirm-start has not reached the record yet.
+// Test flow:
+//  1. Prepare an inference and give the session memory a confirmation stamp the record does not carry yet.
+//  2. Expect an execution deadline counted from that stamp.
 func TestTimeoutDeadlineFallsBackToTheSessionMemory(t *testing.T) {
 	session, _, _ := setupSession(t, 3, 1_000_000, 0)
 	nonce := prepareNonce(t, session)
@@ -64,7 +69,5 @@ func TestTimeoutDeadlineFallsBackToTheSessionMemory(t *testing.T) {
 	reason, deadline := session.TimeoutDeadline(nonce, time.Now())
 
 	require.Equal(t, "execution", reason)
-	want := time.Unix(confirmedAt, 0).
-		Add(time.Duration(session.sm.Config().ExecutionTimeout)*time.Second + TimeoutBuffer)
-	require.Equal(t, want, deadline)
+	require.Equal(t, time.Unix(confirmedAt, 0).Add(time.Duration(session.sm.Config().ExecutionTimeout)*time.Second+TimeoutBuffer), deadline)
 }

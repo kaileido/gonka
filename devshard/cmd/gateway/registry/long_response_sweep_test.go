@@ -86,8 +86,8 @@ func publishLongResponseEscrow(t *testing.T) longResponseEscrow {
 
 func startedTwoHoursAgo(t *testing.T, escrow longResponseEscrow) uint64 {
 	t.Helper()
-	prepared, err := escrow.session.PrepareInferenceFn(func(user.HostBinding) (user.InferenceParams, bool, error) {
-		return user.InferenceParams{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000}, false, nil
+	prepared, err := escrow.session.PrepareInferenceFn(func(user.HostBinding) (user.InferenceParams, bool, context.Context, error) {
+		return user.InferenceParams{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000}, false, nil, nil
 	})
 	require.NoError(t, err)
 	nonce := prepared.Nonce()

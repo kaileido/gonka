@@ -552,9 +552,9 @@ func (c *fleetClient) VerifyTimeout(ctx context.Context, inferenceID uint64, rea
 	var err error
 	switch reason {
 	case types.TimeoutReason_TIMEOUT_REASON_REFUSED:
-		accept, err = host.VerifyRefusedTimeout(ctx, snapshot, inferenceID, payload, c.escrow.diffs.upTo(snapshot.LatestNonce), mempool, executor, verifier, snapshot.Config, nowUnix)
+		accept, err = host.VerifyRefusedTimeout(ctx, snapshot, inferenceID, payload, mempool, executor, verifier, verifier, snapshot.Config, nowUnix)
 	case types.TimeoutReason_TIMEOUT_REASON_EXECUTION:
-		accept, err = host.VerifyExecutionTimeout(ctx, snapshot, inferenceID, mempool, executor, snapshot.Config, nowUnix)
+		accept, err = host.VerifyExecutionTimeout(ctx, snapshot, inferenceID, mempool, executor, verifier, verifier, snapshot.Config, nowUnix)
 	default:
 		return false, nil, 0, nil, "", errReasonNotModelled
 	}

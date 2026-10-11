@@ -14,6 +14,10 @@ func TestApplyDefaults(t *testing.T) {
 	require.Equal(t, config.DefaultChainID, cfg.ChainID)
 	require.Equal(t, config.DefaultMockChainGRPCPort, cfg.MockChain.GRPCPort)
 	require.Equal(t, config.DefaultEscrowSlotURL, cfg.Escrow.SlotURL)
+	require.Equal(t, "http://versiond-router:8080", cfg.Escrow.SlotURL)
+	require.Equal(t, 8443, config.DefaultRPCH2Port)
+	require.Equal(t, 8081, config.DefaultVersiondRouterH2Port)
+	require.Equal(t, "proxy", config.DefaultProxyService)
 }
 
 func TestValidate_RequiresFilledKeys(t *testing.T) {

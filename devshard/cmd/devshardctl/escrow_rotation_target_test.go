@@ -25,10 +25,10 @@ func TestCountActiveRotationEscrowsFiltersByRoleEpochModelAndActive(t *testing.T
 }
 
 func TestGatewayActiveRotationEscrowCountReadsTheStore(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
-	require.NoError(t, store.Initialize(GatewaySettings{
+	require.NoError(t, store.Initialize(context.Background(), GatewaySettings{
 		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "m",
@@ -39,7 +39,7 @@ func TestGatewayActiveRotationEscrowCountReadsTheStore(t *testing.T) {
 	}))
 	g := &Gateway{store: store}
 
-	count, err := g.activeRotationEscrowCount(rotationRoleRegular, 1, "m")
+	count, err := g.activeRotationEscrowCount(context.Background(), rotationRoleRegular, 1, "m")
 
 	require.NoError(t, err)
 	require.Equal(t, 1, count)
