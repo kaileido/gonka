@@ -98,6 +98,7 @@ type AttemptOutcome struct {
 
 	PhaseTransitionAborted bool
 	StateDivergent         bool
+	LocalFault             bool
 }
 
 const executorStampTruncation = time.Second

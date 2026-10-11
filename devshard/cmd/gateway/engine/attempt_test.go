@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"devshard/cmd/gateway/internal/leakcheck"
+	"devshard/cmd/gateway/limits"
 	"devshard/cmd/gateway/scheduler"
 	"devshard/transport"
 )
@@ -318,6 +319,14 @@ func TestRunAttempt_TerminalClassification(t *testing.T) {
 			dispatch:   &fakeDispatcher{err: statusError(inferencePath, 429, "")},
 			classifier: &fakeClassifier{},
 			want:       TerminalThrottled,
+		},
+		{
+			name: "http 429 for a spent escrow lookup budget",
+			dispatch: &fakeDispatcher{err: &transport.UpstreamStatusError{
+				Path: inferencePath, StatusCode: http.StatusTooManyRequests, DevshardError: transport.DevshardErrorEscrowLookupLimited,
+			}},
+			classifier: &fakeClassifier{},
+			want:       TerminalEscrowLookupLimited,
 		},
 		{
 			name:       "http 503",
@@ -798,5 +807,50 @@ func TestRunAttempt_ASingleChunkIsOfferedOnceNotTwice(t *testing.T) {
 	}
 	if done.Outcome.FirstChunkHead != "" {
 		t.Fatalf("FirstChunkHead = %q, want none where it repeats the last", done.Outcome.FirstChunkHead)
+	}
+}
+
+// Test flow:
+//  1. Judge a host that refused with a spent escrow lookup budget beside one that throttled.
+//  2. Assert the lookup refusal moves no congestion window and records no sample, while the throttle still narrows the window.
+func TestAnEscrowLookupRefusalLeavesTheHostsWindowAlone(t *testing.T) {
+	outcome := RaceOutcome{Model: "llama"}
+	refused := failedAttempt(TerminalEscrowLookupLimited)
+	throttled := failedAttempt(TerminalThrottled)
+
+	if verdict, moves := outcome.Verdict(refused); moves && verdict != limits.ModelOutcome {
+		t.Fatalf("Verdict(escrow lookup limited) = %v, want no overload on the host", verdict)
+	}
+	if _, exemption := outcome.Sample(refused); exemption != ExemptEscrowLookupLimited {
+		t.Fatalf("Sample exemption = %v, want ExemptEscrowLookupLimited", exemption)
+	}
+	if verdict, moves := outcome.Verdict(throttled); !moves || verdict != limits.Overload {
+		t.Fatalf("Verdict(throttled) = %v (moves %t), want an overload", verdict, moves)
+	}
+}
+
+// Test flow:
+//  1. Close the race's report channel, as a race that already reported does, with no room left for events.
+//  2. Emit a terminal event carrying a held error-miss Finish.
+//  3. Assert the emit returns instead of blocking, and the held Finish is released rather than pinned forever.
+func TestAnAttemptOutlivingItsRaceReleasesItsHeldFinish(t *testing.T) {
+	reported := make(chan struct{})
+	close(reported)
+	released := false
+	spec := AttemptSpec{Events: make(chan AttemptEvent), Reported: reported}
+	outcome := &AttemptOutcome{MissProof: &MissProof{releaseFinish: func() { released = true }}}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		spec.finish(AttemptEvent{Kind: AttemptDone, Outcome: outcome})
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("finish() = still blocked after 10s, want it to return once the race has reported")
+	}
+	if !released {
+		t.Fatal("releaseHeldFinish() calls = 0, want 1: nobody is left to post the claim")
 	}
 }

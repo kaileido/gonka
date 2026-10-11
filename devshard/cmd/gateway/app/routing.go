@@ -14,6 +14,7 @@ import (
 	"devshard/cmd/gateway/registry"
 	"devshard/cmd/gateway/scheduler"
 	"devshard/cmd/gateway/warmup"
+	"devshard/transport"
 )
 
 type routingDeps struct {
@@ -26,6 +27,8 @@ type routingDeps struct {
 	Config       *config.Holder
 	Depletion    *depletionNotice
 	Dispatches   *metrics.DispatchRecorder
+	Served       *metrics.ServedBindingRecorder
+	PeerRPC      *transport.PeerRPCAdoption
 	Ledger       *nonces.Recorder
 	Journal      *journal.Journal
 	Now          func() time.Time
@@ -43,6 +46,8 @@ func newRouting(deps routingDeps) (*registry.Registry, *scheduler.Scheduler, *wa
 		Exhaustion:       deps.Depletion,
 		Narrator:         deps.Journal,
 		Retiring:         deps.Ledger.EscrowRetiring,
+		ServedBindings:   servedBindingStrikes(deps.Hosts, deps.Journal, deps.Served),
+		PeerRPC:          deps.PeerRPC,
 		Now:              deps.Now,
 	}
 	prober := warmup.New(deps.Config, deps.Ledger.Book(), deps.Snapshots, deps.Now)

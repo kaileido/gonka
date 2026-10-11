@@ -108,6 +108,7 @@ Signing keys are addressed **by the name of the variable that holds them**, neve
 | `GATEWAY_TIMEOUT_SWEEP_GRACE_SECONDS` | 120 | how far past its deadline a nonce must be before the sweep claims it from its own race |
 | `DEVSHARD_POC_REQUEST_MODE` | relaxed | `relaxed` keeps serving through proof-of-compute; `off` refuses new requests while the chain blocks them |
 | `GATEWAY_HEIGHT_SYNC_ENABLED` | true | whether the escrow's heartbeat cadence runs. Turn it off for a fleet whose hosts do not carry height sync, or every interval logs a heartbeat it could not stamp ([`docs/escrows.md`](escrows.md), "Height sync") |
+| `DEVSHARD_HEIGHTSYNC_HEARTBEAT` | false | whether a quiet escrow composes heartbeat turns; on only for true/1/on, as devshardctl reads it. A finished request's leftovers settle either way ([`docs/escrows.md`](escrows.md), "Height sync") |
 | `DEVSHARD_REQUIRE_HEIGHT_SEED` | true | whether a session chases a host-signed tip from the moment it opens and reports `seed_incomplete` when it cannot. It does not refuse requests — see [`docs/escrows.md`](escrows.md), "Height sync". Off in the e2e stand |
 | `DEVSHARD_HEIGHTSYNC_K` / `DEVSHARD_HEIGHTSYNC_SLOTS` | 10 / 1 | the anchor cadence carried on the height-sync envelope |
 | `DEVSHARD_GATEWAY_CHAIN_ORACLE` | false | whether the gateway follows mainnet itself, from `NODE_MANAGER_ADDR`, the chain RPC and gRPC. It is not what the gateway stamps from — it only labels how much a carried tip is trusted ([`heights/README.md`](../heights/README.md)) |
@@ -117,6 +118,8 @@ Signing keys are addressed **by the name of the variable that holds them**, neve
 | `DEVSHARD_GATEWAY_HOST_PING_INTERVAL` / `DEVSHARD_GATEWAY_HOST_PING_TIMEOUT` | 15s / 2s | the probe cadence and its patience; the timeout must be at most half the interval or the ping is refused and switched off |
 | `DEVSHARD_GATEWAY_HOST_PING_CONCURRENCY` | 8 | hosts probed at once within one wave |
 | `DEVSHARD_ALLOW_PRIVATE_ADDRESSES` | false | whether dials to private addresses are allowed. A host URL comes from chain state, so the guard is on in production and only a stand whose hosts are Docker names turns it off; turning it off is logged |
+| `DEVSHARD_OTEL_ENABLED` | false | whether OpenTelemetry traces are exported; off is a no-op tracer ("Tracing" below) |
+| `OTEL_ENDPOINT` / `OTEL_HEADERS` | unset | the OTLP gRPC collector and its headers as `key=value,key=value`; a malformed header is skipped with a warning |
 | `DEVSHARD_LOG_FORMAT` | json | one JSON object per line, which promtail and the Loki panels read; any other value is the text form, as in devshardctl |
 
 ### The rest of the variables
@@ -138,6 +141,7 @@ These are read the same way and rarely need changing. Where a knob has a longer 
 | `GATEWAY_MATCH_WAIT_MS` | 2 000 | how long a bound nonce waits for a compatible request before it is burned; `0` burns at once, and 5 000 is the most it accepts |
 | `GATEWAY_MAX_CONSECUTIVE_BURNS` | 2 | nonces one escrow may burn in a row before the next one is sent over a full congestion window; `0` never forces a send ([`routing.md`](routing.md), "The forced send") |
 | `GATEWAY_FORCE_UPSTREAM_STREAMING` | true | whether a non-streaming request is still streamed from the host and assembled by the gateway ([`request.md`](request.md)) |
+| `GATEWAY_LOGPROBS_OPTIMIZATION_OVERRIDE` | unset | forces the hosts' logprobs optimization on or off for every inference; unset leaves each host on its own default (`DEVSHARD_LOGPROBS_OPTIMIZATION_ENABLED`, on). The admin override `logprobs_optimization` takes precedence, and removing it falls back to this value |
 | `GATEWAY_REQUESTS_RETENTION_HOURS` / `GATEWAY_REQUESTS_RETENTION_MAX_ROWS` | 168 / 1 000 000 | how long and how many request records are kept; neither may be zero |
 | `DEVSHARD_REQUEST_CAPTURE_ENABLED` | false | whether sampled requests are written to capture files ([`api/README.md`](../api/README.md), "Request capture") |
 | `DEVSHARD_REQUEST_CAPTURE_DIR` | `<storage dir>/captured-requests` | where the capture files go |
@@ -338,6 +342,14 @@ The gateway emits neither label nor the value below, so a selector that names on
 Participant-labelled race series — `devshard_gateway_attempts_*`, `devshard_gateway_attempt_failures_total`, `devshard_gateway_timeout_actions_total`, `devshard_gateway_stream_carry_overflow_total` and every `devshard_gateway_participant_*` family except the breaker gauge — are deleted once their participant and model go unwritten for `perf_host_staleness_seconds`. A host that returns afterwards starts from fresh counters, which `rate()` reads as a reset.
 
 `devshard_gateway_participant_breaker_state` stops reporting a pair the participant limiter forgot on the same window, and `devshard_gateway_participants_tracked` counts only the pairs it still holds.
+
+## Tracing
+
+`DEVSHARD_OTEL_ENABLED` turns OpenTelemetry tracing on, exporting to `OTEL_ENDPOINT` with `OTEL_HEADERS`; it is the same switch and the same service name (`devshardctl`) the legacy gateway used, so existing Tempo queries and dashboards keep working. Off, the tracer is a no-op. A broken exporter or a malformed header degrades to no tracing and a warning, never to a gateway that will not start (`app/tracing.go`), and spans are flushed for up to ten seconds at shutdown.
+
+Every chat request opens a `gateway.request` root span (`api/routes.go`, `chat`), and the race runs under it. The transport stamps `traceparent` and `X-Request-Id` on every host call made under a live span, over JSON and Connect alike, so a host's spans join the request's trace; `trace_id` is the join key with the logs. Timeout votes and settlement run after the request on their own context and start no trace. Ids belong in span attributes and log lines, never in metric labels ([`devshard/docs/gateway-tracing.md`](../../../docs/gateway-tracing.md)).
+
+How each escrow reaches its hosts is in two series: `devshard_gateway_escrow_sessions_total{path}` counts each escrow-host binding once, by `h2` (Connect over HTTP/2) or `json`, and `devshard_gateway_host_rpc{peer,mode}` is 1 per host and mode while a live escrow binds it (`registry/registry.go`, `bindPeerRPC`; `metrics/peer_rpc_recorder.go`).
 
 ## Reading the gateway's state
 

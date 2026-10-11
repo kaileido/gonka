@@ -107,6 +107,7 @@ type hostScript struct {
 	chunks    []string
 	flush     bool
 	hold      bool
+	deaf      <-chan struct{}
 	confirmed bool
 	finished  bool
 	err       error
@@ -165,6 +166,10 @@ func (t *scriptedTarget) Send(ctx context.Context, nonce scheduler.Prepared, str
 	}
 	if script.hold {
 		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	if script.deaf != nil {
+		<-script.deaf
 		return nil, ctx.Err()
 	}
 	return fakeResponse{confirmed: script.confirmed}, script.err
@@ -2731,5 +2736,64 @@ func TestAWinnerServedToAWaitingClientStaysUserVisible(t *testing.T) {
 		if got := reported.Labels(attempt).Visibility; got != VisibilityWinner {
 			t.Fatalf("winner visibility = %q, want %q", got, VisibilityWinner)
 		}
+	}
+}
+
+// Test flow:
+//  1. Start a race with a single host whose attempt fails with `ErrLocalRootUnavailable`, the gateway's own store failing it.
+//  2. Run the race to completion.
+//  3. Assert the attempt is flagged a local fault, not a divergence, and exempt from the host's sample.
+//  4. Assert the host was neither marked diverged, nor blocked, nor rewound.
+func TestRunRaceLeavesAHostAloneWhenTheLocalRootIsUnavailable(t *testing.T) {
+	fixture := newRaceFixture(settledPolicy(), 1)
+	fixture.host(80, 0, "host-0", &hostScript{receipt: true, err: fmt.Errorf("apply: %w", ErrLocalRootUnavailable)})
+
+	if _, err := fixture.run(context.Background()); err != nil {
+		t.Fatalf("runRace error = %v", err)
+	}
+	reported := <-fixture.reported
+	attempt := reported.Attempts[0]
+	if !attempt.LocalFault || attempt.StateDivergent {
+		t.Fatalf("LocalFault = %t, StateDivergent = %t, want true and false", attempt.LocalFault, attempt.StateDivergent)
+	}
+	if _, exemption := reported.Sample(attempt); exemption != ExemptLocalFault {
+		t.Fatalf("Sample exemption = %v, want ExemptLocalFault", exemption)
+	}
+	fixture.picker.mu.Lock()
+	blocked, diverged := fixture.picker.blocked, fixture.picker.diverged
+	fixture.picker.mu.Unlock()
+	fixture.target.mu.Lock()
+	rewound := fixture.target.rewound
+	fixture.target.mu.Unlock()
+	if len(diverged) != 0 || len(blocked) != 0 || len(rewound) != 0 {
+		t.Fatalf("diverged = %v, blocked = %v, rewound = %v, want none: the fault is the gateway's own", diverged, blocked, rewound)
+	}
+}
+
+// Test flow:
+//  1. Start a race with a single host that receipts and then ignores cancellation, the way a read from a dead host can, using a clock that jumps 30 minutes on every read.
+//  2. Run the race and wait for its report, bounded in real time.
+//  3. Assert the race reported once the cancelled attempt outlived its grace, with that attempt left unclassified so its open nonce still takes a timeout vote.
+func TestARaceReportsWhenACancelledAttemptNeverReturns(t *testing.T) {
+	deaf := make(chan struct{})
+	t.Cleanup(func() { close(deaf) })
+	fixture := newRaceFixture(settledPolicy(), 1)
+	fixture.deps.CancelGrace = 10 * time.Millisecond
+	fixture.host(60, 0, "host-0", &hostScript{receipt: true, deaf: deaf})
+	fixture.clock.step = 30 * time.Minute
+
+	go func() { _, _ = fixture.run(context.Background()) }()
+	var reported RaceOutcome
+	select {
+	case reported = <-fixture.reported:
+	case <-time.After(10 * time.Second):
+		t.Fatal("runRace() reported = nothing after 10s, want a report once the cancel grace expires: an attempt that never returns would hold the race and its escrow forever")
+	}
+
+	if len(reported.Attempts) != 1 || reported.Attempts[0].Terminal != TerminalUnclassified {
+		t.Fatalf("runRace() reported attempts = %+v, want one unclassified attempt", reported.Attempts)
+	}
+	if steps := reported.TimeoutPlan(); len(steps) != 1 || !steps[0].Post {
+		t.Fatalf("TimeoutPlan() = %+v, want one posted vote for the abandoned nonce", steps)
 	}
 }

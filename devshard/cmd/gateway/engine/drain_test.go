@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -303,5 +304,29 @@ func assertOneSlotPerAttempt(t *testing.T, fixture *raceFixture, attempts int) {
 	}
 	if acquired, released := fixture.perf.counts(); acquired != attempts || released != attempts {
 		t.Fatalf("perf bracket = %d/%d, want %d/%d", acquired, released, attempts, attempts)
+	}
+}
+
+type countingFlusher struct {
+	bytes.Buffer
+	flushes int
+}
+
+func (f *countingFlusher) Flush() { f.flushes++ }
+
+// Test flow:
+//  1. Gate a flushing writer on a client that has already left.
+//  2. Flush through the gate.
+//  3. Assert the underlying writer was not flushed: its handler may already have returned.
+func TestAGoneClientIsNeverFlushed(t *testing.T) {
+	gone, leave := context.WithCancel(context.Background())
+	leave()
+	underlying := &countingFlusher{}
+	stream := newDrain(gone, time.Minute).gate(underlying)
+
+	stream.(http.Flusher).Flush()
+
+	if underlying.flushes != 0 {
+		t.Fatalf("Flush() through a departed client's gate reached the writer %d times, want 0", underlying.flushes)
 	}
 }

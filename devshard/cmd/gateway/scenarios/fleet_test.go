@@ -18,8 +18,6 @@ import (
 	"testing/synctest"
 	"time"
 
-	"google.golang.org/protobuf/proto"
-
 	devshardpkg "devshard"
 	"devshard/cmd/gateway/filters"
 	"devshard/cmd/gateway/registry"
@@ -564,7 +562,7 @@ func (c *fleetClient) VerifyTimeout(ctx context.Context, inferenceID uint64, rea
 	if !accept {
 		return false, nil, 0, host.RecoveryTxsFor(verifier.MempoolTxs(), inferenceID), "", nil
 	}
-	content, err := proto.MarshalOptions{Deterministic: true}.Marshal(&types.TimeoutVoteContent{
+	content, err := types.CanonicalSignedBytes(&types.TimeoutVoteContent{
 		EscrowId: verifier.EscrowID(), InferenceId: inferenceID, Reason: reason, Accept: true,
 	})
 	if err != nil {

@@ -238,7 +238,7 @@ func TestTheHostPingAndHeightSyncVariablesAreReadTheWayDevshardctlReadThem(t *te
 // Test flow:
 //  1. Table-driven: each case sets one of the two height-sync switches to a spelling, including ones outside the boolean grammar.
 //  2. Call `Load`.
-//  3. Assert the switch reads the way devshardctl read it: the chain oracle is on only for true/1/on, and the seed gate is off only for 0/false/off/no.
+//  3. Assert the switch reads the way devshardctl read it: the chain oracle and the heartbeat are on only for true/1/on, and the seed gate is off only for 0/false/off/no.
 func TestTheHeightSyncSwitchesKeepDevshardctlsExactSpellings(t *testing.T) {
 	testCases := []struct {
 		name     string
@@ -252,6 +252,14 @@ func TestTheHeightSyncSwitchesKeepDevshardctlsExactSpellings(t *testing.T) {
 		{name: "the seed gate turns off for no", variable: "DEVSHARD_REQUIRE_HEIGHT_SEED", raw: "no", want: false},
 		{name: "the seed gate stays on for f", variable: "DEVSHARD_REQUIRE_HEIGHT_SEED", raw: "f", want: true},
 		{name: "the seed gate stays on for an unknown value", variable: "DEVSHARD_REQUIRE_HEIGHT_SEED", raw: "maybe", want: true},
+		{name: "the heartbeat turns on for 1", variable: "DEVSHARD_HEIGHTSYNC_HEARTBEAT", raw: "1", want: true},
+		{name: "the heartbeat stays off for yes", variable: "DEVSHARD_HEIGHTSYNC_HEARTBEAT", raw: "yes", want: false},
+		{name: "the heartbeat stays off for false", variable: "DEVSHARD_HEIGHTSYNC_HEARTBEAT", raw: "false", want: false},
+	}
+	switches := map[string]func(Values) *bool{
+		"DEVSHARD_GATEWAY_CHAIN_ORACLE": func(values Values) *bool { return values.HeightSyncChainOracle },
+		"DEVSHARD_REQUIRE_HEIGHT_SEED":  func(values Values) *bool { return values.HeightSyncRequireSeed },
+		"DEVSHARD_HEIGHTSYNC_HEARTBEAT": func(values Values) *bool { return values.HeightSyncHeartbeat },
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -261,10 +269,7 @@ func TestTheHeightSyncSwitchesKeepDevshardctlsExactSpellings(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Load(): %v", err)
 			}
-			switchValue := values.HeightSyncChainOracle
-			if testCase.variable == "DEVSHARD_REQUIRE_HEIGHT_SEED" {
-				switchValue = values.HeightSyncRequireSeed
-			}
+			switchValue := switches[testCase.variable](values)
 			if switchValue == nil || *switchValue != testCase.want {
 				t.Fatalf("%s=%s read as %v, want %v", testCase.variable, testCase.raw, switchValue, testCase.want)
 			}
@@ -558,5 +563,29 @@ func TestTheSettleMarginReadsItsVariable(t *testing.T) {
 	}
 	if values.RotationSettleMarginBlocks == nil || *values.RotationSettleMarginBlocks != 900 {
 		t.Fatalf("RotationSettleMarginBlocks = %v, want 900", values.RotationSettleMarginBlocks)
+	}
+}
+
+// Test flow:
+//  1. Set GATEWAY_LOGPROBS_OPTIMIZATION_OVERRIDE to off, then leave it unset.
+//  2. Call `Load`.
+//  3. Assert off reads as a forced false and unset reads as no override at all.
+func TestTheLogprobsOptimizationOverrideReadsAsATriState(t *testing.T) {
+	t.Setenv("GATEWAY_LOGPROBS_OPTIMIZATION_OVERRIDE", "false")
+	forced, err := Load()
+	if err != nil {
+		t.Fatalf("Load(): %v", err)
+	}
+	if forced.LogprobsOptimization == nil || *forced.LogprobsOptimization {
+		t.Fatalf("LogprobsOptimization = %v, want a forced false", forced.LogprobsOptimization)
+	}
+
+	t.Setenv("GATEWAY_LOGPROBS_OPTIMIZATION_OVERRIDE", "")
+	unset, err := Load()
+	if err != nil {
+		t.Fatalf("Load(): %v", err)
+	}
+	if unset.LogprobsOptimization != nil {
+		t.Fatalf("LogprobsOptimization = %v, want nil so the host decides", *unset.LogprobsOptimization)
 	}
 }

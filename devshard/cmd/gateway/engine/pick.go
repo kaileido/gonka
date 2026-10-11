@@ -175,6 +175,7 @@ func (c *raceCoordinator) launch(assignment scheduler.Assignment, role, startRea
 		Sink:        sink,
 		Now:         c.deps.Now,
 		Events:      c.events,
+		Reported:    c.done,
 	})
 }
 

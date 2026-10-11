@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel/trace"
+
 	"devshard/cmd/gateway/chain"
 	"devshard/cmd/gateway/config"
 	"devshard/cmd/gateway/engine"
@@ -97,6 +99,7 @@ func (f *fakeRegistry) IsBusy(escrowID string) bool { return f.busy[escrowID] }
 type fakeEngine struct {
 	runs    atomic.Int64
 	raced   atomic.Pointer[engine.Request]
+	racedIn atomic.Pointer[trace.SpanContext]
 	reply   string
 	chunks  []string
 	outcome engine.RaceOutcome
@@ -104,8 +107,10 @@ type fakeEngine struct {
 	ledger  *RaceLedger
 }
 
-func (e *fakeEngine) Run(_ context.Context, request engine.Request, client io.Writer) (engine.RaceOutcome, error) {
+func (e *fakeEngine) Run(ctx context.Context, request engine.Request, client io.Writer) (engine.RaceOutcome, error) {
 	e.runs.Add(1)
+	spanContext := trace.SpanContextFromContext(ctx)
+	e.racedIn.Store(&spanContext)
 	e.raced.Store(&request)
 	if request.OnEscrow != nil && e.outcome.EscrowID != "" {
 		request.OnEscrow(e.outcome.EscrowID)
@@ -350,6 +355,7 @@ func (f fixedSnapshots) Snapshot() chain.PhaseSnapshot {
 }
 
 type harness struct {
+	cached      *spyCacheResults
 	server      *Server
 	config      *config.Holder
 	escrows     *fakeRegistry
@@ -386,6 +392,7 @@ func newHarness(t *testing.T, tune ...func(*config.Config)) *harness {
 		inference:  &fakeEngine{reply: `{"id":"resp","choices":[]}`, outcome: engine.RaceOutcome{EscrowID: "7", Succeeded: true}},
 		limiter:    &countingLimiter{},
 		rejections: &spyRejections{},
+		cached:     &spyCacheResults{},
 		capacity:   &fakeCapacity{capacity: limits.ModelCapacity{ScaleFactor: 1}},
 		snapshots:  &fixedSnapshots{},
 		control: &fakeControl{devshards: []store.DevshardRecord{
@@ -404,25 +411,26 @@ func newHarness(t *testing.T, tune ...func(*config.Config)) *harness {
 	live.escrows.escrows = []scheduler.Escrow{{ID: "7", Model: "qwen", ActiveUsers: 1}}
 
 	server, err := New(Deps{
-		Config:      live.config,
-		Escrows:     live.escrows,
-		Inference:   live.inference,
-		Limiter:     live.limiter,
-		Capacity:    live.capacity,
-		Snapshots:   live.snapshots,
-		Control:     live.control,
-		Accounting:  live.accounting,
-		Operations:  live.operations,
-		Suspicious:  live.suspicious,
-		HostStates:  live.hosts,
-		HostWindows: fakeHostWindows{hosts: live.hosts},
-		Telemetry:   live.telemetry,
-		Rejections:  live.rejections,
-		Journal:     live.events,
-		StorageDir:  storageDir,
-		Version:     "test",
-		Now:         func() time.Time { return harnessClock },
-		RequestIDs:  func() string { return "request-1" },
+		Config:       live.config,
+		Escrows:      live.escrows,
+		Inference:    live.inference,
+		Limiter:      live.limiter,
+		Capacity:     live.capacity,
+		Snapshots:    live.snapshots,
+		Control:      live.control,
+		Accounting:   live.accounting,
+		Operations:   live.operations,
+		Suspicious:   live.suspicious,
+		HostStates:   live.hosts,
+		HostWindows:  fakeHostWindows{hosts: live.hosts},
+		Telemetry:    live.telemetry,
+		Rejections:   live.rejections,
+		CacheResults: live.cached,
+		Journal:      live.events,
+		StorageDir:   storageDir,
+		Version:      "test",
+		Now:          func() time.Time { return harnessClock },
+		RequestIDs:   func() string { return "request-1" },
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -684,6 +692,17 @@ func TestNewRejectsAnIncompleteWiring(t *testing.T) {
 	if _, err := New(Deps{}); err == nil {
 		t.Fatal("New accepted an empty Deps")
 	}
+}
+
+type spyCacheResults struct {
+	mu      sync.Mutex
+	results []string
+}
+
+func (s *spyCacheResults) CacheResult(model, result string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.results = append(s.results, model+"/"+result)
 }
 
 type spyRejections struct {

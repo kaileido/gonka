@@ -669,3 +669,32 @@ func TestThePickCarriesBothHalvesOfWhatTheRequestIsWorth(t *testing.T) {
 			profiles[0].OutputTokens, request.OutputTokens)
 	}
 }
+
+// Test flow:
+//  1. Build a participant limiter and an engine recording into it, and open the host's window.
+//  2. Record the trusted run of escrow-lookup refusals from one host, then one more.
+//  3. Assert the trusted refusals leave the input window where it was, and the one past them narrows it like a throttle.
+func TestRecordStopsExcusingAHostThatOnlyRefusesLookups(t *testing.T) {
+	windows := limits.NewParticipantLimiter(limiterConfig(1000), func() time.Time { return testEpoch })
+	races := engineRecordingInto(t, windows, trackedHosts())
+	release, admitted := windows.Acquire(testParticipant, testModel, limits.TokenCost{Input: 1, Output: 1})
+	if admitted != limits.AdmissionOpen {
+		t.Fatal("Acquire = refused, want the first slot of a fresh window")
+	}
+	release()
+	start, _ := trackedWindows(t, windows)
+
+	for range lookupRefusalsTrusted {
+		races.record(race(failedAttempt(TerminalEscrowLookupLimited)), nil, races.admit())
+	}
+	trusted, _ := trackedWindows(t, windows)
+	races.record(race(failedAttempt(TerminalEscrowLookupLimited)), nil, races.admit())
+	judged, _ := trackedWindows(t, windows)
+
+	if trusted != start {
+		t.Fatalf("input window after %d lookup refusals = %v, want %v unchanged", lookupRefusalsTrusted, trusted, start)
+	}
+	if judged >= trusted {
+		t.Fatalf("input window after one refusal past the trusted run = %v, want below %v: it is judged as a throttle", judged, trusted)
+	}
+}

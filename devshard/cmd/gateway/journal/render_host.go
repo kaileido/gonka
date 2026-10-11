@@ -71,6 +71,14 @@ func (j *Journal) HostCutOffLifted(participant, model string, backoffCount int) 
 	})
 }
 
+// HostServedUnsigned renders a host whose served stream matches neither hash of the Finish it signed.
+func (j *Journal) HostServedUnsigned(escrowID, model, participant string, nonce uint64) {
+	j.emitLine(KindHostTransition, func(lines logSink) {
+		lines.Warn("served stream does not match its finish",
+			logkey.Escrow, escrowID, logkey.Nonce, nonce, logkey.Host, logkey.ShortHost(participant), logkey.Model, model)
+	})
+}
+
 // HostDeniedCrown renders the strike that withholds the crown from a host.
 func (j *Journal) HostDeniedCrown(participant, model string, strikes int) {
 	j.emitLine(KindHostTransition, func(lines logSink) {

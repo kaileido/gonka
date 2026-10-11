@@ -11,6 +11,7 @@ import (
 	"devshard/cmd/gateway/filters"
 	"devshard/cmd/gateway/journal"
 	"devshard/cmd/gateway/scheduler"
+	"devshard/observability"
 	"devshard/transport"
 	"devshard/user"
 )
@@ -186,6 +187,10 @@ func (s *Server) handleDevshardChat(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) {
+	// The race inherits this span, so every host call carries the request's traceparent. See ../docs/operations.md, "Tracing".
+	traced, span := observability.StartGatewayRequest(r.Context())
+	defer span.End()
+	r = r.WithContext(traced)
 	configuration := s.config.Load()
 	identity := s.resolveCredentials(r)
 	requestID := s.requestIDs()
@@ -251,17 +256,30 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 
 	if s.cache == nil {
 		// Nothing to store, so the outcome and the hidden failure the cache path reads are both moot.
-		_, _ = s.race(w, r, requestID, normalized, inputTokens, escrowPin)
+		_, _ = s.race(w, r, requestID, normalized, inputTokens, escrowPin, configuration.Limits.LogprobsOptimization)
 		return
 	}
 	recorder := newCacheRecorder(w, s.cache.entryLimit(), normalized.ClientStream)
-	outcome, hiddenFailure := s.race(recorder, r, requestID, normalized, inputTokens, escrowPin)
-	if entry, storable := recorder.entry(outcome.EscrowID, normalized.ClientStream, cmp.Or(r.Context().Err(), hiddenFailure)); storable {
-		// The client keeps every byte that arrived; only the replay stops, and only this refusal is news.
-		if s.cache.put(key, entry, s.now()) == filters.CacheRefusedUnfinished {
-			s.events.ReplyNotCached(journal.RequestLine{RequestID: requestID, Model: normalized.Model, EscrowID: outcome.EscrowID})
-		}
+	outcome, hiddenFailure := s.race(recorder, r, requestID, normalized, inputTokens, escrowPin, configuration.Limits.LogprobsOptimization)
+	unstorable := cmp.Or(r.Context().Err(), hiddenFailure)
+	entry, storable := recorder.entry(outcome.EscrowID, normalized.ClientStream, unstorable)
+	if !storable {
+		s.countCacheResult(normalized.Model, recorder.entryRefusal(unstorable, outcome.EscrowID))
+		return
 	}
+	// The client keeps every byte that arrived; only the replay stops, and only this refusal is news.
+	cacheRefusal := s.cache.put(key, entry, s.now())
+	s.countCacheResult(normalized.Model, cacheRefusal)
+	if cacheRefusal == filters.CacheRefusedUnfinished {
+		s.events.ReplyNotCached(journal.RequestLine{RequestID: requestID, Model: normalized.Model, EscrowID: outcome.EscrowID})
+	}
+}
+
+func (s *Server) countCacheResult(model, refusal string) {
+	if s.cacheResults == nil {
+		return
+	}
+	s.cacheResults.CacheResult(model, cmp.Or(refusal, cacheResultStored))
 }
 
 // routableModel refuses a model before it can take a limiter slot. See README.md, "The route table".
@@ -300,7 +318,7 @@ func authorizeModel(configured config.Limits, model string, identity credentials
 }
 
 // race returns the outcome and the failure the reply's status could not carry. See README.md, "Streaming the reply".
-func (s *Server) race(w http.ResponseWriter, r *http.Request, requestID string, normalized filters.Result, inputTokens uint64, escrowPin string) (engine.RaceOutcome, error) {
+func (s *Server) race(w http.ResponseWriter, r *http.Request, requestID string, normalized filters.Result, inputTokens uint64, escrowPin string, logprobsOptimization *bool) (engine.RaceOutcome, error) {
 	startedAt := s.now()
 	client := newClientStream(w, requestID, normalized.ClientStream, normalized.ClientUsage, normalized.Logprobs, s.buffers)
 	defer client.discard()
@@ -316,11 +334,12 @@ func (s *Server) race(w http.ResponseWriter, r *http.Request, requestID string, 
 		OnEscrow:     func(escrowID string) { client.Header().Set(EscrowHeader, escrowID) },
 
 		Params: user.InferenceParams{
-			Model:       normalized.Model,
-			Prompt:      normalized.Body,
-			InputLength: uint64(len(normalized.Body)),
-			MaxTokens:   outputTokens,
-			StartedAt:   s.now().Unix(),
+			Model:                        normalized.Model,
+			Prompt:                       normalized.Body,
+			InputLength:                  uint64(len(normalized.Body)),
+			MaxTokens:                    outputTokens,
+			StartedAt:                    s.now().Unix(),
+			LogprobsOptimizationOverride: logprobsOptimization,
 		},
 	}, client)
 	if err != nil {

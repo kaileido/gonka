@@ -8,27 +8,27 @@ type crownNarrator interface {
 	HostCrownedAgain(participant, model string)
 }
 
-type crownKey struct{ participant, model string }
+type hostModelKey struct{ participant, model string }
 
 // crownStrikes withholds the crown from a host answering without content, but leaves it in rotation. See rules.md, "9. Bounded by construction".
 type crownStrikes struct {
 	mu       sync.Mutex
-	strikes  map[crownKey]int
+	strikes  map[hostModelKey]int
 	narrator crownNarrator
 }
 
 func newCrownStrikes(narrator crownNarrator) *crownStrikes {
-	return &crownStrikes{strikes: map[crownKey]int{}, narrator: narrator}
+	return &crownStrikes{strikes: map[hostModelKey]int{}, narrator: narrator}
 }
 
 func (g *crownStrikes) Denied(participant, model string) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return g.strikes[crownKey{participant: participant, model: model}] >= crownDenialStrikes
+	return g.strikes[hostModelKey{participant: participant, model: model}] >= crownDenialStrikes
 }
 
 func (g *crownStrikes) Observe(participant, model string, contentless bool) {
-	key := crownKey{participant: participant, model: model}
+	key := hostModelKey{participant: participant, model: model}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if !contentless {

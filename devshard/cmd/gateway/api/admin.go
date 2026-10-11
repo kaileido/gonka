@@ -212,10 +212,13 @@ func (s *Server) handleDebugMemstats(w http.ResponseWriter, r *http.Request) {
 	if !allowMethods(w, r, http.MethodGet, http.MethodHead) {
 		return
 	}
-	var memory runtime.MemStats
-	runtime.ReadMemStats(&memory)
+	memory, err := readMemory()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"alloc":           memory.Alloc,
+		"alloc":           memory.HeapAlloc,
 		"total_alloc":     memory.TotalAlloc,
 		"sys":             memory.Sys,
 		"heap_alloc":      memory.HeapAlloc,

@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"cmp"
 	"time"
 
 	"devshard/cmd/gateway/limits"
@@ -274,6 +275,9 @@ func (c *raceCoordinator) cancelAll() {
 	c.cancelled = true
 	c.stopPicking()
 	now := c.deps.Now()
+	if c.abandonAfter == nil {
+		c.abandonAfter = time.After(cmp.Or(c.deps.CancelGrace, cancelledAttemptGrace))
+	}
 	for _, attempt := range c.attempts {
 		if attempt.done {
 			continue
@@ -325,4 +329,19 @@ func (c *raceCoordinator) plan() deadlinePlan {
 
 func (c *raceCoordinator) escalationRequest() EscalationRequest {
 	return EscalationRequest{InputTokens: c.request.InputTokens}
+}
+
+// abandonCancelled stops waiting for attempts that ignored their cancellation: each is reported unclassified, so its open nonce still takes a timeout vote, and its late return is ignored.
+func (c *raceCoordinator) abandonCancelled() {
+	c.catchUp()
+	now := c.deps.Now()
+	for _, attempt := range c.attempts {
+		if attempt.done {
+			continue
+		}
+		attempt.done, attempt.abandoned, attempt.completed = true, true, now
+		attempt.nonceFinished = c.target.NonceFinished(attempt.nonce)
+		c.retire(attempt)
+		c.traceUnreported(attempt, ReasonAbandonedAfterCancel)
+	}
 }

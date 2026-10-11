@@ -40,8 +40,10 @@ func (s Sessions) Target(escrowID string) (engine.DispatchTarget, func(), bool) 
 type dispatchSession interface {
 	SendOnly(ctx context.Context, prepared *user.PreparedInference, stream io.Writer, onReceipt func()) (*host.HostResponse, error)
 	ProcessResponse(hostIdx int, reply *host.HostResponse, inferenceNonce uint64) error
+	BindReceivedStream(nonce uint64, received [][32]byte)
 	PinPendingFinish(inferenceID uint64)
 	UnpinPendingFinish(inferenceID uint64)
+	ArmQuietSettle()
 	IsNonceFinished(nonce uint64) bool
 	HostParticipantKeyList() []string
 	HostLabel(hostIdx int) string
@@ -73,15 +75,23 @@ func (t escrowTarget) Send(ctx context.Context, nonce scheduler.Prepared, stream
 		if applyErr := t.session.ProcessResponse(prepared.HostIdx(), reply, prepared.Nonce()); applyErr != nil {
 			err = errors.Join(err, applyErr)
 		}
+		t.session.BindReceivedStream(prepared.Nonce(), reply.ReceivedResponseHashes)
 	}
-	if divergedState(err) {
+	switch {
+	case divergedState(err):
 		err = fmt.Errorf("%w: %w", engine.ErrStateRootDivergence, err)
+	case errors.Is(err, user.ErrLocalRootUnavailable):
+		err = fmt.Errorf("%w: %w", engine.ErrLocalRootUnavailable, err)
 	}
 	if reply == nil {
 		return nil, err
 	}
 	inferenceID := prepared.Nonce()
-	return hostReply{reply: reply, releaseFinish: sync.OnceFunc(func() { t.session.UnpinPendingFinish(inferenceID) })}, err
+	// A released Finish rides the next Start diff, or a quiet escrow composes it alone. See escrows.md, "Height sync".
+	return hostReply{reply: reply, releaseFinish: sync.OnceFunc(func() {
+		t.session.UnpinPendingFinish(inferenceID)
+		t.session.ArmQuietSettle()
+	})}, err
 }
 
 // divergedState reads a rejected post state root from either side of the wire: the host's diff or the local hash.

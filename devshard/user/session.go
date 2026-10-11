@@ -3205,13 +3205,14 @@ func (s *Session) armQuietSettleLocked() {
 		d = defaultQuietSettleDelay
 	}
 	var timer *time.Timer
-	timer = time.AfterFunc(d, func() { s.fireQuietSettle(timer) })
+	timer = time.AfterFunc(d, func() { s.fireQuietSettle(&timer) })
 	s.quietSettle = timer
 }
 
-func (s *Session) fireQuietSettle(timer *time.Timer) {
+// fireQuietSettle takes the timer by address: it may fire before AfterFunc returns, and only under s.mu is the assignment visible.
+func (s *Session) fireQuietSettle(timer **time.Timer) {
 	s.mu.Lock()
-	if s.quietSettleClosed || s.quietSettle != timer {
+	if s.quietSettleClosed || s.quietSettle != *timer {
 		s.mu.Unlock()
 		return
 	}

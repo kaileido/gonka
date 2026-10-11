@@ -1,13 +1,17 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"slices"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"devshard/cmd/gateway/engine"
 	"devshard/cmd/gateway/internal/leakcheck"
@@ -62,6 +66,11 @@ func newLiveSession(t *testing.T, hostClients ...user.HostClient) (*user.Session
 	}
 	clients := make([]user.HostClient, len(group))
 	copy(clients, hostClients)
+	for _, client := range hostClients {
+		if aware, ok := client.(groupAware); ok {
+			aware.joinGroup(t, signers, machine)
+		}
+	}
 	session, err := user.NewSession(machine, creator, liveEscrowID, group, clients, verifier, user.WithStorage(store))
 	if err != nil {
 		t.Fatalf("NewSession = %v, want nil", err)
@@ -116,7 +125,9 @@ func (s *recordingSession) ProcessResponse(hostIdx int, reply *host.HostResponse
 	return s.applyErr
 }
 
-func (s *recordingSession) PinPendingFinish(uint64) { s.calls = append(s.calls, "PinPendingFinish") }
+func (s *recordingSession) PinPendingFinish(uint64)               { s.calls = append(s.calls, "PinPendingFinish") }
+func (s *recordingSession) BindReceivedStream(uint64, [][32]byte) {}
+func (s *recordingSession) ArmQuietSettle()                       {}
 func (s *recordingSession) UnpinPendingFinish(uint64) {
 	s.calls = append(s.calls, "UnpinPendingFinish")
 }
@@ -393,13 +404,30 @@ func (s *clientSink) Flush() { s.flushes++ }
 
 // flushingHost mirrors transport.writeSSELine: it writes a line and flushes only if the writer satisfies http.Flusher.
 type flushingHost struct {
-	line       string
-	sawFlusher bool
+	line           string
+	sawFlusher     bool
+	receivedHashes [][32]byte
+	t              *testing.T
+	signers        []*signing.Secp256k1Signer
+	machine        *state.StateMachine
+}
+
+// groupAware is a fake host that signs as the group's executor once the session's keys exist.
+type groupAware interface {
+	joinGroup(t *testing.T, signers []*signing.Secp256k1Signer, machine *state.StateMachine)
+}
+
+func (h *flushingHost) joinGroup(t *testing.T, signers []*signing.Secp256k1Signer, machine *state.StateMachine) {
+	h.t, h.signers, h.machine = t, signers, machine
 }
 
 func (h *flushingHost) Send(_ context.Context, req host.HostRequest, stream io.Writer, onReceipt func(*host.HostResponse)) (*host.HostResponse, error) {
+	receipt, confirmedAt, finish := h.executorProof(req.Nonce)
 	if onReceipt != nil {
-		onReceipt(&host.HostResponse{})
+		onReceipt(&host.HostResponse{Nonce: req.Nonce, Receipt: receipt, ConfirmedAt: confirmedAt})
+	}
+	if stream == nil {
+		return &host.HostResponse{Nonce: req.Nonce}, nil
 	}
 	if _, err := io.WriteString(stream, h.line); err != nil {
 		return nil, err
@@ -409,13 +437,43 @@ func (h *flushingHost) Send(_ context.Context, req host.HostRequest, stream io.W
 	if ok {
 		flusher.Flush()
 	}
-	return &host.HostResponse{
-		Nonce:           req.Nonce,
-		StreamBytesRead: int64(len(h.line)),
-		Mempool: []*types.DevshardTx{{Tx: &types.DevshardTx_FinishInference{
-			FinishInference: &types.MsgFinishInference{InferenceId: req.Nonce, EscrowId: liveEscrowID},
-		}}},
-	}, nil
+	reply := &host.HostResponse{
+		Nonce:                  req.Nonce,
+		Receipt:                receipt,
+		ConfirmedAt:            confirmedAt,
+		StreamBytesRead:        int64(len(h.line)),
+		ReceivedResponseHashes: h.receivedHashes,
+	}
+	if finish != nil {
+		reply.Mempool = []*types.DevshardTx{{Tx: &types.DevshardTx_FinishInference{FinishInference: finish}}}
+	}
+	return reply, nil
+}
+
+// executorProof signs what the nonce's executor sends: its receipt and a Finish the state machine applies; a diff-only nonce gets neither.
+func (h *flushingHost) executorProof(nonce uint64) ([]byte, int64, *types.MsgFinishInference) {
+	if h.machine == nil {
+		return nil, 0, &types.MsgFinishInference{InferenceId: nonce, EscrowId: liveEscrowID}
+	}
+	record, tracked := h.machine.GetInference(nonce)
+	if !tracked {
+		return nil, 0, nil
+	}
+	executor := h.signers[record.ExecutorSlot]
+	confirmedAt := record.StartedAt + 1
+	receipt := testutil.SignExecutorReceipt(h.t, executor, liveEscrowID, nonce, record.PromptHash, record.Model,
+		record.InputLength, record.MaxTokens, record.StartedAt, confirmedAt)
+	finish := &types.MsgFinishInference{
+		InferenceId:  nonce,
+		ResponseHash: bytes.Repeat([]byte{1}, sha256.Size),
+		ServedHash:   bytes.Repeat([]byte{2}, sha256.Size),
+		InputTokens:  1,
+		OutputTokens: 1,
+		ExecutorSlot: record.ExecutorSlot,
+		EscrowId:     liveEscrowID,
+	}
+	finish.ProposerSig = testutil.SignProposerTx(h.t, executor, finish)
+	return receipt, confirmedAt, finish
 }
 
 // Test flow:
@@ -529,5 +587,102 @@ func TestSessionsSatisfyTheEngineDeps(t *testing.T) {
 
 	if deps.Targets == nil || deps.Timeouts == nil {
 		t.Error("engine.Deps did not take the adapters, want both wired")
+	}
+}
+
+// Test flow:
+//  1. Send a prepared nonce through a real session whose host reports the stream it served, once matching its Finish and once not.
+//  2. Release the Finish and send the pending diff, so the Finish applies.
+//  3. Assert the session's served-binding handler hears bound for the matching stream and mismatch for the other.
+func TestSendBindsTheReceivedStreamToItsFinish(t *testing.T) {
+	t.Parallel()
+	for _, testCase := range []struct {
+		name     string
+		received [32]byte
+		want     user.ServedBinding
+	}{
+		{name: "served hash matches", received: [32]byte(bytes.Repeat([]byte{2}, sha256.Size)), want: user.ServedBindingBound},
+		{name: "stream differs", received: sha256.Sum256([]byte("tampered")), want: user.ServedBindingMismatch},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			upstream := &flushingHost{line: "data: [DONE]\n\n", receivedHashes: [][32]byte{testCase.received}}
+			session, _ := newLiveSession(t, upstream, upstream)
+			var verdicts []user.ServedBinding
+			session.SetServedBindingHandler(func(_ uint64, _ int, _ string, verdict user.ServedBinding) {
+				verdicts = append(verdicts, verdict)
+			})
+			prepared := prepareNonce(t, session)
+
+			response, err := (escrowTarget{session: session}).Send(context.Background(), prepared, io.Discard, nil)
+			if err != nil {
+				t.Fatalf("Send = %v, want nil", err)
+			}
+			response.ReleaseFinish()
+			if err := session.SendPendingDiff(context.Background()); err != nil {
+				t.Fatalf("SendPendingDiff = %v, want nil", err)
+			}
+
+			if len(verdicts) != 1 || verdicts[0] != testCase.want {
+				t.Fatalf("served-binding verdicts = %v, want [%s]", verdicts, testCase.want)
+			}
+		})
+	}
+}
+
+// Test flow:
+//  1. Inside a fake-time bubble, resolve the escrow as a race does and send a prepared nonce whose host returns a receipt and a Finish.
+//  2. Release the Finish but keep the race's hold, as a race still owing a loser's timeout vote does, and let six seconds pass with no other request.
+//  3. Assert the session composed the leftover receipt and Finish on its own: nothing is pending and the record is finished.
+func TestAReleasedFinishSettlesOnAQuietEscrowWhileTheRaceStillOwesAVote(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		upstream := &flushingHost{line: "data: [DONE]\n\n"}
+		session, machine := newLiveSession(t, upstream, upstream)
+		target, _, held := NewSessions(heldEscrow{session: registry.NewSessionHandle(session, machine)}).Target(liveEscrowID)
+		if !held {
+			t.Fatalf("Target(%s) held = false, want true", liveEscrowID)
+		}
+		prepared := prepareNonce(t, session)
+		response, err := target.Send(context.Background(), prepared, io.Discard, nil)
+		if err != nil {
+			t.Fatalf("Send = %v, want nil", err)
+		}
+
+		response.ReleaseFinish()
+		time.Sleep(6 * time.Second)
+		synctest.Wait()
+
+		if pending := session.PendingTxs(); len(pending) != 0 {
+			t.Fatalf("PendingTxs() = %d txs after a quiet wait, want 0: the hold stays reserved", len(pending))
+		}
+		record, tracked := machine.GetInference(prepared.Nonce())
+		if !tracked || record.Status != types.StatusFinished {
+			t.Fatalf("GetInference(%d) = %v (tracked %v), want Finished", prepared.Nonce(), record.Status, tracked)
+		}
+	})
+}
+
+// heldEscrow is one live escrow that every race can take.
+type heldEscrow struct{ session registry.EscrowSession }
+
+func (h heldEscrow) Acquire(string) (registry.EscrowSession, func(), bool) {
+	return h.session, func() {}, true
+}
+
+func (h heldEscrow) SettlementSession(string) (registry.EscrowSession, bool) { return h.session, true }
+
+// Test flow:
+//  1. Send through a session whose apply fails because the gateway's own store could not give the post-state root.
+//  2. Assert the error reads as the gateway's local fault and never as a diverged state root.
+func TestSendReportsAnUnavailableLocalRootAsTheGatewaysOwnFault(t *testing.T) {
+	t.Parallel()
+	session, _ := newLiveSession(t)
+	prepared := prepareNonce(t, session)
+	recorded := &recordingSession{reply: &host.HostResponse{}, applyErr: fmt.Errorf("%w: nonce 1", user.ErrLocalRootUnavailable)}
+
+	_, err := escrowTarget{session: recorded}.Send(context.Background(), prepared, io.Discard, nil)
+
+	if !errors.Is(err, engine.ErrLocalRootUnavailable) || errors.Is(err, engine.ErrStateRootDivergence) {
+		t.Fatalf("Send = %v, want ErrLocalRootUnavailable and not ErrStateRootDivergence", err)
 	}
 }

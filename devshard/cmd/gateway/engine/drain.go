@@ -68,6 +68,11 @@ func (s clientStream) Write(chunk []byte) (int, error) {
 }
 
 func (s clientStream) Flush() {
+	select {
+	case <-s.gone:
+		return
+	default:
+	}
 	if flusher, ok := s.client.(http.Flusher); ok {
 		flusher.Flush()
 	}

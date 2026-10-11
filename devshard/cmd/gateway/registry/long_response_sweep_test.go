@@ -29,7 +29,7 @@ type acceptingVoter struct {
 }
 
 func (v acceptingVoter) VerifyTimeout(_ context.Context, inferenceID uint64, reason types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff, _ host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
-	content, err := proto.MarshalOptions{Deterministic: true}.Marshal(&types.TimeoutVoteContent{
+	content, err := types.CanonicalSignedBytes(&types.TimeoutVoteContent{
 		EscrowId:    longResponseEscrowID,
 		InferenceId: inferenceID,
 		Reason:      reason,
@@ -57,7 +57,7 @@ type longResponseEscrow struct {
 	signers  []*signing.Secp256k1Signer
 }
 
-func publishLongResponseEscrow(t *testing.T) longResponseEscrow {
+func publishLongResponseEscrow(t *testing.T, servedBindings ...servedBindingObserver) longResponseEscrow {
 	t.Helper()
 	signers := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	group := testutil.MakeGroup(signers)
@@ -76,10 +76,14 @@ func publishLongResponseEscrow(t *testing.T) longResponseEscrow {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = session.Close() })
 	handle := NewSessionHandle(session, machine).(sessionHandle)
-	registry := New(Deps{
+	deps := Deps{
 		ServingSessions: func(context.Context, string) (EscrowSession, error) { return handle, nil },
 		Now:             fixedClock(),
-	})
+	}
+	if len(servedBindings) > 0 {
+		deps.ServedBindings = servedBindings[0]
+	}
+	registry := New(deps)
 	require.NoError(t, registry.Add(context.Background(), longResponseEscrowID, "llama"))
 	return longResponseEscrow{registry: registry, handle: handle, session: session, machine: machine, signers: signers}
 }

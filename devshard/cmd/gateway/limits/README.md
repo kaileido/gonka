@@ -96,7 +96,7 @@ A cut-off is a decision an operator has to be able to explain afterwards, and it
 | `escrowWeight` | `Σ currentWeight[host] * hostShare[host]` over available hosts |
 | `availableShare` | the same sum with every weight taken as one |
 
-`hostShares[host]` is `slots(host, escrow) / totalSlots(host)` across every escrow that host serves. Raw slot counts would count a participant once per escrow it serves instead of splitting it between them.
+`hostShares[host]` is `slots(host, escrow) / totalSlots(host, model)` across every escrow of the same model that host serves: a host's weight is earned per model, so its escrows of another model take nothing from it. Raw slot counts would count a participant once per escrow it serves instead of splitting it between them.
 
 `Capacity.mu` guards only the snapshot field and the outer membership map — a published snapshot's maps are never written again and each escrow's membership map is the capacity model's own copy — so `ModelWeights` and `EscrowWeight` take the map references under the lock and sum them once it releases.
 

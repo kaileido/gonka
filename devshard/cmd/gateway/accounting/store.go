@@ -29,6 +29,19 @@ type EscrowSnapshot struct {
 	Counters      []PersistedCounter         `json:"counters,omitempty"`
 	Nonces        []PersistedNonce           `json:"nonces,omitempty"`
 	ServiceNonces []PersistedServiceCount    `json:"service_nonces,omitempty"`
+	LiveCosts     []PersistedCost            `json:"live_costs,omitempty"`
+}
+
+// PersistedCost is the money of one nonce the chain still holds; a sealed nonce lives in Money instead.
+type PersistedCost struct {
+	Nonce       uint64                `json:"nonce"`
+	Reserved    uint64                `json:"reserved"`
+	Actual      uint64                `json:"actual"`
+	InputLength uint64                `json:"input_length"`
+	MaxTokens   uint64                `json:"max_tokens"`
+	Input       uint64                `json:"input"`
+	Output      uint64                `json:"output"`
+	Status      types.InferenceStatus `json:"status"`
 }
 
 // The gateway's side of the counts HostStats holds the chain's side of. See README.md, "Storage".
@@ -141,7 +154,15 @@ func snapshotEscrow(escrow *escrowLedger) EscrowSnapshot {
 	}
 	maps.Copy(stored.HostStats, escrow.hostStats)
 	stored.SlotActivity = escrow.slotActivity()
-	stored.Money = escrow.moneyBySlot()
+	stored.Money = sealedMoney(escrow.folded)
+	stored.LiveCosts = make([]PersistedCost, 0, len(escrow.costs))
+	for nonce, cost := range escrow.costs {
+		stored.LiveCosts = append(stored.LiveCosts, PersistedCost{
+			Nonce: nonce, Reserved: cost.reserved, Actual: cost.actual, InputLength: cost.inputLength,
+			MaxTokens: cost.maxTokens, Input: cost.input, Output: cost.output, Status: cost.status,
+		})
+	}
+	slices.SortFunc(stored.LiveCosts, func(left, right PersistedCost) int { return cmp.Compare(left.Nonce, right.Nonce) })
 	stored.Produced = maps.Clone(escrow.produced)
 	for key, count := range escrow.serviceNonces {
 		stored.ServiceNonces = append(stored.ServiceNonces, PersistedServiceCount{SlotID: key.slotID, Purpose: key.purpose, Count: count})
@@ -201,6 +222,12 @@ func (b *Book) Restore(snapshot Snapshot) error {
 		escrow.retired = stored.Retired
 		maps.Copy(escrow.hostStats, stored.HostStats)
 		maps.Copy(escrow.folded, stored.Money)
+		for _, live := range stored.LiveCosts {
+			escrow.costs[live.Nonce] = nonceCost{
+				reserved: live.Reserved, actual: live.Actual, inputLength: live.InputLength,
+				maxTokens: live.MaxTokens, input: live.Input, output: live.Output, status: live.Status,
+			}
+		}
 		maps.Copy(escrow.produced, stored.Produced)
 		for slotID, activity := range stored.SlotActivity {
 			escrow.challenged[slotID] = activity.Challenged

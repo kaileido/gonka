@@ -2,7 +2,6 @@
 package app
 
 import (
-	"common/observability"
 	"context"
 	"errors"
 	"fmt"
@@ -14,6 +13,7 @@ import (
 	"time"
 
 	"common/httpguard"
+	"common/observability"
 
 	devshardpkg "devshard"
 	"devshard/cmd/gateway/accounting"
@@ -86,6 +86,8 @@ func applyDialGuard() {
 func serve() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	stopTracing := startTracing(ctx)
+	defer stopTracing()
 	return run(ctx)
 }
 
@@ -154,7 +156,9 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 		return nil, fmt.Errorf("resolving host route prefix from version %q: %w", Version, err)
 	}
 
-	sources, err := openSessions(configuration.Chain, configuration.HeightSync, routePrefix)
+	telemetry := metrics.New()
+	adoption := transport.NewPeerRPCAdoption(metrics.NewPeerRPCRecorder(telemetry))
+	sources, err := openSessions(configuration.Chain, configuration.HeightSync, routePrefix, adoption)
 	if err != nil {
 		return nil, err
 	}
@@ -234,7 +238,6 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 		}
 		return capability
 	})
-	telemetry := metrics.New()
 
 	devshardWork := make(chan struct{}, 1)
 	depletion := &depletionNotice{}
@@ -248,6 +251,8 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 		Config:       configHolder,
 		Depletion:    depletion,
 		Dispatches:   metrics.NewDispatchRecorder(telemetry),
+		Served:       metrics.NewServedBindingRecorder(telemetry),
+		PeerRPC:      adoption,
 		Ledger:       recorder,
 		Journal:      events,
 		Now:          clock,
@@ -363,16 +368,17 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 			storageDir:   storageDir,
 			nonces:       recorder,
 		},
-		Suspicious:  suspicious,
-		HostStates:  hosts,
-		HostWindows: participants,
-		Telemetry:   telemetry,
-		Buffers:     buffers,
-		Rejections:  metrics.NewLimitRecorder(telemetry),
-		Journal:     events,
-		StorageDir:  storageDir,
-		Version:     Version,
-		Now:         clock,
+		Suspicious:   suspicious,
+		HostStates:   hosts,
+		HostWindows:  participants,
+		Telemetry:    telemetry,
+		Buffers:      buffers,
+		Rejections:   metrics.NewLimitRecorder(telemetry),
+		CacheResults: metrics.NewCacheResultRecorder(telemetry),
+		Journal:      events,
+		StorageDir:   storageDir,
+		Version:      Version,
+		Now:          clock,
 	})
 	if err != nil {
 		return nil, err

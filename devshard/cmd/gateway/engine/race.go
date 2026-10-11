@@ -66,6 +66,7 @@ type raceDeps struct {
 	Policy       EscalationPolicy
 	Modes        config.Modes
 	DrainTimeout time.Duration
+	CancelGrace  time.Duration
 	Classify     func(participant string) streamClassifier
 	Now          func() time.Time
 	Timer        func() raceTimer
@@ -92,6 +93,9 @@ const (
 	triggerStall
 )
 
+// cancelledAttemptGrace is how long a cancelled attempt may take to return; wall time, not the race timer, because it bounds a goroutine a dead host's read can hold, not the protocol.
+const cancelledAttemptGrace = 2 * time.Second
+
 // Written only by the coordinator: from AttemptEvents, and from its own deadline firings.
 type liveAttempt struct {
 	nonce       uint64
@@ -110,6 +114,7 @@ type liveAttempt struct {
 	observedFirst time.Duration
 	escalated     bool
 	done          bool
+	abandoned     bool
 	stalled       bool
 	backstopped   bool
 	nonceFinished bool
@@ -154,6 +159,7 @@ type raceCoordinator struct {
 	excluded         []string
 	clientGoneAt     time.Time
 	cancelled        bool
+	abandonAfter     <-chan time.Time
 	handedOff        bool
 	pocBypass        bool
 	balanceExhausted bool
@@ -305,6 +311,8 @@ func (c *raceCoordinator) await() raceExit {
 			c.answer(claim)
 		case <-c.timer.Fired():
 			c.expire(arm)
+		case <-c.abandonAfter:
+			c.abandonCancelled()
 		case <-c.clientGone():
 			return c.depart()
 		}

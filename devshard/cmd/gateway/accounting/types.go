@@ -8,7 +8,7 @@ import (
 	"devshard/types"
 )
 
-const SchemaVersion = 9
+const SchemaVersion = 10
 
 type Disposition string
 

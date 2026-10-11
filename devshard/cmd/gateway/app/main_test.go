@@ -35,6 +35,7 @@ import (
 	"devshard/cmd/gateway/scheduler"
 	"devshard/cmd/gateway/store"
 	"devshard/heightsync"
+	"devshard/transport"
 	"devshard/types"
 	"devshard/user"
 )
@@ -121,7 +122,7 @@ func (chainWithoutADial) Escrow(context.Context, uint64) (chain.EscrowInfo, bool
 }
 
 func sessionsReading(records devshardLookup, storageDir string, reader chain.Reader) sessionSources {
-	return func(config.Chain, config.HeightSync, string) (chainSources, error) {
+	return func(config.Chain, config.HeightSync, string, *transport.PeerRPCAdoption) (chainSources, error) {
 		return chainSources{
 			Serving: func(context.Context, string) (registry.EscrowSession, error) {
 				return nil, errNoChainDialed
@@ -161,7 +162,7 @@ func TestComposeReadsThePublicAPIThroughTheSourcesClient(t *testing.T) {
 		t.Fatalf("store.Open() = %v, want nil", err)
 	}
 	client := &http.Client{}
-	sources := func(config.Chain, config.HeightSync, string) (chainSources, error) {
+	sources := func(config.Chain, config.HeightSync, string, *transport.PeerRPCAdoption) (chainSources, error) {
 		return chainSources{
 			Serving:   func(context.Context, string) (registry.EscrowSession, error) { return nil, errNoChainDialed },
 			ReadOnly:  readOnlySessions(gatewayStore, storageDir),

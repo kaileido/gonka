@@ -42,7 +42,7 @@ The nonce cap retires every capped escrow at once. Inside the bridge window that
 | Rule | Condition |
 | --- | --- |
 | budget pressure | `deficit > Parking`, or the wallet refused the last create while a regular create is still wanted and nothing is parking: the least-free starved routable escrow, busy or not |
-| idle starved | a starved routable escrow idle for ten minutes (`idleRetireAfter`) |
+| idle starved | a starved routable escrow idle for ten minutes (`idleRetireAfter`): nothing open at a tick and no race took it since the tick before (`escrow/planner_state.go`, `idleFor`, reading the registry's `Holds`). A race that starts and settles between two ticks would otherwise never be seen, and a steadily used escrow would be retired as idle |
 | surplus | the demand window is full, no regular create is wanted (`max(guard, cap, spread) = 0`), `#routable > max(TargetCount, K + ceil(max(0, need − Σ_routable full atModelPrice(free)) / (Amount − FullCost)))`, and it has held on three scheduled ticks in a row (`surplusSamples`, counted as the streak plus one on a scheduled tick and the streak alone on a wakeup): the least-free starved escrow while `fullCount > K`, else the least-free full one while `fullCount ≥ K + 2` |
 
 No planned retire chooses an unread escrow: it has served nothing yet, and the next read gives its real money. Least-free means lowest free money, then lowest id, so the same input always gives the same decision. A planned retire therefore never takes `fullCount` below `K`.

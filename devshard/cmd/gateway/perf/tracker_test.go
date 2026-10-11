@@ -556,3 +556,20 @@ func TestPressureKeepsEachLatencyInItsOwnDimension(t *testing.T) {
 		})
 	}
 }
+
+// Test flow:
+//  1. Build a tracker with the max-ejection cap disabled.
+//  2. Record served-stream mismatches for one host up to the consecutive-fail threshold.
+//  3. Assert the host is ejected, exactly as the same run of stalls would eject it.
+func TestServedMismatchesEjectAHostLikeStalls(t *testing.T) {
+	perf := noCap(testPerf())
+	tracker := newTestTracker(perf, fixedNow(testEpoch))
+
+	for range perf.ConsecutiveFailThreshold {
+		tracker.RecordServedMismatch("participant-a", "model-a")
+	}
+
+	if !tracker.Ejected("participant-a", "model-a") {
+		t.Fatal("Ejected() after served mismatches at the consecutive-fail threshold = false, want true")
+	}
+}

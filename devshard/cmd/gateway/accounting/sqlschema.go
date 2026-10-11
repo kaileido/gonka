@@ -104,9 +104,22 @@ CREATE TABLE IF NOT EXISTS accounting_nonces (
 	logprobs_decoded INTEGER NOT NULL,
 	PRIMARY KEY (escrow_id, nonce)
 );
+CREATE TABLE IF NOT EXISTS accounting_costs (
+	escrow_id    TEXT    NOT NULL,
+	nonce        INTEGER NOT NULL,
+	reserved     INTEGER NOT NULL,
+	actual       INTEGER NOT NULL,
+	input_length INTEGER NOT NULL,
+	max_tokens   INTEGER NOT NULL,
+	input        INTEGER NOT NULL,
+	output       INTEGER NOT NULL,
+	status       INTEGER NOT NULL,
+	PRIMARY KEY (escrow_id, nonce)
+);
 `
 
 var escrowTables = []string{
+	"accounting_costs",
 	"accounting_nonces",
 	"accounting_counters",
 	"accounting_host_stats",

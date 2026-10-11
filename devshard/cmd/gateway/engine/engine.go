@@ -107,6 +107,7 @@ type Engine struct {
 	deps           Deps
 	carry          *carryBudget
 	crown          *crownStrikes
+	lookups        *lookupRefusals
 	settles        *settleQueue
 	stopping       context.Context
 	cancelStopping context.CancelFunc
@@ -141,6 +142,7 @@ func NewEngine(deps Deps) (*Engine, error) {
 		deps:           deps,
 		carry:          newCarryBudget(deps.Config.Load().Stream),
 		crown:          newCrownStrikes(deps.Journal),
+		lookups:        newLookupRefusals(),
 		settles:        newSettleQueue(clock),
 		stopping:       stopping,
 		cancelStopping: cancelStopping,
@@ -305,6 +307,9 @@ func latencyPressure(tracker hostPerf, participant, model string) limits.Pressur
 
 // record translates one outcome into every consumer's vocabulary, applying the exemption ladder once. See rules.md, "2. Exactly one outcome and exactly one winner per race, on every path".
 func (e *Engine) record(outcome RaceOutcome, params any, registration *raceRegistration) {
+	for index, attempt := range outcome.Attempts {
+		outcome.Attempts[index] = e.lookups.judge(attempt, outcome.Model)
+	}
 	for _, attempt := range outcome.Attempts {
 		if sample, exemption := outcome.Sample(attempt); exemption == SampleRecorded {
 			e.deps.Perf.RecordSample(sample)

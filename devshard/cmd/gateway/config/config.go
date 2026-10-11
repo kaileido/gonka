@@ -83,6 +83,7 @@ type ModelLimits struct {
 type Limits struct {
 	DefaultMaxTokens         int64
 	ForceUpstreamStreaming   bool
+	LogprobsOptimization     *bool
 	MaxBufferedResponseBytes int64
 	MaxTokensCap             int64
 	FallbackMaxModelLen      int64
@@ -164,6 +165,7 @@ type HeightSync struct {
 	Enabled     bool
 	RequireSeed bool
 	ChainOracle bool
+	Heartbeat   bool
 	AnchorK     int64
 	AnchorSlots int64
 }

@@ -727,3 +727,53 @@ func TestASnapshotThatWentStaleDuringPoCStillServesACachedReply(t *testing.T) {
 		t.Fatalf("replay during a PoC that went stale: got %d %q, want the cached 200", replay.Code, replay.Body.String())
 	}
 }
+
+// Test flow:
+//  1. Send a chat whose reply finished, and one whose reply stopped mid-answer, from different callers.
+//  2. Assert the cache counted one store and one refusal named for why, each on the request's model.
+func TestTheCacheCountsWhatItStoredAndWhyItRefused(t *testing.T) {
+	live := newHarness(t)
+
+	live.inference.reply = `{"choices":[{"index":0,"message":{"content":"hi"},"finish_reason":"stop"}]}`
+	live.request(t, http.MethodPost, "/v1/chat/completions", chatBody, callerHeaders("caller-a"))
+	live.inference.reply = `{"choices":[{"index":0,"message":{"content":"half"}}]}`
+	live.request(t, http.MethodPost, "/v1/chat/completions", chatBody, callerHeaders("caller-b"))
+
+	live.cached.mu.Lock()
+	defer live.cached.mu.Unlock()
+	want := []string{"qwen/stored", "qwen/" + filters.CacheRefusedUnfinished}
+	if !slices.Equal(live.cached.results, want) {
+		t.Fatalf("CacheResult calls = %v, want %v", live.cached.results, want)
+	}
+}
+
+// Test flow:
+//  1. Configure a response cache smaller than the reply a chat will produce.
+//  2. Send that chat.
+//  3. Assert the cache counts the reply it was offered, refused as too large before any entry was built.
+func TestTheCacheCountsAReplyPastItsEntryLimitAsTooLarge(t *testing.T) {
+	live := newHarness(t, func(configuration *config.Config) { configuration.Cache.ChatCacheMaxBytes = 64 })
+	live.inference.reply = `{"choices":[{"index":0,"message":{"content":"` + strings.Repeat("x", 256) + `"},"finish_reason":"stop"}]}`
+
+	live.request(t, http.MethodPost, "/v1/chat/completions", chatBody, callerHeaders("caller-a"))
+
+	live.cached.mu.Lock()
+	defer live.cached.mu.Unlock()
+	if want := []string{"qwen/" + cacheRefusedTooLarge}; !slices.Equal(live.cached.results, want) {
+		t.Fatalf("CacheResult calls = %v, want %v", live.cached.results, want)
+	}
+}
+
+// Test flow:
+//  1. Send the same chat twice from one caller, spelling the Bearer scheme differently the second time.
+//  2. Assert only one race ran: the key, not its spelling, names the caller's cache partition.
+func TestOneKeySpelledTwoWaysSharesOneCachePartition(t *testing.T) {
+	live := newHarness(t)
+
+	live.request(t, http.MethodPost, "/v1/chat/completions", chatBody, map[string]string{"Authorization": "Bearer caller-a"})
+	live.request(t, http.MethodPost, "/v1/chat/completions", chatBody, map[string]string{"Authorization": "bearer  caller-a"})
+
+	if got := live.inference.runs.Load(); got != 1 {
+		t.Fatalf("races = %d, want 1: the second spelling of the same key must hit the cache", got)
+	}
+}

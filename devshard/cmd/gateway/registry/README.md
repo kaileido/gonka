@@ -88,7 +88,7 @@ A ghost's `StartedAt` is seconds, like every other `StartedAt`: a verifier measu
 
 `slotCounts` counts the slots each participant occupies in one escrow: a validator holding several slots repeats in the per-slot key list.
 
-`hostShares` is slots(participant, escrow)/totalSlots(participant), the normalised per-host multiplier `limits.Capacity` expects. `pushMembershipLocked` republishes every live escrow's share rather than only the one that changed, because the denominator moves with the set.
+`hostShares` is slots(participant, escrow)/totalSlots(participant, model) — counted over the escrows of that escrow's model only, since a host's weight is per model — the normalised per-host multiplier `limits.Capacity` expects. `pushMembershipLocked` republishes every live escrow's share rather than only the one that changed, because the denominator moves with the set.
 
 The two notification interfaces are both called from paths that must not block. `exhaustion` is called from the request path, once per spent candidate per pick and once per reserve taken, so an implementation must mark and return rather than do I/O. `publications` is called while the registry holds its lock, so an implementation must return without doing work of its own.
 

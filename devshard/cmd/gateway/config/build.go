@@ -1,6 +1,7 @@
 package config
 
 import (
+	"cmp"
 	"maps"
 	"slices"
 	"strings"
@@ -37,6 +38,7 @@ func Build(values env.Values, overrides Overrides) (*Config, error) {
 	overrideIfSet(&configuration.Limits.DefaultMaxTokens, values.DefaultMaxTokens)
 	overrideIfSet(&configuration.Limits.MaxTokensCap, values.MaxTokensCap)
 	overrideIfSet(&configuration.Limits.ForceUpstreamStreaming, values.ForceUpstreamStreaming)
+	configuration.Limits.LogprobsOptimization = cmp.Or(values.LogprobsOptimization, configuration.Limits.LogprobsOptimization)
 	overrideIfSet(&configuration.Limits.MaxBufferedResponseBytes, values.MaxBufferedResponseBytes)
 	overrideIfSet(&configuration.Limits.Concurrency.MaxRequests, values.MaxConcurrentRequests)
 	overrideIfSet(&configuration.Limits.Concurrency.RequestsPer10000Weight, values.MaxConcurrentRequestsPer10000Weight)
@@ -80,6 +82,7 @@ func Build(values env.Values, overrides Overrides) (*Config, error) {
 	overrideIfSet(&configuration.HeightSync.Enabled, values.HeightSyncEnabled)
 	overrideIfSet(&configuration.HeightSync.RequireSeed, values.HeightSyncRequireSeed)
 	overrideIfSet(&configuration.HeightSync.ChainOracle, values.HeightSyncChainOracle)
+	overrideIfSet(&configuration.HeightSync.Heartbeat, values.HeightSyncHeartbeat)
 	overrideIfSet(&configuration.HeightSync.AnchorK, values.HeightSyncAnchorK)
 	overrideIfSet(&configuration.HeightSync.AnchorSlots, values.HeightSyncAnchorSlots)
 	overrideIfSet(&configuration.HostPing.Disabled, values.HostPingDisabled)
@@ -116,6 +119,7 @@ func Build(values env.Values, overrides Overrides) (*Config, error) {
 	overrideIfSet(&configuration.Scheduler.MatchWaitMS, overrides.MatchWaitMS)
 	overrideIfSet(&configuration.Scheduler.MaxConsecutiveBurns, overrides.MaxConsecutiveBurns)
 	overrideIfSet(&configuration.Limits.ForceUpstreamStreaming, overrides.ForceUpstreamStreaming)
+	configuration.Limits.LogprobsOptimization = cmp.Or(overrides.LogprobsOptimization, configuration.Limits.LogprobsOptimization)
 	overrideIfSet(&configuration.Limits.MaxBufferedResponseBytes, overrides.MaxBufferedResponseBytes)
 	overrideIfSet(&configuration.Scheduler.WarmNewEscrows, overrides.WarmNewEscrows)
 	overrideIfSet(&configuration.Chain.SnapshotMaxAgeSeconds, overrides.ChainSnapshotMaxAgeSeconds)

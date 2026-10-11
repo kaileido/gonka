@@ -85,8 +85,9 @@ func newResponseCache(maxBytes int64) *responseCache {
 // The key carries everything that varies the answer, including what the normalised body no longer
 // states. See README.md, "The response cache".
 func cacheKeyFor(r *http.Request, model string, body []byte, logprobs filters.LogprobIntent, stream, usage bool) cacheKey {
+	caller, _ := bearerKey(r.Header.Get("Authorization"))
 	return cacheKey{
-		caller:   sha256.Sum256([]byte(strings.TrimSpace(r.Header.Get("Authorization")))),
+		caller:   sha256.Sum256([]byte(caller)),
 		body:     sha256.Sum256(body),
 		escrow:   r.PathValue("id"),
 		model:    strings.TrimSpace(model),
@@ -263,7 +264,24 @@ func (w *cacheRecorder) entry(escrowID string, stream bool, unstorable error) (c
 
 // cannotBuildEntry reports a recording with nothing an entry can be built from. See README.md, "The response cache".
 func (w *cacheRecorder) cannotBuildEntry(unstorable error, escrowID string) bool {
-	return w.overflowed || w.writeErr != nil || unstorable != nil || w.body.Len() == 0 || strings.TrimSpace(escrowID) == ""
+	return w.entryRefusal(unstorable, escrowID) != filters.CacheStorable
+}
+
+// entryRefusal names why a recording cannot become an entry, in the cache-result vocabulary.
+func (w *cacheRecorder) entryRefusal(unstorable error, escrowID string) string {
+	switch {
+	case w.overflowed:
+		return cacheRefusedTooLarge
+	case w.writeErr != nil:
+		return cacheRefusedWriteFailed
+	case unstorable != nil:
+		return cacheRefusedRaceFailed
+	case w.body.Len() == 0:
+		return filters.CacheRefusedEmptyBody
+	case strings.TrimSpace(escrowID) == "":
+		return cacheRefusedNoEscrow
+	}
+	return filters.CacheStorable
 }
 
 // exactly copies into a slice with no spare capacity, so a stored entry holds what entrySize charges it.

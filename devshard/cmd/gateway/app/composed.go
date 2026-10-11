@@ -14,6 +14,7 @@ import (
 	"devshard/cmd/gateway/nonces"
 	"devshard/cmd/gateway/registry"
 	"devshard/cmd/gateway/store"
+	"devshard/transport"
 )
 
 // ShutdownGracePeriod is the drain budget Shutdown gives the shutdown steps, as a signal's shutdown does.
@@ -43,7 +44,7 @@ type BootStep struct {
 
 // Compose composes the gateway over sources instead of a dialled chain.
 func Compose(ctx context.Context, values env.Values, storageDir string, gatewayStore *store.Store, sources Sources) (*Composed, error) {
-	dialled := func(config.Chain, config.HeightSync, string) (chainSources, error) {
+	dialled := func(config.Chain, config.HeightSync, string, *transport.PeerRPCAdoption) (chainSources, error) {
 		return chainSources{
 			Serving:   sources.Serving,
 			ReadOnly:  sources.ReadOnly,

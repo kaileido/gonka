@@ -177,7 +177,17 @@ func (r *Registry) holdFor(entry *escrowEntry) func() (func(), bool) {
 }
 
 func (r *Registry) holdLocked(entry *escrowEntry) func() {
+	entry.holds.Add(1)
 	return r.countHoldLocked(entry, &entry.inFlight)
+}
+
+// Holds counts every hold a request ever took on the live escrow, so a reader polling it can tell work happened between two looks.
+func (r *Registry) Holds(escrowID string) uint64 {
+	entry, known := r.live.Load().byID[escrowID]
+	if !known {
+		return 0
+	}
+	return entry.holds.Load()
 }
 
 // HostDials is every address the live escrows can reach, once each. See README.md.

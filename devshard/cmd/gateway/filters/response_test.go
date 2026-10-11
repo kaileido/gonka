@@ -1012,6 +1012,7 @@ func TestCacheRefusalNamesWhyItRefused(t *testing.T) {
 		{name: "choices no client could render", status: 200, body: `{"choices":"none"}`, want: CacheRefusedUnreadable},
 		{name: "the same, inside an event", status: 200, body: "data: {\"choices\":\"none\"}\n\n", want: CacheRefusedUnreadable},
 		{name: "an answer that stopped mid-answer", status: 200, body: `{"choices":[{"index":0,"message":{"content":"half"}}]}`, want: CacheRefusedUnfinished},
+		{name: "one choice finished beside one still running", status: 200, body: `{"choices":[{"index":0,"message":{"content":"a"},"finish_reason":"stop"},{"index":1,"message":{"content":"b"}}]}`, want: CacheRefusedUnfinished},
 		{name: "a status no replay may carry", status: 500, body: finished, want: CacheRefusedStatus},
 		{name: "a status refused before the answer is judged", status: 500, body: `{"choices":[{"index":0,"message":{"content":"half"}}]}`, want: CacheRefusedStatus},
 	}

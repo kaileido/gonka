@@ -70,6 +70,7 @@ const (
 	Terminal          = "terminal"
 	NonceFinished     = "nonce_finished"
 	StateDivergent    = "state_divergent"
+	LocalFault        = "local_fault"
 	PhaseAborted      = "phase_aborted"
 	ContentChunks     = "content_chunks"
 	StreamChunks      = "stream_chunks"

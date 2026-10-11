@@ -188,7 +188,7 @@ func (m *Manager) readRow(reading *modelReading, row store.DevshardRecord, prici
 	reading.state.Escrows = append(reading.state.Escrows, funding.EscrowState{
 		ID: row.EscrowID, Standby: row.RotationRole == RoleReserve, Temp: row.RotationRole == roleTemp,
 		Label: row.RotationEpoch, NonceCapReached: nonceCapped, FullCost: fullCost, Money: classified,
-		IdleFor: m.planner.idleFor(row.EscrowID, classified.Idle, now),
+		IdleFor: m.planner.idleFor(row.EscrowID, classified.Idle, money.Holds, now),
 	})
 }
 

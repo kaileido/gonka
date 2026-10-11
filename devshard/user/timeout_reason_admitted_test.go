@@ -47,6 +47,39 @@ func startedNonce(t *testing.T, session *Session, hosts []*signing.Secp256k1Sign
 	return nonce
 }
 
+// unstampedStartedNonce reaches Started through a confirm-start that carries no confirm time. A live
+// receipt without one is refused, so such a record only comes back from replayed or recovered diffs.
+func unstampedStartedNonce(t *testing.T, session *Session, hosts []*signing.Secp256k1Signer) uint64 {
+	t.Helper()
+	nonce := prepareNonce(t, session)
+	record, tracked := session.sm.GetInference(nonce)
+	require.True(t, tracked)
+	receipt, err := proto.MarshalOptions{Deterministic: true}.Marshal(&types.ExecutorReceiptContent{
+		InferenceId: nonce,
+		PromptHash:  record.PromptHash,
+		Model:       record.Model,
+		InputLength: record.InputLength,
+		MaxTokens:   record.MaxTokens,
+		StartedAt:   record.StartedAt,
+		EscrowId:    session.escrowID,
+	})
+	require.NoError(t, err)
+	signature, err := hosts[record.ExecutorSlot].Sign(receipt)
+	require.NoError(t, err)
+
+	session.addPendingTx(&types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+		InferenceId: nonce, ExecutorSig: signature,
+	}}})
+	_, err = session.sendPendingDiff(context.Background(), nil, nil)
+	require.NoError(t, err)
+
+	started, tracked := session.sm.GetInference(nonce)
+	require.True(t, tracked)
+	require.Equal(t, types.StatusStarted, started.Status, "the fixture must reach the status it is named for")
+	require.Zero(t, started.ConfirmedAt, "the fixture must leave the record unstamped")
+	return nonce
+}
+
 // The reason is chosen from this session's memory of a receipt, but the verifiers judge the record the
 // chain holds. A confirm-start that never landed leaves it pending, and an execution vote on a pending
 // record is rejected by every one of them.
@@ -95,7 +128,7 @@ func TestAnUntrackedNonceKeepsThePlannedReason(t *testing.T) {
 // A record whose executor stamped no confirm time is timed out from its start, the moment the sweep selects it.
 func TestAStartedRecordWithoutAStampIsVotedExecutionFromItsStart(t *testing.T) {
 	session, hosts, _ := setupSession(t, 3, 1_000_000, 0)
-	nonce := startedNonce(t, session, hosts, 0)
+	nonce := unstampedStartedNonce(t, session, hosts)
 	record, tracked := session.sm.GetInference(nonce)
 	require.True(t, tracked)
 	deadline := time.Unix(record.StartedAt, 0).Add(time.Duration(session.sm.Config().ExecutionTimeout)*time.Second + TimeoutBuffer)

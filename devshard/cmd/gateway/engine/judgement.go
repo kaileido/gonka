@@ -12,9 +12,11 @@ const (
 	ExemptPhaseAborted
 	ExemptErrorStream
 	ExemptStateDivergent
+	ExemptLocalFault
 	ExemptLongResponse
 	ExemptPoCSuppressed
 	ExemptRequestTooLarge
+	ExemptEscrowLookupLimited
 	ExemptEmptyStreamNoWinner
 	ExemptNeverDispatched
 	ExemptClientCancelled
@@ -53,7 +55,7 @@ func (o RaceOutcome) emptyStreamUnderPoCBypass(a AttemptOutcome) bool {
 
 // exemptOnBothLadders holds the rungs the verdict ladder shares with the sample ladder. See race.md, "The exemption ladder".
 func (o RaceOutcome) exemptOnBothLadders(a AttemptOutcome) bool {
-	return a.PhaseTransitionAborted || a.StateDivergent || o.longResponseExempt(a) || o.emptyStreamUnderPoCBypass(a)
+	return a.PhaseTransitionAborted || a.StateDivergent || a.LocalFault || o.longResponseExempt(a) || o.emptyStreamUnderPoCBypass(a)
 }
 
 // sampleExemption is the whole ladder of reasons an attempt contributes no perf sample. See README, "The exemption ladder".
@@ -69,12 +71,16 @@ func (o RaceOutcome) sampleExemption(a AttemptOutcome) SampleExemption {
 		return ExemptErrorStream
 	case a.StateDivergent:
 		return ExemptStateDivergent
+	case a.LocalFault:
+		return ExemptLocalFault
 	case o.longResponseExempt(a):
 		return ExemptLongResponse
 	case o.emptyStreamUnderPoCBypass(a):
 		return ExemptPoCSuppressed
 	case a.Terminal == TerminalRequestTooLarge:
 		return ExemptRequestTooLarge
+	case a.Terminal == TerminalEscrowLookupLimited:
+		return ExemptEscrowLookupLimited
 	case a.emptyStream() && !o.Succeeded:
 		return ExemptEmptyStreamNoWinner
 	case a.Terminal == TerminalClientCancelled:

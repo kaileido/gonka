@@ -83,6 +83,9 @@ func IsEscrowLookupLimited(statusCode int, devshardError string) bool {
 		strings.EqualFold(strings.TrimSpace(devshardError), DevshardErrorEscrowLookupLimited)
 }
 
+// IsEscrowLookupLimitedError reports a refusal from a host whose unknown-escrow lookup budget is spent, over HTTP or Connect.
+func IsEscrowLookupLimitedError(err error) bool { return isEscrowLookupLimitedError(err) }
+
 func isEscrowLookupLimitedError(err error) bool {
 	var status *UpstreamStatusError
 	if errors.As(err, &status) {

@@ -36,7 +36,7 @@ func (c *Capacity) Update(s chain.PhaseSnapshot) {
 	c.snapshot = s
 }
 
-// hostShares[h] is slots(h,escrowID)/totalSlots(h), so a shared participant is split, not counted twice.
+// hostShares[h] is slots(h,escrowID)/totalSlots(h, model), so a shared participant is split across its escrows of that model, not counted twice.
 func (c *Capacity) SetEscrowMembership(escrowID string, hostShares map[string]float64) {
 	clean := make(map[string]float64, len(hostShares))
 	maps.Copy(clean, hostShares)

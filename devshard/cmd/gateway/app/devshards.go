@@ -27,12 +27,13 @@ import (
 	"devshard/cmd/gateway/store"
 	"devshard/logging"
 	"devshard/runtimeparams"
+	"devshard/transport"
 	"devshard/user"
 )
 
 // chainBackedSessions owns the chain connection because it is the only provider that needs one.
 func chainBackedSessions(records devshardLookup, storageDir string) sessionSources {
-	return func(endpoints config.Chain, heightSettings config.HeightSync, routePrefix string) (chainSources, error) {
+	return func(endpoints config.Chain, heightSettings config.HeightSync, routePrefix string, adoption *transport.PeerRPCAdoption) (chainSources, error) {
 		// This client carries the CometBFT RPC query fallback. See ../README.md, "Escrow sessions and the chain connection".
 		chainClient, err := commonchain.NewWithQueryFallback(endpoints.GRPCEndpoint, endpoints.RPCEndpoint)
 		if err != nil {
@@ -53,7 +54,7 @@ func chainBackedSessions(records devshardLookup, storageDir string) sessionSourc
 			return chainSources{}, errors.Join(err, follower.Close())
 		}
 		return chainSources{
-			Serving:    servingSessions(records, storageDir, bridge.NewGRPCBridge(chainClient), heightSettings, follower, governance, routePrefix),
+			Serving:    servingSessions(records, storageDir, bridge.NewGRPCBridge(chainClient), heightSettings, follower, governance, routePrefix, adoption),
 			ReadOnly:   readOnlySessions(records, storageDir),
 			Reader:     grpcChain,
 			Transport:  grpcChain,
@@ -265,7 +266,7 @@ func creationEpochOf(chainClient escrowEpochLookup, records devshardLister) nonc
 }
 
 // sessionSources is a parameter so the transport an escrow is served over is chosen once, at compose.
-type sessionSources func(endpoints config.Chain, heightSettings config.HeightSync, routePrefix string) (chainSources, error)
+type sessionSources func(endpoints config.Chain, heightSettings config.HeightSync, routePrefix string, adoption *transport.PeerRPCAdoption) (chainSources, error)
 
 // chainSources is what one dial yields; Reader and Transport are interfaces so a test dials nothing.
 type chainSources struct {
@@ -366,7 +367,7 @@ func sessionInputs(ctx context.Context, records devshardLookup, storageDir, escr
 }
 
 // The bridge is one object for the process. See ../README.md, "Escrow sessions and the chain connection".
-func servingSessions(records devshardLookup, storageDir string, escrowBridge bridge.MainnetBridge, heightSettings config.HeightSync, follower *heights.Oracle, governance *runtimeParams, routePrefix string) registry.SessionFactory {
+func servingSessions(records devshardLookup, storageDir string, escrowBridge bridge.MainnetBridge, heightSettings config.HeightSync, follower *heights.Oracle, governance *runtimeParams, routePrefix string, adoption *transport.PeerRPCAdoption) registry.SessionFactory {
 	return func(ctx context.Context, escrowID string) (registry.EscrowSession, error) {
 		record, keyHex, storagePath, err := sessionInputs(ctx, records, storageDir, escrowID)
 		if err != nil {
@@ -374,16 +375,17 @@ func servingSessions(records devshardLookup, storageDir string, escrowBridge bri
 		}
 		sessionTimeouts := env.LoadE2E().SessionTimeouts
 		session, machine, err := user.NewHTTPSession(user.HTTPSessionConfig{
-			PrivateKeyHex:           keyHex,
-			EscrowID:                escrowID,
-			Bridge:                  escrowBridge,
-			StoragePath:             storagePath,
-			RoutePrefix:             escrowRoutePrefix(record, routePrefix),
-			RefusalTimeoutSeconds:   sessionTimeouts.RefusalTimeoutSeconds,
-			ExecutionTimeoutSeconds: sessionTimeouts.ExecutionTimeoutSeconds,
-			RequireHeightSeed:       heightSettings.Enabled && heightSettings.RequireSeed,
-			ExtraClientConfig:       heights.BuildCourier(heightSettings, follower),
-			Heartbeat:               governance.Heartbeat(),
+			PrivateKeyHex:              keyHex,
+			EscrowID:                   escrowID,
+			Bridge:                     escrowBridge,
+			StoragePath:                storagePath,
+			RoutePrefix:                escrowRoutePrefix(record, routePrefix),
+			RefusalTimeoutSeconds:      sessionTimeouts.RefusalTimeoutSeconds,
+			ExecutionTimeoutSeconds:    sessionTimeouts.ExecutionTimeoutSeconds,
+			RequireHeightSeed:          heightSettings.Enabled && heightSettings.RequireSeed,
+			DisableHeightSyncHeartbeat: !heightSettings.Heartbeat,
+			ExtraClientConfig:          peerRPCClientConfig(heights.BuildCourier(heightSettings, follower), adoption),
+			Heartbeat:                  governance.Heartbeat(),
 		})
 		if err != nil {
 			return nil, err
@@ -447,4 +449,16 @@ func copySessionStorage(sourceDir, targetDir string) error {
 		}
 	}
 	return nil
+}
+
+// peerRPCClientConfig lets each host connection report whether it reached its host over Connect; the courier is nil when height sync is off.
+func peerRPCClientConfig(clientConfig *transport.ClientConfig, adoption *transport.PeerRPCAdoption) *transport.ClientConfig {
+	if adoption == nil {
+		return clientConfig
+	}
+	if clientConfig == nil {
+		clientConfig = &transport.ClientConfig{}
+	}
+	clientConfig.RPCAdoption = adoption
+	return clientConfig
 }

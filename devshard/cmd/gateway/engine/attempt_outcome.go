@@ -14,6 +14,7 @@ func (s *attemptState) classify(ctx context.Context, spec AttemptSpec, err error
 	if err != nil {
 		s.lifecycle.EscrowMissing = transport.IsUpstreamEscrowNotFound(err)
 		s.stateDivergent = errors.Is(err, ErrStateRootDivergence)
+		s.localFault = errors.Is(err, ErrLocalRootUnavailable)
 		s.upstreamStatus, s.upstreamBody = upstreamRefusal(err)
 		s.terminal = classifyDispatchError(ctx, err)
 		s.capability = capabilityOfDispatchError(err)
@@ -71,6 +72,9 @@ func classifyDispatchError(ctx context.Context, err error) Terminal {
 		return TerminalClientCancelled
 	}
 
+	if transport.IsEscrowLookupLimitedError(err) {
+		return TerminalEscrowLookupLimited
+	}
 	var status *transport.UpstreamStatusError
 	if errors.As(err, &status) {
 		if !strings.Contains(status.Path, "/chat/completions") {
@@ -152,6 +156,7 @@ func (s *attemptState) outcome(spec AttemptSpec) *AttemptOutcome {
 		MissProof:     s.missProof(spec),
 
 		StateDivergent: s.stateDivergent,
+		LocalFault:     s.localFault,
 	}
 }
 

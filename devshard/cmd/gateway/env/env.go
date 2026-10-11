@@ -56,6 +56,7 @@ type Values struct {
 	MatchWaitMS                            *int64
 	MaxConsecutiveBurns                    *int64
 	ForceUpstreamStreaming                 *bool
+	LogprobsOptimization                   *bool
 	MaxBufferedResponseBytes               *int64
 	WarmNewEscrows                         *bool
 	RotationSettlementEnabled              *bool
@@ -94,6 +95,7 @@ type Values struct {
 	HeightSyncEnabled     *bool
 	HeightSyncRequireSeed *bool
 	HeightSyncChainOracle *bool
+	HeightSyncHeartbeat   *bool
 	HeightSyncAnchorK     *int64
 	HeightSyncAnchorSlots *int64
 
@@ -321,6 +323,7 @@ func Load() (Values, error) {
 	readStrictInt("GATEWAY_MATCH_WAIT_MS", &values.MatchWaitMS)
 	readStrictInt("GATEWAY_MAX_CONSECUTIVE_BURNS", &values.MaxConsecutiveBurns)
 	readStrictBool("GATEWAY_FORCE_UPSTREAM_STREAMING", &values.ForceUpstreamStreaming)
+	readStrictBool("GATEWAY_LOGPROBS_OPTIMIZATION_OVERRIDE", &values.LogprobsOptimization)
 	readStrictInt("GATEWAY_MAX_BUFFERED_RESPONSE_BYTES", &values.MaxBufferedResponseBytes)
 	readStrictBool("GATEWAY_WARM_NEW_ESCROWS", &values.WarmNewEscrows)
 	readStrictInt("GATEWAY_ROTATION_SETTLE_MARGIN_BLOCKS", &values.RotationSettleMarginBlocks)
@@ -342,10 +345,14 @@ func Load() (Values, error) {
 		requireSeed := !slices.Contains([]string{"0", "false", "off", "no"}, raw)
 		values.HeightSyncRequireSeed = &requireSeed
 	}
-	if raw := strings.ToLower(lookup("DEVSHARD_GATEWAY_CHAIN_ORACLE")); raw != "" {
-		chainOracle := slices.Contains([]string{"true", "1", "on"}, raw)
-		values.HeightSyncChainOracle = &chainOracle
+	readOnOnlySwitch := func(name string, target **bool) {
+		if raw := strings.ToLower(lookup(name)); raw != "" {
+			on := slices.Contains([]string{"true", "1", "on"}, raw)
+			*target = &on
+		}
 	}
+	readOnOnlySwitch("DEVSHARD_GATEWAY_CHAIN_ORACLE", &values.HeightSyncChainOracle)
+	readOnOnlySwitch("DEVSHARD_HEIGHTSYNC_HEARTBEAT", &values.HeightSyncHeartbeat)
 	readLenientInt("DEVSHARD_HEIGHTSYNC_K", 0, &values.HeightSyncAnchorK)
 	readLenientInt("DEVSHARD_HEIGHTSYNC_SLOTS", 0, &values.HeightSyncAnchorSlots)
 	readLenientBool("DEVSHARD_GATEWAY_HOST_PING_DISABLED", &values.HostPingDisabled)

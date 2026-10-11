@@ -17,6 +17,9 @@ const maxUpstreamBodyLogged = 256
 // ErrStateRootDivergence lets the race branch on a diverging post state root without reading error text.
 var ErrStateRootDivergence = errors.New("post state root divergence")
 
+// ErrLocalRootUnavailable is the gateway's own store failing to give a post state root; the host did nothing wrong.
+var ErrLocalRootUnavailable = errors.New("local post state root unavailable")
+
 // dispatcher is the engine's only route to a host; an adapter over devshard/user.Session satisfies it.
 type dispatcher interface {
 	Send(ctx context.Context, nonce scheduler.Prepared, stream io.Writer, onReceipt func()) (Response, error)
@@ -80,6 +83,8 @@ type AttemptSpec struct {
 	Now         func() time.Time
 
 	Events chan<- AttemptEvent
+	// Reported closes when the race has reported; an attempt still running then has nobody to tell.
+	Reported <-chan struct{}
 }
 
 type AttemptEventKind int
@@ -139,6 +144,7 @@ type attemptState struct {
 	confirmed      bool
 	confirmedAt    int64
 	stateDivergent bool
+	localFault     bool
 	terminal       Terminal
 	lifecycle      Lifecycle
 
@@ -173,7 +179,7 @@ func runAttempt(ctx context.Context, spec AttemptSpec) {
 	releaseSlot()
 	outcome := state.outcome(spec)
 	holdFinishForClaim(response, outcome)
-	spec.emit(AttemptEvent{
+	spec.finish(AttemptEvent{
 		Kind:      AttemptDone,
 		Nonce:     nonce,
 		At:        state.completed,
@@ -290,8 +296,20 @@ func (s *attemptState) record(facts chunkFacts) {
 	s.logprobsDecoded = s.logprobsDecoded || facts.LogprobsDecoded
 }
 
-func (spec AttemptSpec) emit(event AttemptEvent) {
-	spec.Events <- event
+func (spec AttemptSpec) emit(event AttemptEvent) bool {
+	select {
+	case spec.Events <- event:
+		return true
+	case <-spec.Reported:
+		return false
+	}
+}
+
+// finish hands the race its terminal event; a race that already reported cannot post a claim, so a held Finish is let go.
+func (spec AttemptSpec) finish(event AttemptEvent) {
+	if !spec.emit(event) && event.Outcome != nil {
+		event.Outcome.MissProof.releaseHeldFinish()
+	}
 }
 
 // offer drops progress the coordinator is too busy to take, where emit blocks. See README, "Who owns which state".

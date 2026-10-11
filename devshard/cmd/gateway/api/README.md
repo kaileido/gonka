@@ -39,7 +39,7 @@ The only package that speaks HTTP to a client, and the one that decides what a f
 
 `credentials` is one request's resolved identity, computed only where an answer is used: `resolveCredentials` returns an empty value when no `Authorization` header was sent, so an unauthenticated request never reaches a key comparison at all, and a route that needs neither answer never compares a key.
 
-`keyGate` hashes both the presented bearer and every configured key before comparing them, and compares against all of them, so the time taken does not depend on which one matched.
+`keyGate` hashes both the presented bearer and every configured key before comparing them, and compares against all of them, so the time taken does not depend on which one matched. The scheme is read in any case (`bearer`, `BEARER`), as RFC 9110 defines schemes; the key itself stays case-sensitive, and a header that is not exactly a scheme and one key is refused (`bearerKey`).
 
 `requireAdmin` is where the admin key comparison lives, on the operator routes themselves rather than in a blanket middleware. With no admin key configured the whole surface answers 404.
 
@@ -170,6 +170,8 @@ The caller and the escrow scope are in the key as well, so a cached reply never 
 Eviction drops entries in map order: with a per-caller key and an hour's TTL there is no access pattern a smarter policy would reward, and map order costs nothing.
 
 **A hit is served while proof-of-compute blocks requests.** `chat` runs admission first and keeps its refusal; a refusal that is proof-of-compute alone lets the lookup run, a hit is served, and a miss gets the same refusal. Every other refusal is written before the lookup. See [`docs/rules.md`](../docs/rules.md), "No cached reply behind any refusal but proof-of-compute".
+
+Every reply offered to the cache is counted in `devshard_gateway_cache_results_total{model,result}`: `stored`, or the refusal by name — the cache's own (`too_large` for a reply past the entry limit, `write_failed`, `race_failed` for a race that failed or a client that left, `no_escrow`) or the `filters` vocabulary (`empty_body`, `unfinished_answer`, `transient_failure`, `unreadable_event`, `unreplayable_status`). Hits and misses stay in `devshard_gateway_cache_hits_total` and `_misses_total`; this counter answers the other question, why a reply that ran a race is not there to hit.
 
 ## Read next
 

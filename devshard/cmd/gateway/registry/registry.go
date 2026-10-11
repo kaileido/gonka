@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"devshard/cmd/gateway/scheduler"
+	"devshard/transport"
+	"devshard/user"
 )
 
 var (
@@ -31,8 +33,19 @@ type Deps struct {
 	Publications     publications
 	Narrator         escrowNarrator
 	Retiring         retiringObserver
+	ServedBindings   servedBindingObserver
+	PeerRPC          peerRPCAdoption
 	Now              func() time.Time
 }
+
+// peerRPCAdoption counts each escrow's hosts as reached over Connect or JSON; *transport.PeerRPCAdoption satisfies it.
+type peerRPCAdoption interface {
+	BindEscrowHosts(escrowID string, peers []string)
+	ReleaseEscrow(escrowID string)
+}
+
+// servedBindingObserver hears each served stream checked against its Finish. It runs under the session's lock, so it must never call back into the session or the registry.
+type servedBindingObserver func(escrowID, model, participant string, nonce uint64, verdict user.ServedBinding)
 
 // retiringObserver is told about an escrow once its last request has ended and before its session is
 // released, which is the last moment anything can be read from it. See README.md, "Publishing, retiring and draining".
@@ -48,6 +61,8 @@ type Registry struct {
 	publications     publications
 	narrator         escrowNarrator
 	retiring         retiringObserver
+	servedBindings   servedBindingObserver
+	peerRPC          peerRPCAdoption
 	now              func() time.Time
 
 	live         atomic.Pointer[liveSet]
@@ -79,6 +94,8 @@ func New(deps Deps) *Registry {
 		publications:     deps.Publications,
 		narrator:         deps.Narrator,
 		retiring:         deps.Retiring,
+		servedBindings:   deps.ServedBindings,
+		peerRPC:          deps.PeerRPC,
 		now:              deps.Now,
 		draining:         map[*escrowEntry]struct{}{},
 	}
@@ -125,6 +142,7 @@ func (r *Registry) add(ctx context.Context, escrowID, model string, flags entryF
 	if err != nil {
 		return fmt.Errorf("opening serving session for escrow %s: %w", escrowID, err)
 	}
+	r.observeServedBindings(session, escrowID, model)
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -146,6 +164,7 @@ func (r *Registry) add(ctx context.Context, escrowID, model string, flags entryF
 	if r.publications != nil {
 		r.publications.EscrowPublished(escrowID, model)
 	}
+	r.bindPeerRPC(escrowID, session)
 	if r.narrator != nil {
 		r.narrator.EscrowServing(escrowID, model)
 	}
@@ -224,6 +243,9 @@ func (r *Registry) closeDraining(entry *escrowEntry) error {
 		entry.closeClaimed = false
 		r.mu.Unlock()
 		return err
+	}
+	if r.peerRPC != nil {
+		r.peerRPC.ReleaseEscrow(entry.id)
 	}
 	r.mu.Lock()
 	delete(r.draining, entry)
@@ -350,14 +372,22 @@ func (r *Registry) pushMembershipLocked() {
 		return
 	}
 	published := r.live.Load()
-	totalSlots := map[string]int{}
+	// A host's weight is per model, so its slots are split only across escrows of the same model.
+	totalSlotsByModel := map[string]map[string]int{}
 	for _, id := range sortedKeys(published.byID) {
-		for participant, count := range published.byID[id].slots {
+		entry := published.byID[id]
+		totalSlots := totalSlotsByModel[entry.model]
+		if totalSlots == nil {
+			totalSlots = map[string]int{}
+			totalSlotsByModel[entry.model] = totalSlots
+		}
+		for participant, count := range entry.slots {
 			totalSlots[participant] += count
 		}
 	}
 	for _, id := range sortedKeys(published.byID) {
-		r.membership.SetEscrowMembership(id, hostShares(published.byID[id].slots, totalSlots))
+		entry := published.byID[id]
+		r.membership.SetEscrowMembership(id, hostShares(entry.slots, totalSlotsByModel[entry.model]))
 	}
 }
 
@@ -368,4 +398,29 @@ func sortedKeys[K cmp.Ordered, V any](entries map[K]V) []K {
 	}
 	slices.Sort(keys)
 	return keys
+}
+
+func (r *Registry) observeServedBindings(session EscrowSession, escrowID, model string) {
+	served := session.UserSession()
+	if r.servedBindings == nil || served == nil {
+		return
+	}
+	observe := r.servedBindings
+	served.SetServedBindingHandler(func(nonce uint64, _ int, participant string, verdict user.ServedBinding) {
+		observe(escrowID, model, participant, nonce, verdict)
+	})
+}
+
+func (r *Registry) bindPeerRPC(escrowID string, session EscrowSession) {
+	if r.peerRPC == nil {
+		return
+	}
+	dials := session.HostDials()
+	peers := make([]string, 0, len(dials))
+	for _, dial := range dials {
+		if peer := transport.PeerChildID(dial.ParticipantKey, dial.RoutePrefix); peer != "" {
+			peers = append(peers, peer)
+		}
+	}
+	r.peerRPC.BindEscrowHosts(escrowID, peers)
 }

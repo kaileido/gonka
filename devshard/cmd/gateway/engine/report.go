@@ -11,6 +11,12 @@ func (c *raceCoordinator) apply(event AttemptEvent) {
 	if attempt == nil {
 		return
 	}
+	if attempt.abandoned {
+		if event.Kind == AttemptDone && event.Outcome != nil {
+			event.Outcome.MissProof.releaseHeldFinish()
+		}
+		return
+	}
 	switch event.Kind {
 	case AttemptDispatched:
 		attempt.sendTime = event.At
@@ -34,10 +40,7 @@ func (c *raceCoordinator) complete(attempt *liveAttempt, event AttemptEvent) {
 	c.retire(attempt)
 
 	if attempt.outcome == nil {
-		c.traceStep(RaceStep{
-			Kind: RaceStepAttemptFinished, RequestID: c.request.RequestID, EscrowID: c.escrowID,
-			Nonce: attempt.nonce, Participant: attempt.participant, NonceFinished: attempt.nonceFinished,
-		})
+		c.traceUnreported(attempt, "")
 		return
 	}
 	attempt.recordDeadlines(attempt.outcome)
@@ -126,6 +129,14 @@ func (c *raceCoordinator) racedTerminal(attempt *liveAttempt, outcome AttemptOut
 
 func (attempt *liveAttempt) wentSilentMidContent(outcome AttemptOutcome) bool {
 	return attempt.stalled && outcome.ContentChunks > 0
+}
+
+func (c *raceCoordinator) traceUnreported(attempt *liveAttempt, reason string) {
+	c.traceStep(RaceStep{
+		Kind: RaceStepAttemptFinished, RequestID: c.request.RequestID, EscrowID: c.escrowID,
+		Nonce: attempt.nonce, Participant: attempt.participant, NonceFinished: attempt.nonceFinished,
+		Reason: reason,
+	})
 }
 
 func (c *raceCoordinator) retire(attempt *liveAttempt) {

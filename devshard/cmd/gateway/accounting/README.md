@@ -57,6 +57,8 @@ Nothing queries this database except the ledger's own load at start-up — every
 
 `SlotActivity` is the gateway's own side of the counts `HostStats` holds the chain's side of. Restoring one without the other reports every restart as a disagreement between the two.
 
+A slot's money is two parts that never overlap. A nonce the chain still holds keeps its own cost, read again on every sweep and saved per nonce, because its status can still move. A nonce the chain has sealed away is folded into the slot's saved money on the first sweep that no longer sees it, and its cost is dropped, because nothing can change it any more. Saving the live costs rather than a total is what lets a restart neither lose a nonce sealed while the gateway was down nor count a live one twice, once from the save and once from the chain; folding the sealed ones keeps the live map as small as the chain's own window.
+
 Only nonces whose disposition can still move are written down. A burned or finished one cannot — no later fact lifts it — while an unfinished one can, because the protocol may finish it after the race gave up, and one still awaiting its timeout has no disposition yet.
 
 ## Read next

@@ -188,7 +188,7 @@ func (b *Book) ObserveHostStats(escrowID string, slotID uint32, stats types.Host
 // ObserveInferences replaces an escrow's per-nonce money and its open-challenge counts from one sweep.
 func (b *Book) ObserveInferences(escrowID string, inferences map[uint64]*types.InferenceRecord) error {
 	return b.withEscrow(escrowID, func(escrow *escrowLedger) error {
-		clear(escrow.folded)
+		escrow.foldSealed(inferences)
 		challenged := make(map[uint32]uint64)
 		var inFlight, challengedCost uint64
 		for nonce, record := range inferences {
@@ -413,12 +413,25 @@ func (e *escrowLedger) slotOf(nonce uint64) uint32 {
 	return uint32(nonce % uint64(len(e.metadata.Slots)))
 }
 
-func (e *escrowLedger) moneyBySlot() map[uint32]SlotMoney {
-	folded := e.foldMoney()
+// foldSealed moves every nonce the chain no longer holds into the slot's fold, so a restart keeps it. See README.md, "Storage".
+func (e *escrowLedger) foldSealed(inferences map[uint64]*types.InferenceRecord) {
+	for nonce, cost := range e.costs {
+		if _, live := inferences[nonce]; live {
+			continue
+		}
+		slotID := e.slotOf(nonce)
+		money := e.folded[slotID]
+		e.foldCost(&money, nonce, cost)
+		e.folded[slotID] = money
+		delete(e.costs, nonce)
+	}
+}
+
+func sealedMoney(folded map[uint32]SlotMoney) map[uint32]SlotMoney {
 	money := make(map[uint32]SlotMoney, len(folded))
 	for slotID, slot := range folded {
 		if slot != (SlotMoney{}) {
-			money[uint32(slotID)] = slot
+			money[slotID] = slot
 		}
 	}
 	return money

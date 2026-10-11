@@ -18,8 +18,16 @@ const (
 	deliveryFailedBeforeFirstByte = "failed_before_first_byte"
 )
 
-// The cache's own refusal, beside the ones filters can name from the body alone.
-const cacheRefusedTooLarge = "too_large"
+// The cache's own refusals, beside the ones filters can name from the body alone.
+const (
+	cacheRefusedTooLarge    = "too_large"
+	cacheRefusedWriteFailed = "write_failed"
+	cacheRefusedRaceFailed  = "race_failed"
+	cacheRefusedNoEscrow    = "no_escrow"
+)
+
+// cacheResultStored is the cache-result label for a reply the cache kept.
+const cacheResultStored = "stored"
 
 // Why a request was captured. Capture has these two triggers and no others.
 const (

@@ -87,6 +87,7 @@ type EscrowMoney struct {
 	TokenPrice  uint64
 	FeePerNonce uint64
 	Open        []types.InferenceRecord
+	Holds       uint64
 }
 
 // FundingReader reads a live escrow's money for the funding planner; the composition root satisfies it.

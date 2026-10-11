@@ -24,7 +24,7 @@ func (f escrowFunds) EscrowMoney(escrowID string) (escrow.EscrowMoney, bool) {
 	}
 	return escrow.EscrowMoney{
 		Config: sessionConfig, Balance: candidate.Session.Balance(), TokenPrice: candidate.Session.TokenPrice(),
-		FeePerNonce: candidate.Session.FeePerNonce(), Open: open,
+		FeePerNonce: candidate.Session.FeePerNonce(), Open: open, Holds: f.escrows.Holds(escrowID),
 	}, true
 }
 

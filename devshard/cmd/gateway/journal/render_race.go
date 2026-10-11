@@ -8,7 +8,7 @@ import (
 )
 
 // attemptFinishFields is the widest a finish line gets: the fixed head, every delivery field, and every mark.
-const attemptFinishFields = 56
+const attemptFinishFields = 58
 
 func renderRaceStep(lines logSink, step *engine.RaceStep) {
 	switch step.Kind {
@@ -44,9 +44,12 @@ func renderRaceStep(lines logSink, step *engine.RaceStep) {
 
 func renderAttemptFinished(lines logSink, step *engine.RaceStep) {
 	if !step.HasOutcome {
-		lines.Info("attempt finished with no outcome",
-			logkey.Request, step.RequestID, logkey.Escrow, step.EscrowID, logkey.Nonce, step.Nonce,
-			logkey.Host, logkey.ShortHost(step.Participant), logkey.NonceFinished, step.NonceFinished)
+		fields := []any{logkey.Request, step.RequestID, logkey.Escrow, step.EscrowID, logkey.Nonce, step.Nonce,
+			logkey.Host, logkey.ShortHost(step.Participant), logkey.NonceFinished, step.NonceFinished}
+		if step.Reason != "" {
+			fields = append(fields, logkey.Reason, step.Reason)
+		}
+		lines.Info("attempt finished with no outcome", fields...)
 		return
 	}
 	fields := appendAttemptMarks(appendAttemptDeliveryFields(attemptFinishHead(step), &step.Outcome), step)
@@ -72,7 +75,8 @@ func attemptFinishHead(step *engine.RaceStep) []any {
 		logkey.Request, step.RequestID, logkey.Escrow, step.EscrowID, logkey.Nonce, step.Nonce,
 		logkey.Host, logkey.ShortHost(step.Participant),
 		logkey.Terminal, step.Terminal.String(),
-		logkey.NonceFinished, step.NonceFinished, logkey.StateDivergent, step.Outcome.StateDivergent)
+		logkey.NonceFinished, step.NonceFinished, logkey.StateDivergent, step.Outcome.StateDivergent,
+		logkey.LocalFault, step.Outcome.LocalFault)
 }
 
 // appendEmptyAnswerFields says what an answer the gateway read as empty actually carried. See race.md, "Reading an empty answer back".

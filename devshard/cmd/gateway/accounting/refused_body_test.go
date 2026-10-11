@@ -22,3 +22,16 @@ func TestABodyTheGatewayRefusedToSendLeavesTheHostsRatesAlone(t *testing.T) {
 		t.Fatal("a body the gateway refused to send was kept on the record")
 	}
 }
+
+// Test flow:
+//  1. Build a counter key with terminal `engine.ReasonEscrowLookupLimited`.
+//  2. Assert `excused` reports it excused from the host's failure rate.
+func TestAnEscrowLookupRefusalLeavesTheHostsFailureRateAlone(t *testing.T) {
+	t.Parallel()
+
+	refused := CounterKey{Terminal: engine.ReasonEscrowLookupLimited}
+
+	if !excused(refused) {
+		t.Fatal("excused(escrow lookup limited) = false, want true: strangers spent the host's lookup budget")
+	}
+}

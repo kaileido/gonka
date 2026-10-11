@@ -20,6 +20,7 @@ type escrowEntry struct {
 	participants []string
 	stream       nonceStream
 	inFlight     atomic.Int64
+	holds        atomic.Uint64
 	isReserve    atomic.Bool
 	hold         func() (func(), bool)
 	openRecords  openRecordIndex

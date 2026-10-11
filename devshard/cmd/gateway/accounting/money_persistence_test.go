@@ -227,3 +227,24 @@ func dropMoneyTable(t *testing.T, path string) {
 		t.Fatalf("dropping the money table: %v", err)
 	}
 }
+
+// Test flow:
+//  1. Observe a finished inference with 100 input tokens, then save and reload the book.
+//  2. Observe the restored escrow with the same inference still on the chain.
+//  3. Assert its tokens are counted once, not once from the save and again from the chain.
+func TestALiveInferenceIsCountedOnceAcrossARestart(t *testing.T) {
+	book := newTestBook(t, 4)
+	if err := book.ObserveInferences(testEscrow, finishedInference(100, 42)); err != nil {
+		t.Fatalf("ObserveInferences(): %v", err)
+	}
+	restored := saveAndReload(t, book, openTestStore(t))
+
+	if err := restored.ObserveInferences(testEscrow, finishedInference(100, 42)); err != nil {
+		t.Fatalf("ObserveInferences(): %v", err)
+	}
+
+	money := moneyOf(t, restored)
+	if money.Input != 100 || money.CountedNonces != 1 {
+		t.Fatalf("moneyOf(restored) = input %d, counted %d, want input 100, counted 1", money.Input, money.CountedNonces)
+	}
+}

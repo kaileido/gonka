@@ -34,6 +34,7 @@ const (
 	TerminalRequestTooLarge
 	TerminalStalled
 	TerminalHardTimeout
+	TerminalEscrowLookupLimited
 )
 
 var (
@@ -76,7 +77,7 @@ func (t Terminal) verdict() (limits.Verdict, bool) {
 	case TerminalStalled:
 		return limits.DecodeStalled, true
 	case TerminalEmptyStream, TerminalBurnEmpty, TerminalErrorStream, TerminalCapabilityRefused,
-		TerminalResponseTooLarge, TerminalRequestTooLarge:
+		TerminalResponseTooLarge, TerminalRequestTooLarge, TerminalEscrowLookupLimited:
 		return limits.ModelOutcome, true
 	}
 	return limits.ModelOutcome, false
@@ -126,6 +127,8 @@ func (t Terminal) reason() string {
 		return ReasonUnexpectedEOF
 	case TerminalRequestTooLarge:
 		return ReasonRequestTooLarge
+	case TerminalEscrowLookupLimited:
+		return ReasonEscrowLookupLimited
 	case TerminalResponseTooLarge:
 		return ReasonResponseTooLarge
 	case TerminalClientCancelled:

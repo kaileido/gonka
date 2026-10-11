@@ -59,13 +59,22 @@ func newKeyGate(keys ...string) keyGate {
 	return gate
 }
 
+// bearerKey reads the key out of an Authorization header whose scheme is Bearer in any case, as RFC 9110 makes schemes.
+func bearerKey(authorization string) (string, bool) {
+	fields := strings.Fields(authorization)
+	if len(fields) != 2 || !strings.EqualFold(fields[0], "Bearer") {
+		return "", false
+	}
+	return fields[1], true
+}
+
 // authenticate compares every configured key, so the time taken does not depend on which one matched.
 func (g keyGate) authenticate(authorization string) bool {
-	presented, hasBearer := strings.CutPrefix(authorization, "Bearer ")
+	presented, hasBearer := bearerKey(authorization)
 	if !g.configured || !hasBearer {
 		return false
 	}
-	digest := sha256.Sum256([]byte(strings.TrimSpace(presented)))
+	digest := sha256.Sum256([]byte(presented))
 	matched := 0
 	for _, configured := range g.digests {
 		matched |= subtle.ConstantTimeCompare(digest[:], configured[:])

@@ -33,6 +33,7 @@ func (s *Store) Load(ctx context.Context) (Snapshot, error) {
 	}
 	for _, read := range []func(context.Context, map[string]*EscrowSnapshot) error{
 		s.readSlots, s.readHostStats, s.readSlotActivity, s.readServiceNonces, s.readMoney, s.readCounters, s.readNonces,
+		s.readCosts,
 	} {
 		if err := read(ctx, escrows); err != nil {
 			return Snapshot{}, err
@@ -247,4 +248,22 @@ func (s *Store) eachRow(ctx context.Context, query, what string, scan func(*sql.
 		return fmt.Errorf("reading %s: %w", what, err)
 	}
 	return nil
+}
+
+func (s *Store) readCosts(ctx context.Context, escrows map[string]*EscrowSnapshot) error {
+	return s.eachRow(ctx,
+		`SELECT escrow_id, nonce, reserved, actual, input_length, max_tokens, input, output, status
+		 FROM accounting_costs ORDER BY escrow_id, nonce`, "costs",
+		func(rows *sql.Rows) error {
+			var escrowID string
+			var live PersistedCost
+			if err := rows.Scan(&escrowID, &live.Nonce, &live.Reserved, &live.Actual, &live.InputLength,
+				&live.MaxTokens, &live.Input, &live.Output, &live.Status); err != nil {
+				return err
+			}
+			if escrow, known := escrows[escrowID]; known {
+				escrow.LiveCosts = append(escrow.LiveCosts, live)
+			}
+			return nil
+		})
 }

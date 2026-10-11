@@ -1,6 +1,8 @@
 package nonces
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"testing"
 	"time"
 
@@ -86,7 +88,8 @@ func (e *liveEscrow) finish(t *testing.T, inferenceID, inputLength, maxTokens, i
 
 	finish := &types.MsgFinishInference{
 		InferenceId:  inferenceID,
-		ResponseHash: []byte("response"),
+		ResponseHash: bytes.Repeat([]byte{1}, sha256.Size),
+		ServedHash:   bytes.Repeat([]byte{2}, sha256.Size),
 		InputTokens:  inputTokens,
 		OutputTokens: outputTokens,
 		ExecutorSlot: uint32(slot),

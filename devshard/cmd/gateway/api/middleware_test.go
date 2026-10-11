@@ -188,7 +188,7 @@ func TestAnUnauthenticatedRequestNeverReachesTheKeyComparison(t *testing.T) {
 
 // Test flow:
 //  1. Create a key gate for the configured admin key.
-//  2. Define a table of Authorization header values, varying across the exact key, whitespace-padded variants, a wrong key, a key prefix, a missing bearer scheme, a basic scheme, and an empty header.
+//  2. Define a table of Authorization header values, varying across the exact key, whitespace-padded variants, the scheme in any case, a wrong key, a key prefix, a key in another case, a key with a space inside, a missing bearer scheme, a basic scheme, and an empty header.
 //  3. For each case, call `gate.authenticate`.
 //  4. Assert the result matches the case's expectation.
 func TestTheAdminKeyGateAcceptsOnlyTheConfiguredKey(t *testing.T) {
@@ -205,6 +205,12 @@ func TestTheAdminKeyGateAcceptsOnlyTheConfiguredKey(t *testing.T) {
 		{name: "no bearer scheme", authorization: adminKey},
 		{name: "basic scheme", authorization: "Basic " + adminKey},
 		{name: "empty", authorization: ""},
+		{name: "lowercase scheme", authorization: "bearer " + adminKey, want: true},
+		{name: "uppercase scheme", authorization: "BEARER " + adminKey, want: true},
+		{name: "tab after the scheme", authorization: "Bearer\t" + adminKey, want: true},
+		{name: "a key with a space inside", authorization: "Bearer " + adminKey + " extra"},
+		{name: "scheme alone", authorization: "Bearer"},
+		{name: "key in another case", authorization: "Bearer " + strings.ToUpper(adminKey)},
 	}
 	gate := newKeyGate(adminKey)
 	for _, testCase := range testCases {

@@ -33,6 +33,7 @@ import (
 	"devshard/signing"
 	"devshard/state"
 	"devshard/stub"
+	"devshard/transport"
 	"devshard/user"
 )
 
@@ -386,7 +387,7 @@ func TestLoadSimulation(t *testing.T) {
 		}
 	}
 	fleet := newInProcessFleet(t, settings, escrowIDs)
-	sources := func(config.Chain, config.HeightSync, string) (chainSources, error) {
+	sources := func(config.Chain, config.HeightSync, string, *transport.PeerRPCAdoption) (chainSources, error) {
 		return chainSources{
 			Serving:   fleet.serving,
 			ReadOnly:  readOnlySessions(gatewayStore, storageDir),

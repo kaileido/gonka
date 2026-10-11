@@ -16,12 +16,14 @@ The only package that knows Prometheus exists.
 
 ## Cardinality in practice
 
-The four places an unbounded label could get in, and what stops it:
+The five places an unbounded label could get in, and what stops it:
 
 - **The route label is a pattern, never a raw path.** `InstrumentRoute` takes the pattern (`/devshard/{id}/v1/status`) as a fixed string; passing `r.URL.Path` would mint a series per request.
 - **The method label is folded to a known set.** `net/http` hands the handler any RFC 7230 token the client sent, so labelling with `r.Method` directly would let one unauthenticated caller mint a permanent series per probe. Anything outside the seven standard methods becomes `other`.
 - **Escrow series are deleted when the escrow retires.** Escrow ids are monotonic and never reused, so without `EscrowRetired` each rotation would leave one nonce-holds series, one budget series and one ghost series per reason, permanently. The sibling registry collector avoids the same growth differently — it rebuilds from the live escrow set on every scrape, so it has nothing to delete.
 - **Participant series age out.** Participants and models churn with the network, so the race recorder deletes a pair's series from all fourteen participant-labelled families once nothing has written the pair for `perf_host_staleness_seconds`, sweeping at most once per tenth of that window from the write path itself (`race.go`, `RaceRecorder.markSeen`). A write that lands later — a timeout vote settled after its host went quiet — brings the pair back, and it ages out again. A pair is marked under the aging lock before its series are written, and a sweep deletes under the same lock, so a sweep never removes a series a concurrent write is about to add.
+
+- **Host RPC series go with the last escrow that binds the host.** `devshard_gateway_host_rpc{peer,mode}` is keyed by host, so it would grow with the fleet's churn; `transport.PeerRPCAdoption` deletes a host's series when `ReleaseEscrow` drops the last escrow binding it. The label is `peer` (participant and route prefix), not `participant`, because it keeps devshardctl's name for the same series.
 
 ## Histogram buckets
 

@@ -49,7 +49,7 @@ func TestEveryRaceTraceLineKeepsItsLevelMessageAndTypedFields(t *testing.T) {
 			want: []logcapture.Entry{{Level: "info", Msg: "attempt finished", Fields: []any{
 				"request", "request-1", "escrow", "escrow-1", "nonce", uint64(77),
 				"host", "host-3", "terminal", "lost",
-				"nonce_finished", false, "state_divergent", false,
+				"nonce_finished", false, "state_divergent", false, "local_fault", false,
 				"content_chunks", int64(412), "stream_chunks", int64(415),
 				"output_bytes", int64(61_440), "usage_tokens", int64(512),
 				"max_gap_ms", int64(1200), "max_gap_at_chunk", int64(310), "mean_gap_ms", int64(21),

@@ -53,6 +53,7 @@ type escrowFunding struct {
 	pendingReads int
 	idle         bool
 	idleSince    time.Time
+	holds        uint64
 }
 
 type fundingEdge int
@@ -99,15 +100,18 @@ type planTransitions struct {
 	budgetBegan        bool
 }
 
-func (p *fundingPlanner) idleFor(escrowID string, idle bool, now time.Time) time.Duration {
+// idleFor counts how long an escrow has had nothing open and no race taking it; a race between two ticks closes its records before either tick sees them.
+func (p *fundingPlanner) idleFor(escrowID string, idle bool, holds uint64, now time.Time) time.Duration {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	entry := p.escrowLocked(escrowID)
+	taken := holds != entry.holds
+	entry.holds = holds
 	if !idle {
 		entry.idle = false
 		return 0
 	}
-	if !entry.idle {
+	if !entry.idle || taken {
 		entry.idle, entry.idleSince = true, now
 	}
 	return now.Sub(entry.idleSince)
