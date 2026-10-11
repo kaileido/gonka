@@ -1747,9 +1747,6 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 	var validationTx string
 	switch rec.Status {
 	case types.StatusFinished:
-		// TODO: if this MsgValidation lands after another host has already
-		// challenged the inference, the state machine records participation
-		// without vote weight. Counting that requires a coordinated upgrade.
 		msg := &types.MsgValidation{
 			InferenceId:   job.inferenceID,
 			ValidatorSlot: job.validatorSlot,
@@ -2245,8 +2242,8 @@ func verifyPayloadWorkload(p *InferencePayload) error {
 	if bodyMaxTokens > p.MaxTokens {
 		return fmt.Errorf("%w: prompt max_tokens %d exceeds declared %d", types.ErrPayloadMismatch, bodyMaxTokens, p.MaxTokens)
 	}
-	if p.MaxTokens < completionapi.MinTokensFloor {
-		return fmt.Errorf("%w: declared max_tokens %d below floor %d", types.ErrPayloadMismatch, p.MaxTokens, completionapi.MinTokensFloor)
+	if p.MaxTokens < state.MinReservationTokens {
+		return fmt.Errorf("%w: declared max_tokens %d below floor %d", types.ErrPayloadMismatch, p.MaxTokens, state.MinReservationTokens)
 	}
 	return nil
 }

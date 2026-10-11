@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"devshard"
 	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/state"
@@ -269,11 +270,10 @@ func TestVerifyRefused_NilPayload_Rejects(t *testing.T) {
 	st := stateWithPendingFull(1, 1)
 	executor := &mockExecutorClient{challengeReceipt: []byte("would-return-receipt")}
 
-	// Nil payload -> error (reject).
+	// Nil payload -> decline (accept=false, no error), same as the bad-payload branch.
 	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, nil, nil, executor, nil, nil, st.Config, deadlinePassedRefused(st, 1))
-	require.Error(t, err)
+	require.NoError(t, err)
 	require.False(t, accept, "should reject: nil payload")
-	require.Contains(t, err.Error(), "no payload")
 }
 
 func TestVerifyRefused_PayloadMismatch_Rejects(t *testing.T) {
@@ -583,4 +583,22 @@ func TestRecoveryTxsFor_FiltersByInferenceID(t *testing.T) {
 
 	got := RecoveryTxsFor([]*types.DevshardTx{nil, empty, confirm2, confirm1, finish1}, 1)
 	require.Equal(t, []*types.DevshardTx{confirm1, finish1}, got)
+}
+
+// Test flow:
+// 1. Record a pending inference reserved at max_tokens 8 with a matching payload.
+// 2. After the refusal deadline, VerifyRefusedTimeout accepts the refusal.
+func TestVerifyRefused_ShortReservationAccepted(t *testing.T) {
+	prompt := []byte(`{"model":"llama","messages":[{"role":"user","content":"hi"}],"max_tokens":8}`)
+	promptHash, err := devshard.CanonicalPromptHash(prompt)
+	require.NoError(t, err)
+	payload := &InferencePayload{Prompt: prompt, Model: "llama", InputLength: uint64(len(prompt)), MaxTokens: 8, StartedAt: 1000}
+
+	st := stateWithPendingFull(1, 1)
+	rec := st.Inferences[1]
+	rec.PromptHash, rec.InputLength, rec.MaxTokens = promptHash, uint64(len(prompt)), 8
+
+	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, payload, nil, nil, nil, newEvidenceGroup(t).sm, st.Config, deadlinePassedRefused(st, 1))
+	require.NoError(t, err)
+	require.True(t, accept)
 }

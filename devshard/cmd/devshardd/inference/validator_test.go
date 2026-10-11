@@ -1,9 +1,11 @@
 package inference
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -324,6 +326,64 @@ func TestLeaseValidator_Success_DoesNotSetSubmitted(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, result.Valid)
 	require.Empty(t, store.setResultCalls)
+}
+
+// TestLeaseValidator_CachesResult_SkipsInnerOnRetry covers the Phase-B
+// optimization: after a successful Validate, a later acquire of the same
+// (escrow, inference) returns the cached verdict without re-running ML/payload work.
+func TestLeaseValidator_CachesResult_SkipsInnerOnRetry(t *testing.T) {
+	store := &stubLeases{
+		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ storage.LeaseOwner) (bool, error) {
+			return true, nil
+		},
+	}
+	innerCalls := 0
+	c := newTestLeaseValidator(store, func(_ context.Context, _ devshardpkg.ValidateRequest) (*devshardpkg.ValidateResult, error) {
+		innerCalls++
+		return &devshardpkg.ValidateResult{Valid: false, Reason: executorPayloadUnavailableReason}, nil
+	})
+
+	first, err := c.Validate(context.Background(), makeReq())
+	require.NoError(t, err)
+	require.False(t, first.Valid)
+	require.Equal(t, executorPayloadUnavailableReason, first.Reason)
+	require.Equal(t, 1, innerCalls)
+
+	require.NoError(t, c.ReleaseValidationLease(context.Background(), "escrow-1", 42))
+
+	second, err := c.Validate(context.Background(), makeReq())
+	require.NoError(t, err)
+	require.False(t, second.Valid)
+	require.Equal(t, executorPayloadUnavailableReason, second.Reason)
+	require.Equal(t, 1, innerCalls, "cached verdict must skip the inner ValidationEngine")
+	require.Equal(t, 2, len(store.acquireEpochs), "each Validate still acquires a lease")
+}
+
+// TestLeaseValidator_InnerError_NotCached verifies failed attempts do not
+// poison the cache: a later successful Validate still runs the engine.
+func TestLeaseValidator_InnerError_NotCached(t *testing.T) {
+	store := &stubLeases{
+		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ storage.LeaseOwner) (bool, error) {
+			return true, nil
+		},
+	}
+	innerCalls := 0
+	c := newTestLeaseValidator(store, func(_ context.Context, _ devshardpkg.ValidateRequest) (*devshardpkg.ValidateResult, error) {
+		innerCalls++
+		if innerCalls == 1 {
+			return nil, errors.New("local ml 503")
+		}
+		return &devshardpkg.ValidateResult{Valid: false, Reason: executorPayloadUnavailableReason}, nil
+	})
+
+	_, err := c.Validate(context.Background(), makeReq())
+	require.Error(t, err)
+	require.Equal(t, 1, innerCalls)
+
+	result, err := c.Validate(context.Background(), makeReq())
+	require.NoError(t, err)
+	require.False(t, result.Valid)
+	require.Equal(t, 2, innerCalls, "errors must not be cached")
 }
 
 type stubThresholdResolver struct {
@@ -1002,4 +1062,44 @@ func TestTruncateCause(t *testing.T) {
 	got := truncateCause(long)
 	assert.Len(t, got, maxVerdictCauseBytes+len("...(truncated)"))
 	assert.True(t, strings.HasSuffix(got, "...(truncated)"))
+}
+
+// Test flow:
+// 1. The stored output has one position past the per-position ceiling but passes the mean-distance check.
+// 2. On an enforced model the validator votes false.
+// 3. On any other model the ceiling check only logs, and the validator votes true.
+func TestValidator_Validate_ShortOutputChecksPerModel(t *testing.T) {
+	position := func(token string, chosen, alternative float64) string {
+		return fmt.Sprintf(`{"token":%q,"logprob":%g,"top_logprobs":[{"token":%q,"logprob":%g},{"token":"999","logprob":%g}]}`, token, chosen, token, chosen, alternative)
+	}
+	completion := func(outlier bool) []byte {
+		positions := make([]string, 10)
+		for i := range positions {
+			positions[i] = position(fmt.Sprint(i+1), -0.1, -2.5)
+		}
+		if outlier {
+			positions[3] = position("4", -5, -0.01)
+		}
+		return []byte(`{"id":"test","object":"chat.completion","choices":[{"index":0,"finish_reason":"stop","logprobs":{"content":[` + strings.Join(positions, ",") + `]}}]}`)
+	}
+	fetch := func(context.Context, devshardpkg.ValidateRequest, string, uint64) ([]byte, []byte, error) {
+		return []byte(`{"messages":[{"role":"user","content":"hi"}],"max_tokens":16}`), completion(true), nil
+	}
+	executeML := func(context.Context, string, string, []byte) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(completion(false)))}, nil
+	}
+	for model, wantValid := range map[string]bool{
+		"deepseek-ai/DeepSeek-V4-Flash-0731": false,
+		"zai-org/GLM-5.3-Flash":              false,
+		"MiniMaxAI/MiniMax-M2.7":             true,
+	} {
+		t.Run(model, func(t *testing.T) {
+			validator := newFaultTestValidator(10, true, fetch, executeML, nil)
+			req := faultReq(10)
+			req.Model = model
+			result, err := validator.Validate(context.Background(), req)
+			require.NoError(t, err)
+			assert.Equal(t, wantValid, result.Valid)
+		})
+	}
 }
