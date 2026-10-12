@@ -12,7 +12,7 @@ They are not one thing. The first protects the gateway and respects the network'
 
 A host is removed from a pick by the participant limiter or by the ejection verdict — see [Outlier ejection](#outlier-ejection) for what the ejection verdict is capped by before routing honours it.
 
-The design principle across all three is **adaptation instead of punishment**: an overloaded host receives less traffic within one round trip and recovers on its own, and the longest it is held out of rotation is minutes rather than a sentence it has to sit out ([rules.md](./rules.md), "Dropped from the legacy gateway").
+The design principle across all three is **adaptation instead of punishment**: an overloaded host receives less traffic within one round trip and recovers on its own, and the longest it is held out of rotation is minutes rather than a sentence it has to sit out ([rules.md](./rules.md), "Not provided").
 
 ## Capacity: what the chain says this gateway may use
 
@@ -233,7 +233,7 @@ Past the ceiling a request is refused with `503`, the same answer as a shard wit
 
 ## Nothing here is persisted
 
-Every restart starts clean: no ejections, no capability counts, every congestion window at its initial size, every cut-off closed, every decayed counter at zero. The divergence from the legacy gateway is argued in [rules.md](./rules.md): minute-scale backoff self-heals faster than replaying stale penalties is worth. The cost is that a genuinely bad host gets one free window after every deploy.
+Every restart starts clean: no ejections, no capability counts, every congestion window at its initial size, every cut-off closed, every decayed counter at zero. Minute-scale backoff self-heals faster than replaying stale penalties is worth. The cost is that a genuinely bad host gets one free window after every deploy.
 
 The one host judgement that *is* persisted is the operator's manual suspicious-host pin, and for the opposite reason — a pin the gateway acts on but forgets on restart is a state an operator cannot see. The store is written before the in-memory copy (`app/operations.go`, `suspiciousHosts.Add`).
 
@@ -306,7 +306,7 @@ Two consequences follow from folding coarser events. The reference deduplicates 
 
 **An unapplied timeout is not a settled one.** Every path out of `user.HandleTimeout` returns an error, including its own success — that error carries "this inference timed out" back to the request. So the error says nothing about whether the vote reached the chain, and `TimeoutResult.Applied` is what the ledger reads instead. The distinction is the whole point: a nonce whose timeout never gathered enough votes still settles as a completed inference for a participant that never answered, and recording it as a posted vote hides exactly that.
 
-**An unfinished nonce is not a verdict.** The protocol can finish a nonce after the race that gave up on it, so the sweep re-asks the session about every nonce still counted as unfinished and lifts the ones that landed. The session's own outcome map survives sealing, so a negative answer means "not finished", never "no longer known" — the correction only ever moves a nonce out of the bucket settlement reads as failure, never into it.
+**An unfinished nonce is not a verdict, and a received Finish is not a finish.** A nonce is finished in the ledger when the escrow's log holds its Finish: the sweep reads every live record and marks a nonce finished once its record is `Finished`, `Challenged`, `Validated` or `Invalidated`, or when it is sealed away after being read in one of those (`accounting/book.go`, `FinishApplied`). A record can reach a terminal status and be sealed between two sweeps — a validated one seals within twenty nonces — so the sweep also closes every open nonce whose record has left the window: the record the state machine kept at seal time says whether its Finish applied, and the session's own outcome answers when that copy is absent, which is safe for a sealed record because nothing can change it any more (`nonces/sweep.go`, `closeSealed`). The session's own view — a Finish in the mempool that would apply — never finishes a nonce, so one whose Finish is queued, pinned for an error-miss claim or stuck stays in flight where an operator sees it. The protocol can finish a nonce after the race that gave up on it; the next sweep that reads the record moves it out of flight.
 
 **What the ledger cannot see.** A nonce is invisible to it between commitment and the end of the race that spent it, because a race reports only when it ends. Those nonces fall into `unobserved` alongside genuinely protocol-only ones, so that number is a floor on protocol overhead rather than a measurement of it; a baseline that grows while traffic is steady is the signal worth watching. `pending` is the separate case of a nonce seen unfinished whose timeout has not settled, and `overcounted` — classified beyond what the chain assigned — should never be anything but zero.
 

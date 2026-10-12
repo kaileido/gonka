@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"devshard/testenv/config"
 	"devshard/testenv/loadtest"
 )
 
@@ -25,6 +26,7 @@ func main() {
 	loadDataset := flag.String("load-dataset", "", "JSONL dataset with captured client requests and ML responses")
 	metricsInterval := flag.Duration("metrics-interval", time.Second, "process and escrow metrics sampling interval (minimum 100ms)")
 	runTimeout := flag.Duration("timeout", 0, "overall run timeout; default: workload + drain + 10m, at least 20m")
+	gatewayDriver := flag.String("gateway", "", "gateway binary to drive: devshardctl or gateway; default: the scenario's topology.gateway, else devshardctl")
 	flag.Parse()
 	if *scenarioPath == "" {
 		log.Fatal("provide -scenario")
@@ -64,6 +66,7 @@ func main() {
 		KeepStack:       *keepStack,
 		LoadDataset:     *loadDataset,
 		MetricsInterval: *metricsInterval,
+		GatewayDriver:   config.GatewayDriver(*gatewayDriver),
 	})
 	if err != nil {
 		if result.Summary.Requests > 0 {

@@ -226,7 +226,6 @@ func (w *Prober) record(escrowID string, nonce uint64, acknowledged bool, probeE
 	w.probes.ProbeRecorded(escrowID, accounting.Attempt{
 		Nonce:        nonce,
 		Sent:         true,
-		Finished:     probeErr == nil,
 		Acknowledged: acknowledged,
 		Usage:        accounting.UsageLoser,
 		Phase:        accounting.PhaseNormal,

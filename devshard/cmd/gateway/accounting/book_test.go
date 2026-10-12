@@ -17,6 +17,13 @@ const (
 	testEpoch  = 7
 )
 
+func markFinished(t *testing.T, book *Book, escrowID string, nonces ...uint64) {
+	t.Helper()
+	if err := book.MarkFinished(escrowID, nonces); err != nil {
+		t.Fatalf("MarkFinished(): %v", err)
+	}
+}
+
 func newTestBook(t *testing.T, groupSize int) *Book {
 	t.Helper()
 	book := NewBook(func() time.Time { return time.Unix(0, 0).UTC() })
@@ -122,10 +129,11 @@ func TestFinishedNoncesSplitByWhoUsedTheAnswer(t *testing.T) {
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			book := newTestBook(t, 4)
-			attempt := Attempt{Nonce: 9, Sent: true, Finished: true, Usage: testCase.usage}
+			attempt := Attempt{Nonce: 9, Sent: true, Usage: testCase.usage}
 			if err := book.RecordRace(testEscrow, []Attempt{attempt}); err != nil {
 				t.Fatalf("RecordRace(): %v", err)
 			}
+			markFinished(t, book, testEscrow, 9)
 			assertDisposition(t, book, 9, 4, testCase.want)
 		})
 	}
@@ -138,7 +146,7 @@ func TestFinishedNoncesSplitByWhoUsedTheAnswer(t *testing.T) {
 //  4. Assert the disposition becomes `DispositionUnfinishedExecution` and pending drops to 0.
 func TestUnfinishedNonceStaysPendingUntilItsTimeoutSettles(t *testing.T) {
 	book := newTestBook(t, 4)
-	attempt := Attempt{Nonce: 6, Sent: true, Finished: false}
+	attempt := Attempt{Nonce: 6, Sent: true}
 	if err := book.RecordRace(testEscrow, []Attempt{attempt}); err != nil {
 		t.Fatalf("RecordRace(): %v", err)
 	}
@@ -166,7 +174,7 @@ func TestUnfinishedNonceStaysPendingUntilItsTimeoutSettles(t *testing.T) {
 //  3. Assert the disposition is `DispositionUnfinishedRefused`.
 func TestUnfinishedNonceThatWasNeverAcknowledgedCountsAsRefused(t *testing.T) {
 	book := newTestBook(t, 4)
-	attempt := Attempt{Nonce: 6, Sent: true, Finished: false}
+	attempt := Attempt{Nonce: 6, Sent: true}
 	if err := book.RecordRace(testEscrow, []Attempt{attempt}); err != nil {
 		t.Fatalf("RecordRace(): %v", err)
 	}
@@ -182,14 +190,16 @@ func TestUnfinishedNonceThatWasNeverAcknowledgedCountsAsRefused(t *testing.T) {
 //  3. Assert the disposition moved to `DispositionFinishedUsed` rather than adding a second count.
 func TestReclassificationMovesANonceRatherThanDuplicatingIt(t *testing.T) {
 	book := newTestBook(t, 4)
-	if err := book.RecordRace(testEscrow, []Attempt{{Nonce: 8, Sent: true, Finished: true, Usage: UsageLoser}}); err != nil {
+	if err := book.RecordRace(testEscrow, []Attempt{{Nonce: 8, Sent: true, Usage: UsageLoser}}); err != nil {
 		t.Fatalf("RecordRace(): %v", err)
 	}
+	markFinished(t, book, testEscrow, 8)
 	assertDisposition(t, book, 8, 4, DispositionFinishedUnused)
 
-	if err := book.RecordRace(testEscrow, []Attempt{{Nonce: 8, Sent: true, Finished: true, Usage: UsageWinner}}); err != nil {
+	if err := book.RecordRace(testEscrow, []Attempt{{Nonce: 8, Sent: true, Usage: UsageWinner}}); err != nil {
 		t.Fatalf("RecordRace(): %v", err)
 	}
+	markFinished(t, book, testEscrow, 8)
 	assertDisposition(t, book, 8, 4, DispositionFinishedUsed)
 }
 
@@ -244,11 +254,12 @@ func TestEveryAssignedNonceIsAccountedForExactlyOnce(t *testing.T) {
 		t.Fatalf("RecordGhost(): %v", err)
 	}
 	if err := book.RecordRace(testEscrow, []Attempt{
-		{Nonce: 9, Sent: true, Finished: true, Usage: UsageWinner},
-		{Nonce: 6, Sent: true, Finished: false},
+		{Nonce: 9, Sent: true, Usage: UsageWinner},
+		{Nonce: 6, Sent: true},
 	}); err != nil {
 		t.Fatalf("RecordRace(): %v", err)
 	}
+	markFinished(t, book, testEscrow, 9)
 
 	for _, record := range book.Query(QueryFilter{}) {
 		for _, slot := range record.Slots {
@@ -338,11 +349,12 @@ func TestRaceFactsReachTheCounters(t *testing.T) {
 	}
 
 	if err := book.RecordRace(testEscrow, []Attempt{{
-		Nonce: 1, Sent: true, Acknowledged: true, Finished: true, Usage: UsageWinner,
+		Nonce: 1, Sent: true, Acknowledged: true, Usage: UsageWinner,
 		Terminal: "won", Phase: PhasePoC, SlowReceipt: true, SlowChunk: true, ClockDrifted: true,
 	}}); err != nil {
 		t.Fatalf("RecordRace(): %v", err)
 	}
+	markFinished(t, book, testEscrow, 1)
 
 	records := book.Query(QueryFilter{})
 	if len(records) != 1 || len(records[0].Counters) != 1 {
@@ -454,11 +466,12 @@ func TestNoncesSeenBetweenSweepsDoNotReadAsADisagreement(t *testing.T) {
 	book := newTestBook(t, 2)
 
 	if err := book.RecordRace(testEscrow, []Attempt{
-		{Nonce: 10, Sent: true, Acknowledged: true, Finished: true, Usage: UsageWinner},
-		{Nonce: 12, Sent: true, Acknowledged: true, Finished: true, Usage: UsageWinner},
+		{Nonce: 10, Sent: true, Acknowledged: true, Usage: UsageWinner},
+		{Nonce: 12, Sent: true, Acknowledged: true, Usage: UsageWinner},
 	}); err != nil {
 		t.Fatalf("RecordRace(): %v", err)
 	}
+	markFinished(t, book, testEscrow, 10, 12)
 
 	for _, record := range book.Query(QueryFilter{}) {
 		if record.Overcounted != 0 {

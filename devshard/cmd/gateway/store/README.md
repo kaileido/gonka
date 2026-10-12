@@ -29,11 +29,11 @@ The pool is one connection, kept for the life of the process. SQLite serializes 
 
 Migrations run in order, one transaction per version, and the applied version is recorded in `schema_version` — so `Open` is idempotent and a version that failed part-way is never recorded as applied.
 
-The list is append-only: a version number names whatever statement held that slot when a database recorded it, so replacing an entry leaves every database that already recorded its number without the new statement. That happened once — the funding planner put `chain_epoch` in the slot an earlier build had spent on `on_hold` — so a migration that only adds a column is matched by name as well (`applyMigration`): it is skipped when the column is already there, and after the numbered pass every such migration below the recorded version is run again and adds whatever column is missing. Any other kind of migration has no such repair, so append, never replace.
+The list is append-only: a version number names whatever statement held that slot when a database recorded it, so replacing an entry leaves every database that already recorded its number without the new statement. The slot that holds `chain_epoch` is one an earlier build spent on `on_hold`, so a migration that only adds a column is matched by name as well (`applyMigration`): it is skipped when the column is already there, and after the numbered pass every such migration below the recorded version is run again and adds whatever column is missing. Any other kind of migration has no such repair, so append, never replace.
 
 ### The legacy-database guard
 
-`gateway.db` is also the name devshardctl uses, and two table names collide at different columns, so migrating one of those would adopt the legacy shape instead of failing. A database with no `schema_version` that holds any of `gateway_settings`, `gateway_devshards`, `gateway_suspicious_hosts` or `participant_throttle_state` is refused with `ErrLegacyDatabase`: those tables are created by devshardctl and never here, so their presence is proof rather than a guess.
+A `gateway.db` of a different schema can share two table names with this one at different columns, so migrating it would adopt that shape instead of failing. A database with no `schema_version` that holds any of `gateway_settings`, `gateway_devshards`, `gateway_suspicious_hosts` or `participant_throttle_state` is refused with `ErrLegacyDatabase`: this gateway never creates those tables, so their presence is proof rather than a guess.
 
 The guard is declared apart from the migrations list because it decides whether the storage dir may be migrated at all, and because the migration entries are raw SQL whose indentation is part of the literal.
 

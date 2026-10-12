@@ -187,7 +187,6 @@ func (s *Server) handleDevshardChat(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) {
-	// The race inherits this span, so every host call carries the request's traceparent. See ../docs/operations.md, "Tracing".
 	traced, span := observability.StartGatewayRequest(r.Context())
 	defer span.End()
 	r = r.WithContext(traced)

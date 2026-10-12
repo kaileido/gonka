@@ -10,10 +10,10 @@ import (
 )
 
 // Test flow:
-//  1. Table-driven: each case calls one route devshardctl also served, with a store holding two escrows and one rotation row, and a live session where the route reads one.
+//  1. Table-driven: each case calls one route whose answer keys are fixed, with a store holding two escrows and one rotation row, and a live session where the route reads one.
 //  2. Decode the body as JSON and walk the case's key path.
-//  3. Assert every key devshardctl answered under is present and the gateway's former spelling is absent.
-func TestSharedRoutesAnswerUnderDevshardctlKeyNames(t *testing.T) {
+//  3. Assert every fixed key is present and the gateway's former spelling is absent.
+func TestRoutesAnswerUnderTheFixedKeyNames(t *testing.T) {
 	testCases := []struct {
 		name        string
 		method      string
@@ -125,10 +125,10 @@ func walkJSONPath(node any, path []string) (any, bool) {
 }
 
 // Test flow:
-//  1. Post devshardctl-shaped bodies to the escrow-creation, add and import routes.
+//  1. Post bodies using the fixed key names to the escrow-creation, add and import routes.
 //  2. Assert each route answers 200.
-//  3. Assert the operation received every field under its devshardctl key: model_id on creation, id on add and import, active on import.
-func TestSharedRequestsAreReadUnderDevshardctlKeyNames(t *testing.T) {
+//  3. Assert the operation received every field under its fixed key: model_id on creation, id on add and import, active on import.
+func TestRequestsAreReadUnderTheFixedKeyNames(t *testing.T) {
 	live := newHarness(t)
 
 	for target, body := range map[string]string{

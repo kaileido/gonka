@@ -59,7 +59,6 @@ func newKeyGate(keys ...string) keyGate {
 	return gate
 }
 
-// bearerKey reads the key out of an Authorization header whose scheme is Bearer in any case, as RFC 9110 makes schemes.
 func bearerKey(authorization string) (string, bool) {
 	fields := strings.Fields(authorization)
 	if len(fields) != 2 || !strings.EqualFold(fields[0], "Bearer") {

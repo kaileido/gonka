@@ -68,8 +68,8 @@ func TestSeedDevshardsRejectsASeedThatNamesNoKeyVariable(t *testing.T) {
 }
 
 // Test flow:
-//  1. Call seedDevshards with a devshardctl-shaped seed that names a per-escrow route prefix.
-//  2. Assert the stored record carries that prefix, so the escrow's hosts are dialled under it as devshardctl did.
+//  1. Call seedDevshards with a seed that names a per-escrow route prefix.
+//  2. Assert the stored record carries that prefix, so the escrow's hosts are dialled under it.
 func TestSeedDevshardsKeepsTheSeedsRoutePrefix(t *testing.T) {
 	registry := &recordingRegistry{}
 	seed := `[{"id":"58128","model":"Qwen/Test","private_key_env":"DEVSHARD_PRIVATE_KEY","route_prefix":"/v4"}]`

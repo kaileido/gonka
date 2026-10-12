@@ -218,8 +218,9 @@ func promptTokenEstimate(body []byte) int {
 // topN mirrors the request's top_logprobs (gateway forces 5 upstream).
 //
 // "token" is a numeric token ID (decimal string), matching vLLM after
-// gm/enforced-str. The decoded text lives in "bytes" (UTF-8 code units as
-// []int — []byte would JSON-encode as base64 and break completionapi.Response).
+// gm/enforced-str. The decoded text lives in the position's "bytes", while each
+// top_logprobs alternative's "bytes" spell its id, as vLLM emits them (UTF-8 code
+// units as []int — []byte would JSON-encode as base64 and break completionapi.Response).
 // Validators reject decoded-text tokens via HasNonNumericTokens before the
 // ML replay; citest SlowMockOpenAI needs that replay so leases stay pending.
 func buildLogprobContent(text string, topN int) []map[string]any {
@@ -244,10 +245,11 @@ func buildLogprobContent(text string, topN int) []map[string]any {
 			if i > 0 {
 				alt = tok + string(rune('a'+i-1))
 			}
+			altID := mockTokenID(alt)
 			tops = append(tops, map[string]any{
-				"token":   mockTokenID(alt),
+				"token":   altID,
 				"logprob": -0.1 - float64(i),
-				"bytes":   utf8CodeUnits(alt),
+				"bytes":   utf8CodeUnits(altID),
 			})
 		}
 		entry["top_logprobs"] = tops

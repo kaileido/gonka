@@ -91,14 +91,14 @@ func TestLoadRejectsMalformedGatewayValuesWithVariableName(t *testing.T) {
 	t.Setenv("GATEWAY_MATCH_WAIT_MS", "not-a-number")
 	t.Setenv("GATEWAY_WARM_NEW_ESCROWS", "maybe")
 	t.Setenv("GATEWAY_CAPTURE_SAMPLE_RATE", "half")
-	t.Setenv("GATEWAY_CONTENTION_PROFILES", "on")
+	t.Setenv("GATEWAY_FORCE_UPSTREAM_STREAMING", "on")
 
 	_, err := Load()
 	if err == nil {
 		t.Fatal("Load() with malformed values: want error, got nil")
 	}
 	message := err.Error()
-	for _, name := range []string{"GATEWAY_MATCH_WAIT_MS", "GATEWAY_WARM_NEW_ESCROWS", "GATEWAY_CAPTURE_SAMPLE_RATE", "GATEWAY_CONTENTION_PROFILES"} {
+	for _, name := range []string{"GATEWAY_MATCH_WAIT_MS", "GATEWAY_WARM_NEW_ESCROWS", "GATEWAY_CAPTURE_SAMPLE_RATE", "GATEWAY_FORCE_UPSTREAM_STREAMING"} {
 		if !strings.Contains(message, name) {
 			t.Fatalf("error %q does not name %s (errors must accumulate, not stop at first)", message, name)
 		}
@@ -106,10 +106,10 @@ func TestLoadRejectsMalformedGatewayValuesWithVariableName(t *testing.T) {
 }
 
 // Test flow:
-//  1. Set devshardctl variables to values devshardctl would have ignored or read as "use the default": unparsable, zero, or negative.
+//  1. Set deployed variables to values that are ignored or read as "use the default": unparsable, zero, or negative.
 //  2. Call `Load`.
-//  3. Assert `Load` succeeds and leaves each field unset, so the gateway's default applies the way devshardctl's did.
-func TestADevshardctlValueDevshardctlIgnoredIsIgnoredNotRefused(t *testing.T) {
+//  3. Assert `Load` succeeds and leaves each field unset, so the gateway's default applies as it always has.
+func TestAnUnusableValueIsIgnoredNotRefused(t *testing.T) {
 	for name, value := range map[string]string{
 		"DEVSHARD_PORT":                                    "eighty",
 		"DEVSHARD_GATEWAY_DISABLED":                        "maybe",
@@ -129,13 +129,14 @@ func TestADevshardctlValueDevshardctlIgnoredIsIgnoredNotRefused(t *testing.T) {
 		"GATEWAY_MAX_CONCURRENT_REQUESTS":                  "lots",
 		"DEVSHARD_MAX_CONCURRENT_RUNTIME_BUILDS":           "0",
 		"DEVSHARD_SESSION_RETENTION_EPOCHS":                "-1",
+		"DEVSHARD_ENABLE_CONTENTION_PROFILES":              "maybe",
 	} {
 		t.Setenv(name, value)
 	}
 
 	values, err := Load()
 	if err != nil {
-		t.Fatalf("Load() = %v, want the unusable devshardctl values left unset", err)
+		t.Fatalf("Load() = %v, want the unusable values left unset", err)
 	}
 	for name, isSet := range map[string]bool{
 		"Port":                                values.Port != nil,
@@ -156,6 +157,7 @@ func TestADevshardctlValueDevshardctlIgnoredIsIgnoredNotRefused(t *testing.T) {
 		"MaxConcurrentRequests":               values.MaxConcurrentRequests != nil,
 		"MaxConcurrentRuntimeBuilds":          values.MaxConcurrentRuntimeBuilds != nil,
 		"SessionRetentionEpochs":              values.SessionRetentionEpochs != nil,
+		"ContentionProfiles":                  values.ContentionProfiles != nil,
 	} {
 		if isSet {
 			t.Errorf("%s is set, want unset so the default applies", name)
@@ -164,7 +166,7 @@ func TestADevshardctlValueDevshardctlIgnoredIsIgnoredNotRefused(t *testing.T) {
 }
 
 // Test flow:
-//  1. Set the renamed gateway spellings the gateway used before it went back to devshardctl's names, and clear the names it reads now.
+//  1. Set the renamed gateway spellings the gateway used before it went back to the deployed names, and clear the names it reads now.
 //  2. Call `Load`.
 //  3. Assert none of them is read.
 func TestTheRenamedGatewaySpellingsAreNotRead(t *testing.T) {
@@ -192,10 +194,10 @@ func TestTheRenamedGatewaySpellingsAreNotRead(t *testing.T) {
 }
 
 // Test flow:
-//  1. Set every devshardctl host-ping and height-sync variable, in devshardctl's own spellings (durations, on/off/yes).
+//  1. Set every host-ping and height-sync variable, in the deployed spellings (durations, on/off/yes).
 //  2. Call `Load`.
 //  3. Assert each loads, the durations converted to milliseconds.
-func TestTheHostPingAndHeightSyncVariablesAreReadTheWayDevshardctlReadThem(t *testing.T) {
+func TestTheHostPingAndHeightSyncVariablesAreReadUnderTheirDeployedNames(t *testing.T) {
 	t.Setenv("DEVSHARD_GATEWAY_HOST_PING_DISABLED", "yes")
 	t.Setenv("DEVSHARD_GATEWAY_HOST_PING_INTERVAL", "15s")
 	t.Setenv("DEVSHARD_GATEWAY_HOST_PING_TIMEOUT", "2s")
@@ -238,8 +240,8 @@ func TestTheHostPingAndHeightSyncVariablesAreReadTheWayDevshardctlReadThem(t *te
 // Test flow:
 //  1. Table-driven: each case sets one of the two height-sync switches to a spelling, including ones outside the boolean grammar.
 //  2. Call `Load`.
-//  3. Assert the switch reads the way devshardctl read it: the chain oracle and the heartbeat are on only for true/1/on, and the seed gate is off only for 0/false/off/no.
-func TestTheHeightSyncSwitchesKeepDevshardctlsExactSpellings(t *testing.T) {
+//  3. Assert the switch reads as follows: the chain oracle and the heartbeat are on only for true/1/on, and the seed gate is off only for 0/false/off/no.
+func TestTheHeightSyncSwitchesKeepTheirExactSpellings(t *testing.T) {
 	testCases := []struct {
 		name     string
 		variable string
@@ -278,7 +280,7 @@ func TestTheHeightSyncSwitchesKeepDevshardctlsExactSpellings(t *testing.T) {
 }
 
 // Test flow:
-//  1. Set the PoC mode in devshardctl's case-insensitive spelling.
+//  1. Set the PoC mode in a mixed-case spelling.
 //  2. Call `Load`.
 //  3. Assert it loads lower-cased.
 func TestThePoCModeIsReadCaseInsensitively(t *testing.T) {
@@ -295,7 +297,7 @@ func TestThePoCModeIsReadCaseInsensitively(t *testing.T) {
 
 // Test flow:
 //  1. Subtest "the chain endpoints fall back to the node's variables": set only NODE_GRPC_URL and NODE_RPC_URL and assert both are read.
-//  2. Subtest "the devshardctl name wins over the node's": set both spellings and assert the DEVSHARD_ one wins.
+//  2. Subtest "the DEVSHARD_ name wins over the node's": set both spellings and assert the DEVSHARD_ one wins.
 func TestTheChainEndpointsFallBackToTheNodeVariables(t *testing.T) {
 	t.Run("the chain endpoints fall back to the node's variables", func(t *testing.T) {
 		t.Setenv("NODE_GRPC_URL", "node:9090")
@@ -313,7 +315,7 @@ func TestTheChainEndpointsFallBackToTheNodeVariables(t *testing.T) {
 		}
 	})
 
-	t.Run("the devshardctl name wins over the node's", func(t *testing.T) {
+	t.Run("the DEVSHARD_ name wins over the node's", func(t *testing.T) {
 		t.Setenv("NODE_GRPC_URL", "node:9090")
 		t.Setenv("DEVSHARD_CHAIN_GRPC", "chain:9090")
 
@@ -328,10 +330,10 @@ func TestTheChainEndpointsFallBackToTheNodeVariables(t *testing.T) {
 }
 
 // Test flow:
-//  1. Set the transaction, weight-model, input-token and runtime-build variables devshardctl read.
+//  1. Set the transaction, weight-model, input-token and runtime-build variables under their deployed names.
 //  2. Call `Load`.
 //  3. Assert each loads with its set value.
-func TestTheDevshardctlLimitsAndTransactionVariablesAreRead(t *testing.T) {
+func TestTheLimitsAndTransactionVariablesAreReadUnderTheirDeployedNames(t *testing.T) {
 	t.Setenv("DEVSHARD_TX_FEE_DENOM", "ngonka")
 	t.Setenv("DEVSHARD_TX_POLL_INTERVAL_MS", "250")
 	t.Setenv("DEVSHARD_TX_POLL_TIMEOUT_MS", "9000")
@@ -368,10 +370,10 @@ func TestTheDevshardctlLimitsAndTransactionVariablesAreRead(t *testing.T) {
 }
 
 // Test flow:
-//  1. Set the request capture's enabled and directory variables under devshardctl's names.
+//  1. Set the request capture's enabled and directory variables under their deployed names.
 //  2. Call `Load`.
 //  3. Assert both load.
-func TestTheRequestCaptureAnswersToTheDevshardctlNames(t *testing.T) {
+func TestTheRequestCaptureAnswersToItsDeployedNames(t *testing.T) {
 	t.Setenv("DEVSHARD_REQUEST_CAPTURE_ENABLED", "true")
 	t.Setenv("DEVSHARD_REQUEST_CAPTURE_DIR", "/captures")
 
@@ -423,10 +425,10 @@ func TestASigningKeyIsReadUnderItsRecordedNameOnly(t *testing.T) {
 }
 
 // Test flow:
-//  1. Set every nonce-accounting ledger variable under devshardctl's `DEVSHARD_STATS_` prefix (devshardctl called the same ledger "stats").
+//  1. Set every nonce-accounting ledger variable under the `DEVSHARD_STATS_` prefix (the ledger is named "stats" in the variables).
 //  2. Call `Load`.
 //  3. Assert each field loads with its set value.
-func TestTheAccountingLedgerAnswersToTheDevshardctlStatsNames(t *testing.T) {
+func TestTheAccountingLedgerAnswersToTheStatsNames(t *testing.T) {
 	t.Setenv("DEVSHARD_STATS_ENABLED", "true")
 	t.Setenv("DEVSHARD_STATS_PORT", "9292")
 	t.Setenv("DEVSHARD_STATS_RETENTION_EPOCHS", "0")

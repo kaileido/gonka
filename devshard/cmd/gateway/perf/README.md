@@ -13,7 +13,7 @@ Per-host history, and the one verdict derived from it that routing honours.
 
 - **Capability refusals are counted, never routed on.** They are reported so an operator knows what to fix; nothing here withholds a host from the rota over one. A version refusal in particular would retire a host for good, because a gateway serves one protocol version for its whole life.
 - **Ejection is capped by a floor of available hosts**, so it cannot empty a model.
-- **Every restart starts clean.** No ejections, no counts, every window at its initial value — a divergence from the legacy gateway, argued in [`docs/rules.md`](../docs/rules.md).
+- **Every restart starts clean.** No ejections, no counts, every window at its initial value: minute-scale backoff self-heals faster than replaying stale penalties is worth ([`docs/capacity.md`](../docs/capacity.md), "Nothing here is persisted").
 
 ## When a host stops taking work
 

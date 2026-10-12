@@ -17,8 +17,8 @@ func TestCountersThatDifferOnlyInAFlagBothSurviveARestart(t *testing.T) {
 		name    string
 		attempt Attempt
 	}{
-		{"slow decode", Attempt{Nonce: 8, Sent: true, Finished: true, Usage: UsageWinner, SlowDecode: true}},
-		{"decoded logprobs", Attempt{Nonce: 8, Sent: true, Finished: true, Usage: UsageWinner, LogprobsDecoded: true}},
+		{"slow decode", Attempt{Nonce: 8, Sent: true, Usage: UsageWinner, SlowDecode: true}},
+		{"decoded logprobs", Attempt{Nonce: 8, Sent: true, Usage: UsageWinner, LogprobsDecoded: true}},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			book := newTestBook(t, 4)
@@ -26,11 +26,12 @@ func TestCountersThatDifferOnlyInAFlagBothSurviveARestart(t *testing.T) {
 				t.Fatalf("ObserveLatestNonce(): %v", err)
 			}
 			if err := book.RecordRace(testEscrow, []Attempt{
-				{Nonce: 4, Sent: true, Finished: true, Usage: UsageWinner},
+				{Nonce: 4, Sent: true, Usage: UsageWinner},
 				testCase.attempt,
 			}); err != nil {
 				t.Fatalf("RecordRace(): %v", err)
 			}
+			markFinished(t, book, testEscrow, 4, 8)
 
 			restored := saveAndReload(t, book, openTestStore(t))
 

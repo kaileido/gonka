@@ -119,7 +119,7 @@ func TestWarmupSkipsAnEscrowThatIsAlreadyGone(t *testing.T) {
 // Test flow:
 //  1. Record a served probe's nonce through `warmup.record`.
 //  2. Assert one probe attempt was recorded for that nonce.
-//  3. Assert it is marked sent and finished, with usage `UsageLoser`, since nobody consumed a warmup answer.
+//  3. Assert it is marked sent, with usage `UsageLoser`, since nobody consumed a warmup answer.
 func TestWarmupSettlesItsNonceAsWorkNobodyUsed(t *testing.T) {
 	ledger := &spyLedger{}
 	warmup := &Prober{ledger: ledger, probes: ledger, now: warmupClock()}
@@ -135,8 +135,6 @@ func TestWarmupSettlesItsNonceAsWorkNobodyUsed(t *testing.T) {
 		t.Errorf("nonce = %d, want 7", attempt.Nonce)
 	case !attempt.Sent:
 		t.Error("Sent = false, want true: the gateway dispatched this nonce")
-	case !attempt.Finished:
-		t.Error("Finished = false, want true: the host answered")
 	case attempt.Usage != accounting.UsageLoser:
 		t.Errorf("Usage = %q, want %q: nobody consumed a warmup answer", attempt.Usage, accounting.UsageLoser)
 	}
@@ -144,8 +142,8 @@ func TestWarmupSettlesItsNonceAsWorkNobodyUsed(t *testing.T) {
 
 // Test flow:
 //  1. Record a refused probe's nonce and error through `warmup.record`.
-//  2. Assert the recorded attempt is marked sent but not finished or acknowledged.
-func TestARefusedProbeIsNotSettledAsFinished(t *testing.T) {
+//  2. Assert the recorded attempt is marked sent but not acknowledged.
+func TestARefusedProbeIsNotAcknowledged(t *testing.T) {
 	ledger := &spyLedger{}
 	warmup := &Prober{ledger: ledger, probes: ledger, now: warmupClock()}
 
@@ -155,8 +153,6 @@ func TestARefusedProbeIsNotSettledAsFinished(t *testing.T) {
 	switch {
 	case !attempt.Sent:
 		t.Error("Sent = false, want true: the nonce is spent either way")
-	case attempt.Finished:
-		t.Error("Finished = true, want false: the host delivered nothing")
 	case attempt.Acknowledged:
 		t.Error("Acknowledged = true, want false: no receipt came back")
 	}

@@ -331,7 +331,6 @@ func (c *raceCoordinator) escalationRequest() EscalationRequest {
 	return EscalationRequest{InputTokens: c.request.InputTokens}
 }
 
-// abandonCancelled stops waiting for attempts that ignored their cancellation: each is reported unclassified, so its open nonce still takes a timeout vote, and its late return is ignored.
 func (c *raceCoordinator) abandonCancelled() {
 	c.catchUp()
 	now := c.deps.Now()

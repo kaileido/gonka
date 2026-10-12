@@ -95,7 +95,7 @@ Both halves of `usage` latch together over an attempt, so a row can never pair o
 
 ## Errors and statuses
 
-- The gateway's own limiter is a quota the caller exceeded, which is 429; capacity and a busy escrow are the shard having no room, which is 503. The legacy gateway splits the two statuses at the same point, so client retry logic carries across.
+- The gateway's own limiter is a quota the caller exceeded, which is 429; capacity and a busy escrow are the shard having no room, which is 503.
 - `writeError` renders the JSON envelope; `http.Error` would send `text/plain` instead.
 - `writeControlFailure` is not `writeErrorFor`: that one answers 502 for an unrecognised error, which is wrong for a store this process owns.
 - `rateLimited` singles out the gateway limiter's own rejection, because the status, the `Retry-After` header and the counter that names which cap was hit all ask for it.
@@ -126,11 +126,11 @@ The journal's `winnerOutputTokens` is what the client actually received, which w
 
 `devshardView` and `rotationView` keep the storage rows out of the response: without them a column rename in the store silently changes the API, and the record's own field names reach the client as written.
 
-A key a devshardctl route also answered keeps devshardctl's name, so a client written against devshardctl reads the same field: an escrow is `id` in `/v1/status`, `/v1/admin/state` and the `/v1/admin/devshards` answers and requests, and `active_requests`, `latest` / `model_id`, `suspicious_hosts`, `loaded_runtimes`, `escrows_removed`, `nonces`, `max_concurrent_requests_per_10000_weight` in `capacity`, `active` on import and `model_id` on escrow creation are devshardctl's spellings. A key devshardctl never had keeps the gateway's name. Import takes `source_path`, not devshardctl's `storage_path`: devshardctl resolved that inside its own storage directory, while the gateway copies from the path it is given, so the same key would carry a different meaning. The `/v1/admin/devshards` listing goes through `devshardView` like `/v1/admin/state`, so an empty `settle_tx_hash` or `route_prefix` is left out, as devshardctl left out an empty `route_prefix`. `devshardctl_keys_test.go` holds the shared names in place. The admin settings are the exception: `config.Overrides` is also the stored form, so its keys stay as they are.
+These keys are fixed: an escrow is `id` in `/v1/status`, `/v1/admin/state` and the `/v1/admin/devshards` answers and requests, and `active_requests`, `latest` / `model_id`, `suspicious_hosts`, `loaded_runtimes`, `escrows_removed`, `nonces`, `max_concurrent_requests_per_10000_weight` in `capacity`, `active` on import and `model_id` on escrow creation. Import takes `source_path`, the path the gateway copies the escrow from. The `/v1/admin/devshards` listing goes through `devshardView` like `/v1/admin/state`, so an empty `settle_tx_hash` or `route_prefix` is left out. `fixed_keys_test.go` holds these names in place. The admin settings keep their own keys: `config.Overrides` is also the stored form, so its keys stay as they are.
 
 `devshardStatus.SessionVersion` is the protocol tag the session was created under and the one every settlement payload carries. An operator reading this endpoint has no other way to see which version an escrow is bound to, and a mismatch with the host it dispatches to is what makes a settlement unacceptable.
 
-`capacityStatus` carries each weight under both spellings, old and new — see `operations.md`, "Reading the gateway's state".
+`capacityStatus` carries each weight under two names with one value (`current_weight` and `total_weight`, `baseline_weight` and `full_weight`, `scale_factor` and `limit_share`) — see `operations.md`, "Reading the gateway's state".
 
 ## The operator and recovery surface
 

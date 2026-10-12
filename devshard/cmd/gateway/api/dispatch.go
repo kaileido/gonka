@@ -87,7 +87,6 @@ func (t escrowTarget) Send(ctx context.Context, nonce scheduler.Prepared, stream
 		return nil, err
 	}
 	inferenceID := prepared.Nonce()
-	// A released Finish rides the next Start diff, or a quiet escrow composes it alone. See escrows.md, "Height sync".
 	return hostReply{reply: reply, releaseFinish: sync.OnceFunc(func() {
 		t.session.UnpinPendingFinish(inferenceID)
 		t.session.ArmQuietSettle()

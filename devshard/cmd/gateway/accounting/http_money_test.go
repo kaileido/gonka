@@ -49,11 +49,12 @@ func TestParticipantsEndpointReturnsCostPerParticipantAndModel(t *testing.T) {
 			t.Fatalf("ObserveInferences %s: %v", escrow.id, err)
 		}
 		if err := book.RecordRace(escrow.id, []Attempt{{
-			Nonce: escrow.nonce, RequestID: "request-1", Sent: true, Finished: true,
+			Nonce: escrow.nonce, RequestID: "request-1", Sent: true,
 			Usage: UsageWinner, OutputTokens: int64(escrow.record.OutputTokens),
 		}}); err != nil {
 			t.Fatalf("RecordRace %s: %v", escrow.id, err)
 		}
+		markFinished(t, book, escrow.id, escrow.nonce)
 	}
 
 	recorder := serve(t, book, "/api/v1/epochs/current/participants")

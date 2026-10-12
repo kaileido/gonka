@@ -32,6 +32,26 @@ Run artifacts are written under
 different directory and `-keep-stack` to leave the Docker stack running for
 post-run inspection.
 
+## Driving cmd/gateway
+
+To drive `devshard/cmd/gateway` (Docker target `gateway-runtime`), pass `-gateway gateway` to the runner, `GATEWAY=gateway` to the Make target, or set `topology.gateway: gateway` in the scenario. The flag overrides the scenario.
+
+```bash
+make -C devshard/testenv loadtest SCENARIO=long-escrow-32rps-30m GATEWAY=gateway
+```
+
+The Compose service is named `devshardctl` with either driver, so profiles, metrics and logs are collected the same way. With the gateway driver the runner handles these settings and probes as follows:
+
+| Scenario setting or probe | With `gateway` |
+| --- | --- |
+| `gateway.redundancy.secondary_wait_after_winner` | Sent as the `engine_loser_grace_ms` override (`PUT /v1/admin/settings`); it must be at least `engine_inter_chunk_stall_ms` (30s). |
+| `gateway.escrow_rotation` | Sent as the `rotation_*` overrides; rotation is off in the environment until then. |
+| `gateway.participant_throttle` | No equivalent; skipped with a log line. |
+| Refused overrides | Logged; the run continues. |
+| Gateway state sizes (`gateway-state.json`, per-escrow `state` samples) | Not collected: the gateway serves no `/v1/debug/state-sizes`. |
+| Orphan check and `gateway-inferences.json` | Read per escrow from `/devshard/{id}/v1/debug/inferences`, escrows listed by `/v1/admin/devshards`. |
+| Ghost probes | The gateway logs none, so the ghost count stays zero. |
+
 ## Catch-up scenario
 
 `catch-up` runs three participants at 16 RPS for five minutes. At 90 seconds

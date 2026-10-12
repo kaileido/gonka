@@ -100,7 +100,6 @@ type planTransitions struct {
 	budgetBegan        bool
 }
 
-// idleFor counts how long an escrow has had nothing open and no race taking it; a race between two ticks closes its records before either tick sees them.
 func (p *fundingPlanner) idleFor(escrowID string, idle bool, holds uint64, now time.Time) time.Duration {
 	p.mu.Lock()
 	defer p.mu.Unlock()

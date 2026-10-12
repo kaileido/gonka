@@ -82,8 +82,7 @@ type AttemptSpec struct {
 	Sink        io.Writer
 	Now         func() time.Time
 
-	Events chan<- AttemptEvent
-	// Reported closes when the race has reported; an attempt still running then has nobody to tell.
+	Events   chan<- AttemptEvent
 	Reported <-chan struct{}
 }
 
@@ -305,7 +304,6 @@ func (spec AttemptSpec) emit(event AttemptEvent) bool {
 	}
 }
 
-// finish hands the race its terminal event; a race that already reported cannot post a claim, so a held Finish is let go.
 func (spec AttemptSpec) finish(event AttemptEvent) {
 	if !spec.emit(event) && event.Outcome != nil {
 		event.Outcome.MissProof.releaseHeldFinish()

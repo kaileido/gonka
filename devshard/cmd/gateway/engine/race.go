@@ -93,7 +93,6 @@ const (
 	triggerStall
 )
 
-// cancelledAttemptGrace is how long a cancelled attempt may take to return; wall time, not the race timer, because it bounds a goroutine a dead host's read can hold, not the protocol.
 const cancelledAttemptGrace = 2 * time.Second
 
 // Written only by the coordinator: from AttemptEvents, and from its own deadline firings.

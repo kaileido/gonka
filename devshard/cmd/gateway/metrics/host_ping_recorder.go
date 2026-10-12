@@ -1,9 +1,8 @@
 package metrics
 
 import (
-	"github.com/prometheus/client_golang/prometheus"
-
 	"common/probe"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // HostPingRecorder holds what the host pings observed. See ../hostping/README.md.

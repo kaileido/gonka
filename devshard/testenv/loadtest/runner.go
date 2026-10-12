@@ -29,6 +29,8 @@ type RunnerConfig struct {
 	KeepStack       bool
 	LoadDataset     string
 	MetricsInterval time.Duration
+	// GatewayDriver overrides the scenario's topology.gateway when set.
+	GatewayDriver config.GatewayDriver
 }
 
 type RunResult struct {
@@ -123,6 +125,13 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	if err != nil {
 		return RunResult{}, err
 	}
+	if err := opts.GatewayDriver.Validate(); err != nil {
+		return RunResult{}, err
+	}
+	if opts.GatewayDriver != "" {
+		scenario.Topology.Gateway = opts.GatewayDriver
+	}
+	driver := scenario.Topology.Gateway
 	var replaySelector *replay.Selector
 	var replayModels []string
 	if opts.LoadDataset != "" {
@@ -184,7 +193,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	}()
 
 	const maxStartAttempts = 3
-	log.Printf("loadtest: stage=stack_start scenario=%s", scenario.Scenario)
+	log.Printf("loadtest: stage=stack_start scenario=%s gateway=%s", scenario.Scenario, gatewayDriverName(driver))
 	log.Printf("loadtest: peer_rpc_transport=h2 endpoint=versiond-router:8081 grpc=true")
 	for attempt := 1; attempt <= maxStartAttempts; attempt++ {
 		project = "loadtest-" + strconv.FormatInt(time.Now().UnixNano(), 36)
@@ -225,13 +234,14 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	result.GatewayURL = fmt.Sprintf("http://127.0.0.1:%d", cfg.Devshardctl.Port)
 	accountingURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Devshardctl.StatsPort)
 	stateGatewayURL := result.GatewayURL
-	if replaySelector != nil {
+	if replaySelector != nil || driver.IsGateway() {
 		// Replay stacks configure Gateway through DEVSHARDS_JSON, so even a
 		// single dataset model uses the multi-DevShard debug route.
 		stateGatewayURL = scopedGatewayURL(result.GatewayURL, config.PrimaryEscrowID(cfg))
 	}
 	debugGatewayURL := stateGatewayURL
-	if scenario.Gateway.EscrowRotation.Enabled {
+	aggregateDebug := scenario.Gateway.EscrowRotation.Enabled || driver.IsGateway()
+	if aggregateDebug {
 		// Rotation adds runtimes while the test is running. The orphan check
 		// discovers and inspects all of them through the Gateway root.
 		debugGatewayURL = result.GatewayURL
@@ -251,7 +261,11 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		}
 	}
 	rotationModels := rotationModelIDs(cfg, replayModels, scenario)
-	if err := applyGatewayScenarioSettings(ctx, result.GatewayURL, apiKey, scenario, rotationModels); err != nil {
+	applySettings := applyGatewayScenarioSettings
+	if driver.IsGateway() {
+		applySettings = applyCmdGatewayScenarioSettings
+	}
+	if err := applySettings(ctx, result.GatewayURL, apiKey, scenario, rotationModels); err != nil {
 		_ = writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath, scenario.Diagnostics.LogTail())
 		return RunResult{}, err
 	}
@@ -314,7 +328,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	if err != nil {
 		return RunResult{}, err
 	}
-	terminal, assertions, assertionErr := assertRun(ctx, scenario, summary, allocations, debugGatewayURL, apiKey, initialEscrowIDs, ghostIDs)
+	terminal, assertions, assertionErr := assertRun(ctx, scenario, summary, allocations, debugGatewayURL, apiKey, initialEscrowIDs, ghostIDs, aggregateDebug)
 	result.Terminal = terminal
 	for index, fault := range result.HostFaults {
 		assertions = append(assertions, AssertionResult{
@@ -384,14 +398,18 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		}
 		log.Printf("loadtest: final Compose log collection failed: %v", err)
 	}
-	gatewayState, stateErr := fetchGatewayStateSizes(ctx, stateGatewayURL, apiKey)
-	if stateErr == nil {
-		result.GatewayState = gatewayState
-		if err := writeGatewayStateSizes(opts.OutputDir, gatewayState); err != nil && assertionErr == nil {
-			return RunResult{}, err
+	if driver.IsGateway() {
+		log.Printf("loadtest: gateway state sizes skipped: cmd/gateway serves no /v1/debug/state-sizes")
+	} else {
+		gatewayState, stateErr := fetchGatewayStateSizes(ctx, stateGatewayURL, apiKey)
+		if stateErr == nil {
+			result.GatewayState = gatewayState
+			if err := writeGatewayStateSizes(opts.OutputDir, gatewayState); err != nil && assertionErr == nil {
+				return RunResult{}, err
+			}
+		} else if assertionErr == nil {
+			return RunResult{}, stateErr
 		}
-	} else if assertionErr == nil {
-		return RunResult{}, stateErr
 	}
 	mlStats, statsErr := fetchMLNodeStats(ctx, cfg.MockDapi.HTTPPort)
 	if statsErr == nil {
@@ -484,6 +502,71 @@ func applyGatewayScenarioSettings(ctx context.Context, gatewayURL, apiKey string
 	return nil
 }
 
+// applyCmdGatewayScenarioSettings maps the scenario onto cmd/gateway overrides; a setting it cannot carry is logged, never fatal.
+func applyCmdGatewayScenarioSettings(ctx context.Context, gatewayURL, apiKey string, scenario Scenario, rotationModels []string) error {
+	overrides := map[string]any{}
+	if value := scenario.Gateway.Redundancy.SecondaryWaitAfterWinner; value != "" {
+		overrides["engine_loser_grace_ms"] = scenario.SecondaryWaitAfterWinner().Milliseconds()
+	}
+	throttle := scenario.Gateway.ParticipantThrottle
+	if throttle.TransportFailureQuarantine != "" || throttle.HTTPQuarantine != "" {
+		log.Printf("loadtest: gateway.participant_throttle skipped: cmd/gateway has no quarantine duration override")
+	}
+	rotation := scenario.Gateway.EscrowRotation
+	overrides["rotation_enabled"] = rotation.Enabled
+	if rotation.Enabled {
+		models := make([]map[string]any, 0, len(rotationModels))
+		for _, modelID := range rotationModels {
+			models = append(models, map[string]any{
+				"model_id":        modelID,
+				"temp_count":      rotation.TempCount,
+				"target_count":    rotation.TargetCount,
+				"amount":          rotation.Amount,
+				"private_key_env": rotation.PrivateKeyEnv,
+			})
+		}
+		encodedModels, err := json.Marshal(models)
+		if err != nil {
+			return fmt.Errorf("marshal gateway rotation models: %w", err)
+		}
+		overrides["rotation_settlement_enabled"] = rotation.SettlementEnabled
+		overrides["rotation_pre_poc_blocks"] = rotation.PrePoCBlocks
+		overrides["rotation_models_json"] = string(encodedModels)
+	}
+	body, err := json.Marshal(overrides)
+	if err != nil {
+		return fmt.Errorf("marshal gateway overrides: %w", err)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPut, gatewayURL+"/v1/admin/settings", strings.NewReader(string(body)))
+	if err != nil {
+		return fmt.Errorf("create gateway overrides request: %w", err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		request.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	response, err := (&http.Client{Timeout: 5 * time.Second}).Do(request)
+	if err != nil {
+		log.Printf("loadtest: gateway overrides not applied: %v", err)
+		return nil
+	}
+	defer func() { _ = response.Body.Close() }()
+	reply, _ := io.ReadAll(io.LimitReader(response.Body, 4<<10))
+	if response.StatusCode != http.StatusOK {
+		log.Printf("loadtest: gateway overrides not applied: %s: %s", response.Status, strings.TrimSpace(string(reply)))
+		return nil
+	}
+	log.Printf("loadtest: gateway overrides applied: %s", body)
+	return nil
+}
+
+func gatewayDriverName(driver config.GatewayDriver) string {
+	if driver == "" {
+		return string(config.GatewayDriverDevshardctl)
+	}
+	return string(driver)
+}
+
 func rotationModelIDs(cfg *config.File, replayModels []string, scenario Scenario) []string {
 	if !scenario.Gateway.EscrowRotation.Enabled {
 		return nil
@@ -523,6 +606,7 @@ func writeRunnerConfig(testenvDir, workDir string, scenario Scenario, profiles m
 		return err
 	}
 	cfg.Versiond.Mode = scenario.Topology.VersiondMode
+	cfg.Devshardctl.Driver = scenario.Topology.Gateway
 	cfg.Versiond.DisablePeriodicSnapshots = scenario.Diagnostics.DisablePeriodicSnapshots
 	cfg.Versiond.EnableContentionProfiles = scenario.Diagnostics.ContentionProfiles
 	cfg.Postgres.PerParticipant = scenario.Topology.Storage == "per_participant"
@@ -894,7 +978,7 @@ func writeGatewayStateSizes(outputDir string, sizes GatewayStateSizes) error {
 	return os.WriteFile(filepath.Join(outputDir, "gateway-state.json"), append(body, '\n'), 0o644)
 }
 
-func assertRun(ctx context.Context, scenario Scenario, summary Summary, allocations map[string]uint64, gatewayURL, apiKey string, initialEscrowIDs, ghostIDs map[string]struct{}) (TerminalSummary, []AssertionResult, error) {
+func assertRun(ctx context.Context, scenario Scenario, summary Summary, allocations map[string]uint64, gatewayURL, apiKey string, initialEscrowIDs, ghostIDs map[string]struct{}, aggregateDebug bool) (TerminalSummary, []AssertionResult, error) {
 	checks := make([]AssertionResult, 0, 5)
 	failures := make([]AssertionResult, 0)
 	addCheck := func(name, expected, actual, details string, passed bool) {
@@ -951,7 +1035,7 @@ func assertRun(ctx context.Context, scenario Scenario, summary Summary, allocati
 	terminal := TerminalSummary{}
 	if scenario.Assertions.Devshard.NoOrphanedWork {
 		var orphanErr error
-		terminal, orphanErr = waitForNoOrphanedWork(ctx, gatewayURL, apiKey, scenario.Assertions.Devshard.MaxGhostRate, ghostIDs, scenario.DrainDuration(), scenario.Gateway.EscrowRotation.Enabled)
+		terminal, orphanErr = waitForNoOrphanedWork(ctx, gatewayURL, apiKey, scenario.Assertions.Devshard.MaxGhostRate, ghostIDs, scenario.DrainDuration(), aggregateDebug)
 		check := AssertionResult{
 			Name:     "devshard.no_orphaned_work",
 			Passed:   orphanErr == nil,
@@ -985,7 +1069,34 @@ type debugInference struct {
 }
 
 type debugInferencesResponse struct {
-	Inferences map[string]debugInference `json:"inferences"`
+	Inferences json.RawMessage `json:"inferences"`
+}
+
+// decodeDebugInferences reads devshardctl's nonce-keyed object and cmd/gateway's nonce-carrying array alike.
+func decodeDebugInferences(raw json.RawMessage) (map[string]debugInference, error) {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return map[string]debugInference{}, nil
+	}
+	if strings.HasPrefix(trimmed, "[") {
+		var entries []struct {
+			Nonce  uint64 `json:"nonce"`
+			Status string `json:"status"`
+		}
+		if err := json.Unmarshal(raw, &entries); err != nil {
+			return nil, fmt.Errorf("decode inference list: %w", err)
+		}
+		inferences := make(map[string]debugInference, len(entries))
+		for _, entry := range entries {
+			inferences[strconv.FormatUint(entry.Nonce, 10)] = debugInference{Status: entry.Status}
+		}
+		return inferences, nil
+	}
+	var inferences map[string]debugInference
+	if err := json.Unmarshal(raw, &inferences); err != nil {
+		return nil, fmt.Errorf("decode inference map: %w", err)
+	}
+	return inferences, nil
 }
 
 func waitForNoOrphanedWork(ctx context.Context, gatewayURL, apiKey string, maxGhostRate float64, ghostIDs map[string]struct{}, timeout time.Duration, aggregateRuntimeState ...bool) (TerminalSummary, error) {
@@ -1061,6 +1172,10 @@ func fetchDebugInferenceSummary(ctx context.Context, client *http.Client, gatewa
 		var body debugInferencesResponse
 		decodeErr := json.NewDecoder(response.Body).Decode(&body)
 		response.Body.Close()
+		var inferences map[string]debugInference
+		if decodeErr == nil {
+			inferences, decodeErr = decodeDebugInferences(body.Inferences)
+		}
 		if response.StatusCode != http.StatusOK {
 			if decodeErr == nil {
 				return TerminalSummary{}, fmt.Errorf("GET /v1/debug/inferences returned %s", response.Status)
@@ -1070,7 +1185,7 @@ func fetchDebugInferenceSummary(ctx context.Context, client *http.Client, gatewa
 		if decodeErr != nil {
 			return TerminalSummary{}, fmt.Errorf("decode /v1/debug/inferences: %w", decodeErr)
 		}
-		mergeTerminalSummary(&total, summarizeDebugInferences(body.Inferences, ghostIDs))
+		mergeTerminalSummary(&total, summarizeDebugInferences(inferences, ghostIDs))
 	}
 	if total.Total > 0 {
 		total.GhostRate = float64(total.Ghost) / float64(total.Total)

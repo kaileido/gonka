@@ -26,7 +26,6 @@ const (
 	cacheRefusedNoEscrow    = "no_escrow"
 )
 
-// cacheResultStored is the cache-result label for a reply the cache kept.
 const cacheResultStored = "stored"
 
 // Why a request was captured. Capture has these two triggers and no others.

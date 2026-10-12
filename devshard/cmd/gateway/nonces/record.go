@@ -35,7 +35,6 @@ func (n *Recorder) RecordRace(outcome engine.RaceOutcome) {
 			OutputTokens:    attempt.OutputTokens(),
 			Sent:            !attempt.SendTime.IsZero(),
 			Acknowledged:    !attempt.ReceiptTime.IsZero(),
-			Finished:        attempt.NonceFinished,
 			Usage:           usageOf(outcome, attempt),
 			Terminal:        terminalFor(outcome, attempt),
 			Phase:           phase,

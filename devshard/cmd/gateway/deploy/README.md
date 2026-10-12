@@ -55,5 +55,5 @@ Most limits are also runtime overrides through the admin API, so the values here
 
 Two settings decide behaviour before the first run:
 
-- `DEVSHARD_STATS_ENABLED` ships as `false` and the built-in default is also off. The old gateway had its ledger **on** unless `DEVSHARD_STATS_ENABLED` turned it off, so an operator porting a config that never set that variable gets no counters, no findings and no `accounting.db` — without an error. Left off, the gateway runs without counters or findings.
+- `DEVSHARD_STATS_ENABLED` ships as `false` and the built-in default is also off: a config that never sets it gets no counters, no findings and no `accounting.db`, without an error.
 - `DEVSHARD_POC_REQUEST_MODE` ships as `relaxed` and the built-in default is also relaxed: the gateway serves through the chain phase that otherwise blocks new inferences. It is the right setting for a gateway that must keep answering across an epoch boundary; set `off` where the chain's own admission must hold.

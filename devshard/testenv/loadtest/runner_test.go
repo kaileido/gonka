@@ -146,7 +146,7 @@ func TestAssertRunReportsExpectedAndActualValues(t *testing.T) {
 		ErrorRate: 0.5,
 	}
 
-	_, checks, err := assertRun(context.Background(), scenario, summary, nil, "", "", nil, nil)
+	_, checks, err := assertRun(context.Background(), scenario, summary, nil, "", "", nil, nil, false)
 
 	require.Error(t, err)
 	require.Len(t, checks, 1)
@@ -169,7 +169,7 @@ func TestAssertRunEvaluatesAllEnabledAssertions(t *testing.T) {
 		ErrorRate: 0.5,
 	}
 
-	_, checks, err := assertRun(context.Background(), scenario, summary, nil, "", "", nil, nil)
+	_, checks, err := assertRun(context.Background(), scenario, summary, nil, "", "", nil, nil, false)
 
 	require.Error(t, err)
 	require.Len(t, checks, 3)
@@ -343,4 +343,55 @@ func TestApplyGatewayParticipantQuarantine(t *testing.T) {
 			require.NoError(t, applyGatewayScenarioSettings(context.Background(), server.URL, "", scenario, nil))
 		})
 	}
+}
+
+func TestFetchDebugInferenceSummary_ReadsCmdGatewayPerEscrowLists(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/admin/devshards":
+			_, _ = w.Write([]byte(`{"devshards":[{"id":"7"},{"id":"8"}]}`))
+		case "/devshard/7/v1/debug/inferences":
+			_, _ = w.Write([]byte(`{"escrow_id":"7","inferences":[{"nonce":1,"status":"finished","record":{}},{"nonce":2,"status":"started","record":{}}]}`))
+		case "/devshard/8/v1/debug/inferences":
+			_, _ = w.Write([]byte(`{"escrow_id":"8","inferences":[{"nonce":1,"status":"validated","record":{}}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	summary, err := fetchDebugInferenceSummary(context.Background(), server.Client(), server.URL, "", nil, true)
+
+	require.NoError(t, err)
+	require.Equal(t, 3, summary.Total)
+	require.Equal(t, 1, summary.Finished)
+	require.Equal(t, 1, summary.Orphaned)
+	require.Equal(t, map[string]int{"finished": 1, "started": 1, "validated": 1}, summary.Statuses)
+}
+
+func TestDecodeDebugInferences_ReadsDevshardctlNonceMap(t *testing.T) {
+	inferences, err := decodeDebugInferences(json.RawMessage(`{"5":{"status":"timed_out"}}`))
+
+	require.NoError(t, err)
+	require.Equal(t, map[string]debugInference{"5": {Status: "timed_out"}}, inferences)
+}
+
+func TestApplyCmdGatewayScenarioSettings_SendsOverridesAndToleratesRefusal(t *testing.T) {
+	var method string
+	var overrides map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method = r.Method
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&overrides))
+		http.Error(w, "refused", http.StatusBadRequest)
+	}))
+	defer server.Close()
+	scenario := testScenario()
+	scenario.Gateway.Redundancy.SecondaryWaitAfterWinner = "30s"
+	scenario.Gateway.ParticipantThrottle.HTTPQuarantine = "70s"
+
+	err := applyCmdGatewayScenarioSettings(context.Background(), server.URL, "admin", scenario, nil)
+
+	require.NoError(t, err)
+	require.Equal(t, http.MethodPut, method)
+	require.Equal(t, map[string]any{"engine_loser_grace_ms": float64(30000), "rotation_enabled": false}, overrides)
 }

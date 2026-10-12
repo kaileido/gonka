@@ -90,7 +90,7 @@ func (n *Recorder) sweep(ctx context.Context, escrows EscrowSource, diffs DiffJo
 			}))
 		}
 		n.observeEscrowState(state.ID, escrowState)
-		n.reconcileFinished(state.ID, session)
+		n.closeSealed(state.ID, escrowState, session)
 		n.watchDiffs(state.ID, session, diffs)
 	}
 	for _, escrowID := range n.service.Book.EscrowIDs() {
@@ -113,22 +113,6 @@ func (n *Recorder) observeEscrowState(escrowID string, escrowState types.EscrowS
 	n.report(n.service.Book.ObserveInferences(escrowID, escrowState.Inferences))
 }
 
-// The session handle is taken once: it is fixed for the sweep, and the ask behind it takes the lock a nonce commit holds.
-func (n *Recorder) reconcileFinished(escrowID string, session registry.EscrowSession) {
-	underlying := session.UserSession()
-	if underlying == nil {
-		return
-	}
-	unfinished := n.service.Book.UnfinishedNonces(escrowID)
-	var finished []uint64
-	for _, nonce := range unfinished {
-		if underlying.IsNonceFinished(nonce) {
-			finished = append(finished, nonce)
-		}
-	}
-	n.report(n.service.Book.MarkFinished(escrowID, finished))
-}
-
 // EscrowRetiring takes the reading the sweep will never take again, and asks the ledger's own goroutine to write it out.
 // See docs/accounting.md, "Money and tokens".
 func (n *Recorder) EscrowRetiring(escrowID string, session registry.EscrowSession) {
@@ -136,10 +120,32 @@ func (n *Recorder) EscrowRetiring(escrowID string, session registry.EscrowSessio
 		return
 	}
 	if session != nil {
-		n.observeEscrowState(escrowID, session.SnapshotState())
-		n.reconcileFinished(escrowID, session)
+		snapshot := session.SnapshotState()
+		n.observeEscrowState(escrowID, snapshot)
+		n.closeSealed(escrowID, snapshot, session)
 	}
 	n.service.Book.RetireEscrow(escrowID)
 	n.observing.Delete(escrowID)
 	n.service.RequestFlush()
+}
+
+func (n *Recorder) closeSealed(escrowID string, snapshot types.EscrowState, session registry.EscrowSession) {
+	var finished []uint64
+	for _, nonce := range n.service.Book.UnfinishedNonces(escrowID) {
+		if _, live := snapshot.Inferences[nonce]; live || nonce > snapshot.LatestNonce {
+			continue
+		}
+		if sealedFinished(session, nonce) {
+			finished = append(finished, nonce)
+		}
+	}
+	n.report(n.service.Book.MarkFinished(escrowID, finished))
+}
+
+func sealedFinished(session registry.EscrowSession, nonce uint64) bool {
+	if record, kept := session.SealedInference(nonce); kept {
+		return accounting.FinishApplied(record.Status)
+	}
+	underlying := session.UserSession()
+	return underlying != nil && underlying.IsNonceFinished(nonce)
 }

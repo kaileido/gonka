@@ -70,6 +70,10 @@ func (s *pointReadSession) Inference(nonce uint64) (types.InferenceRecord, bool)
 	return record, committed
 }
 
+func (s *pointReadSession) SealedInference(uint64) (types.InferenceRecord, bool) {
+	return types.InferenceRecord{}, false
+}
+
 // Test flow:
 //  1. Build an escrow session holding one committed inference record for nonce 4 that counts every full copy of its state.
 //  2. Define a table of nonces to look up, varying across a committed nonce, a nonce the escrow never committed, and an empty escrow.

@@ -27,12 +27,18 @@ func troubledBook(t *testing.T) *Book {
 	attempts := make([]Attempt, 0, total)
 	for nonce := uint64(1); nonce <= total; nonce++ {
 		attempts = append(attempts, Attempt{
-			Nonce: nonce, Sent: true, Acknowledged: true,
-			Finished: nonce > unfinished, Usage: UsageWinner,
+			Nonce: nonce, Sent: true, Acknowledged: true, Usage: UsageWinner,
 		})
 	}
 	if err := book.RecordRace(testEscrow, attempts); err != nil {
 		t.Fatalf("RecordRace(): %v", err)
+	}
+	finishedNonces := make([]uint64, 0, total-unfinished)
+	for nonce := uint64(unfinished + 1); nonce <= total; nonce++ {
+		finishedNonces = append(finishedNonces, nonce)
+	}
+	if err := book.MarkFinished(testEscrow, finishedNonces); err != nil {
+		t.Fatalf("MarkFinished(): %v", err)
 	}
 	for nonce := uint64(1); nonce <= unfinished; nonce++ {
 		if err := book.RecordTimeout(testEscrow, nonce, "execution", "completed", "none"); err != nil {

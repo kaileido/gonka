@@ -150,3 +150,22 @@ func TestProcessIdentityIgnoresWallClockShift(t *testing.T) {
 	after["loadtest_process_start_ticks"] = 456
 	require.True(t, processChanged(before, after))
 }
+
+func TestParseStatusNonce(t *testing.T) {
+	for _, testCase := range []struct {
+		name  string
+		body  string
+		nonce uint64
+	}{
+		{name: "devshardctl top-level nonce", body: `{"nonce":42}`, nonce: 42},
+		{name: "cmd/gateway single escrow", body: `{"devshards":[{"id":"1","nonce":17}]}`, nonce: 17},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			nonce, err := parseStatusNonce(testCase.body)
+
+			require.NoError(t, err)
+			require.NotNil(t, nonce)
+			require.Equal(t, testCase.nonce, *nonce)
+		})
+	}
+}

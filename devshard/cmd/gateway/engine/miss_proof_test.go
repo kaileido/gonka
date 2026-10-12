@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"crypto/sha256"
 	"encoding/json"
 	"testing"
 
@@ -111,8 +110,5 @@ func TestTheProofHashesToWhatTheVerifierRecomputes(t *testing.T) {
 	}
 	if _, isError := completionapi.IsTerminalErrorResponse(proof.ResponsePayload); !isError {
 		t.Fatal("the verifier must read the payload as a terminal error")
-	}
-	if sha256.Sum256(proof.ResponsePayload) != sha256.Sum256(proof.ResponsePayload) {
-		t.Fatal("unreachable")
 	}
 }

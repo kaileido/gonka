@@ -69,7 +69,7 @@ func applyContentionProfiles(enabled *bool) {
 	runtime.SetMutexProfileFraction(contentionMutexProfileFraction)
 	runtime.SetBlockProfileRate(int(contentionBlockProfileRate.Nanoseconds()))
 	logging.Info("lock contention and blocking are sampled for /debug/pprof",
-		logkey.Subsystem, "gateway", logkey.Used, "GATEWAY_CONTENTION_PROFILES")
+		logkey.Subsystem, "gateway", logkey.Used, "DEVSHARD_ENABLE_CONTENTION_PROFILES")
 }
 
 // applyDialGuard arms the dial-time SSRF guard before anything can dial. See ../docs/operations.md.

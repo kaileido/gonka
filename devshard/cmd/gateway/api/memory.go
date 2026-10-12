@@ -6,7 +6,6 @@ import (
 	"slices"
 )
 
-// memoryReading is the process memory the admin endpoint reports, read without stopping the world.
 type memoryReading struct {
 	HeapAlloc     uint64
 	TotalAlloc    uint64
@@ -37,7 +36,6 @@ const (
 	memoryTotalCPU        = "/cpu/classes/total:cpu-seconds"
 )
 
-// readMemory reads runtime/metrics, which unlike runtime.ReadMemStats never stops the world; a sample of the wrong kind is an error, not a zero.
 func readMemory() (memoryReading, error) {
 	counters := []string{memoryHeapObjectBytes, memoryHeapUnused, memoryHeapFree, memoryHeapReleased, memoryHeapObjects,
 		memoryHeapAllocated, memoryStacks, memoryTotal, memoryGCGoal, memoryGCCycles}

@@ -37,7 +37,7 @@ func TestOpenNoncesAndOpenRequestsAreCountedApart(t *testing.T) {
 
 // Test flow:
 //  1. Assign nonces 4 and 8 to request "req-a" and assert 2 nonces and 1 request in flight.
-//  2. Record the race: nonce 4 won and finished, nonce 8 lost and is still unfinished.
+//  2. Record the race: nonce 4 won and its finish is applied, nonce 8 lost and is still unfinished.
 //  3. Assert the loser nonce stays in flight while the request is closed: the client has its answer.
 //  4. Mark nonce 8 finished and assert nothing is in flight.
 func TestARequestClosesWhenItsRaceReportsWhileALoserNonceStaysOpen(t *testing.T) {
@@ -57,11 +57,12 @@ func TestARequestClosesWhenItsRaceReportsWhileALoserNonceStaysOpen(t *testing.T)
 	}
 
 	if err := book.RecordRace(testEscrow, []Attempt{
-		{Nonce: 4, RequestID: "req-a", Sent: true, Finished: true, Terminal: engine.TerminalNameWon},
+		{Nonce: 4, RequestID: "req-a", Sent: true, Terminal: engine.TerminalNameWon},
 		{Nonce: 8, RequestID: "req-a", Sent: true, Terminal: engine.TerminalNameLost},
 	}); err != nil {
 		t.Fatalf("RecordRace(): %v", err)
 	}
+	markFinished(t, book, testEscrow, 4)
 
 	answered := book.Query(QueryFilter{Participant: participantFor(0)})
 	if answered[0].InFlight != 1 || answered[0].InFlightRequests != 0 {

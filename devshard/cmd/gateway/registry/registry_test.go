@@ -125,6 +125,10 @@ func (f *fakeSession) Inference(nonce uint64) (types.InferenceRecord, bool) {
 	return *record, true
 }
 
+func (f *fakeSession) SealedInference(uint64) (types.InferenceRecord, bool) {
+	return types.InferenceRecord{}, false
+}
+
 func (f *fakeSession) LiveInferences() (types.SessionConfig, []types.InferenceRecord) {
 	records := make([]types.InferenceRecord, 0, len(f.escrowState.Inferences))
 	for _, record := range f.escrowState.Inferences {

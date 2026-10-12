@@ -173,7 +173,7 @@ func lookup(names ...string) string {
 }
 
 func ignoreUnusableValue(name, raw string) {
-	logging.Warn("environment value ignored: devshardctl would not have used it either, so the default applies",
+	logging.Warn("environment value ignored: it is not a usable value, so the default applies",
 		logkey.Subsystem, "env", logkey.Recorded, name, logkey.Used, raw)
 }
 
@@ -384,7 +384,7 @@ func Load() (Values, error) {
 	readStrictInt("GATEWAY_ENGINE_MAX_CONCURRENT_TIMEOUT_VOTES", &values.EngineMaxConcurrentTimeoutVotes)
 	readStrictInt("GATEWAY_ENGINE_HEDGE_FIRST_TOKEN_FLOOR_MS", &values.EngineHedgeFirstTokenFloorMS)
 
-	readStrictBool("GATEWAY_CONTENTION_PROFILES", &values.ContentionProfiles)
+	readLenientBool("DEVSHARD_ENABLE_CONTENTION_PROFILES", &values.ContentionProfiles)
 
 	if len(problems) > 0 {
 		return Values{}, fmt.Errorf("reading environment: %w", errors.Join(problems...))

@@ -59,12 +59,13 @@ func TestCountersComeOutOrderedByEscrowThenSlot(t *testing.T) {
 	openTestEscrow(t, book, secondTestEscrow, testEpoch, 2)
 	for _, escrowID := range []string{secondTestEscrow, testEscrow} {
 		if err := book.RecordRace(escrowID, []Attempt{
-			{Nonce: 2, Sent: true, Finished: true, Usage: UsageWinner, Terminal: "won"},
-			{Nonce: 4, Sent: true, Finished: true, Usage: UsageLoser, Terminal: "lost"},
-			{Nonce: 3, Sent: true, Finished: true, Usage: UsageWinner, Terminal: "won"},
+			{Nonce: 2, Sent: true, Usage: UsageWinner, Terminal: "won"},
+			{Nonce: 4, Sent: true, Usage: UsageLoser, Terminal: "lost"},
+			{Nonce: 3, Sent: true, Usage: UsageWinner, Terminal: "won"},
 		}); err != nil {
 			t.Fatalf("RecordRace(%s): %v", escrowID, err)
 		}
+		markFinished(t, book, escrowID, 2, 3, 4)
 	}
 
 	for _, record := range book.Query(QueryFilter{}) {

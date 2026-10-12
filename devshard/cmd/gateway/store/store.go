@@ -103,10 +103,10 @@ var migrations = []string{
 
 // Kept out of the migrations block: it decides whether the dir may be migrated at all, and those entries are raw SQL whose indentation is part of the literal.
 var (
-	// ErrLegacyDatabase reports a gateway.db written by devshardctl. See README.md, "The legacy-database guard".
-	ErrLegacyDatabase = errors.New("storage dir holds a devshardctl database; point the gateway at an empty storage dir")
+	// ErrLegacyDatabase reports a gateway.db this gateway did not create. See README.md, "The legacy-database guard".
+	ErrLegacyDatabase = errors.New("storage dir holds a gateway.db this gateway did not create; point the gateway at an empty storage dir")
 
-	// Created by devshardctl and never here, so their presence without a schema_version is proof rather than a guess.
+	// Tables this gateway never creates, so their presence without a schema_version is proof rather than a guess.
 	legacyOnlyTables = []string{"gateway_settings", "gateway_devshards", "gateway_suspicious_hosts", "participant_throttle_state"}
 )
 

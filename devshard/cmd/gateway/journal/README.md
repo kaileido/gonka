@@ -13,7 +13,7 @@ Race outcomes and race trace steps, request records, limiter refusals and uncach
 - **Nothing is persisted.** An event lives in memory between the producer's call and its delivery. At two to three million nonces a day an event row per step would cost about 10 GB a day, so the ledger keeps its per-escrow counters and the logs keep their handler.
 - **Metrics stay synchronous.** A recorder in `metrics` is still called by the producer; only lines and ledger facts are queued.
 - **It does not classify.** Which counter a nonce lands in is `accounting`'s decision.
-- **The sweep writes the ledger directly.** `Recorder.sweep` (`nonces/sweep.go`) calls `Book.OpenEscrow`, `MarkFinished`, the `Observe*` methods and `RetireEscrow` on its own goroutine, never through this package.
+- **The sweep writes the ledger directly.** `Recorder.sweep` (`nonces/sweep.go`) calls `Book.OpenEscrow`, the `Observe*` methods and `RetireEscrow` on its own goroutine, never through this package.
 - **The warmup's `OpenEscrow` is a direct write too.** `Prober.openLedger` (`warmup/warmup.go`) calls it itself, because the open must land before the probe reaches the ledger through the journal.
 - **Process, admin and store lines are written where they happen;** "Who may log directly" names the files.
 

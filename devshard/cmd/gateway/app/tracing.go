@@ -11,7 +11,6 @@ import (
 
 const tracingFlushTimeout = 10 * time.Second
 
-// startTracing installs the OTel tracer behind DEVSHARD_OTEL_ENABLED; a broken exporter degrades to no tracing, never to no gateway. See ../docs/operations.md, "Tracing".
 func startTracing(ctx context.Context) func() {
 	shutdown, err := tracing.Init(ctx, tracing.Config{ServiceName: tracing.GatewayServiceName, ServiceVersion: Version})
 	if err != nil {

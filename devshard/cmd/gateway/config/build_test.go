@@ -119,7 +119,7 @@ var deployedEnvTemplates = []string{
 
 // Test flow:
 //  1. For each deployed env template file (`deployedEnvTemplates`), export every variable it sets the way a shell would, substituting placeholder secrets, then load and build a config from the real environment via `buildFromTemplate`.
-//  2. Assert the gateway builds without error from its own deploy file and from devshardctl's.
+//  2. Assert the gateway builds without error from every deployed env template file.
 func TestBuildAcceptsTheShippedEnvTemplate(t *testing.T) {
 	for _, path := range deployedEnvTemplates {
 		t.Run(filepath.Base(filepath.Dir(path)), func(t *testing.T) {
@@ -311,10 +311,10 @@ func unquoteShellValue(value string) string {
 }
 
 // Test flow:
-//  1. Table-driven: each case sets the weight-model limit, the PoC one, both, or neither, as devshardctl's env file would.
+//  1. Table-driven: each case sets the weight-model limit, the PoC one, both, or neither, as a deployed env file would.
 //  2. Build a config from those values.
-//  3. Assert the PoC limit follows the plain one when only a non-default plain one is set, as devshardctl derived it, and is otherwise its own value or default.
-func TestThePoCWeightLimitFollowsThePlainOneAsDevshardctlDerivedIt(t *testing.T) {
+//  3. Assert the PoC limit follows the plain one when only a non-default plain one is set, as a derived default, and is otherwise its own value or default.
+func TestThePoCWeightLimitFollowsThePlainOneWhenOnlyThePlainOneIsSet(t *testing.T) {
 	plainDefault := Defaults().Limits.Concurrency.RequestsPer10000Weight
 	pocDefault := Defaults().Limits.Concurrency.PoCRequestsPer10000Weight
 	testCases := []struct {

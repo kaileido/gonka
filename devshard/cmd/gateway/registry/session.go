@@ -52,6 +52,7 @@ type EscrowSession interface {
 	SignatureStatus() (entries []user.SignatureStatusEntry, highestQuorum uint64, hasAny bool)
 	SnapshotState() types.EscrowState
 	Inference(id uint64) (types.InferenceRecord, bool)
+	SealedInference(id uint64) (types.InferenceRecord, bool)
 	ProtocolVersion() string
 	LiveInferences() (types.SessionConfig, []types.InferenceRecord)
 	SealedInferences() int
@@ -133,6 +134,10 @@ func (h sessionHandle) Inference(id uint64) (types.InferenceRecord, bool) {
 	return h.machine.GetInference(id)
 }
 
+func (h sessionHandle) SealedInference(id uint64) (types.InferenceRecord, bool) {
+	return h.machine.LookupSealedInference(id)
+}
+
 type hostDialer interface {
 	BaseURL() string
 	RoutePrefix() string
@@ -141,15 +146,15 @@ type hostDialer interface {
 // HeightSyncView serves the cache only: taking a fresh snapshot on a debug read would move the
 // producer's own state. An unwired session reports nothing rather than an empty shape.
 func (h sessionHandle) HeightSyncView() heightsync.OperatorView {
-	if !h.Session.HeightSyncWired() {
+	if !h.HeightSyncWired() {
 		return heightsync.OperatorView{}
 	}
-	return h.Session.CachedHeightSyncView()
+	return h.CachedHeightSyncView()
 }
 
 func (h sessionHandle) HostDials() []HostDial {
-	clients := h.Session.Clients()
-	keys := h.Session.HostParticipantKeyList()
+	clients := h.Clients()
+	keys := h.HostParticipantKeyList()
 	dials := make([]HostDial, 0, len(clients))
 	for slot, client := range clients {
 		dialer, addressable := client.(hostDialer)

@@ -170,7 +170,7 @@ func streamed(t *testing.T, nonce uint64, tokens int64) func(*accounting.Book) {
 	t.Helper()
 	return func(book *accounting.Book) {
 		if err := book.RecordRace(tokenEscrowID, []accounting.Attempt{{
-			Nonce: nonce, RequestID: "request-1", Sent: true, Finished: true,
+			Nonce: nonce, RequestID: "request-1", Sent: true,
 			Usage: accounting.UsageWinner, OutputTokens: tokens,
 		}}); err != nil {
 			t.Fatalf("RecordRace(): %v", err)

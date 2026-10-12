@@ -256,6 +256,25 @@ func TestChatCompletions_EmitsLogprobsWhenRequested(t *testing.T) {
 		"validators reject decoded-text logprobs before ML replay: %+v", enforced)
 }
 
+// Test flow:
+//  1. Request a completion with five top logprobs.
+//  2. Assert the host's logprobs compressor accepts the response, as it does a real vLLM one.
+func TestChatCompletions_LogprobsCompressLikeVLLM(t *testing.T) {
+	srv := newTestServer(t)
+	defer srv.Close()
+
+	body := []byte(`{"model":"test-model","logprobs":true,"top_logprobs":5,"messages":[{"role":"user","content":"compress"}]}`)
+	resp, err := http.Post(srv.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+	require.NoError(t, err)
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	_, err = completionapi.CompressResponsePayload(raw)
+	require.NoError(t, err)
+}
+
 func TestChatCompletions_HonestReplayPassesValidation(t *testing.T) {
 	srv := newTestServer(t)
 	defer srv.Close()

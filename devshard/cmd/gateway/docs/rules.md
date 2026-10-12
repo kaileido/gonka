@@ -41,11 +41,11 @@ A race runs several attempts, may be abandoned mid-flight, and continues after i
 
 **One outcome.** `report()` closes the race's `done` channel before building the outcome. A second call panics on the double close — a duplicated outcome takes the process down at the point of the defect instead of passing silently.
 
-**One recording point.** The exemption ladder deciding whether a host is judged is applied in `Engine.record` and nowhere else. The legacy gateway had six divergent entry points for the same decision.
+**One recording point.** The exemption ladder deciding whether a host is judged is applied in `Engine.record` and nowhere else.
 
 ### 3. No field crosses a goroutine except through the event channel
 
-The legacy engine shared a 57-field struct across three goroutines on the money path: the drain returned while attempts were still writing the fields the outcome then read. That is a data race deciding what gets paid.
+A struct shared across goroutines on the money path is a data race deciding what gets paid: the drain can return while attempts are still writing the fields the outcome then reads.
 
 Here each attempt owns its state and publishes facts as events. `attemptState` is never read by another goroutine; `liveAttempt` is written only in response to events, on the coordinator; the byte path runs only on the attempt's goroutine. There are exactly two cross-goroutine channels — the event channel and the crown handshake — plus a close-only `done`.
 
@@ -63,7 +63,7 @@ Status reads → published or draining, without counting
 
 Routing must refuse a retired escrow. The nonces it already committed still owe votes, and the draining entry holds the storage those votes settle through. Unifying the two lookups — the obvious tidy-up — either dispatches into an escrow that is going away or strands the votes of one that already did.
 
-The narrow interfaces make the mistake hard to express: an attempt to reproduce the settlement bug at the API layer by swapping one lookup for the other did not compile, because that layer declares only the settlement lookup. The read-only status handle is a third case precisely because it must **not** take a hold — an operator inspecting an escrow must not keep it from retiring.
+The narrow interfaces make the mistake hard to express: swapping one lookup for the other at the API layer does not compile, because that layer declares only the settlement lookup. The read-only status handle is a third case precisely because it must **not** take a hold — an operator inspecting an escrow must not keep it from retiring.
 
 ### 5. The slot and the escrow hold are taken with the nonce, and given back after the vote
 
@@ -160,7 +160,7 @@ Money is the exception: `safeMul` in the escrow pick and `safeAdd` in the state 
 ### 11. Labels, ordering and determinism
 
 - Metric label **values** are exported by the package that emits them and referenced by the metrics layer, never restated. Renaming the constant breaks the build rather than the dashboard — but editing its *value* still compiles and moves the wire string under every panel and alert, so those constants are a contract with Grafana, not an internal vocabulary.
-- A route label is always a route pattern, never a raw path. Three of the legacy gateway's eight branches emitted unbounded strings, including a default that returned the path itself on unauthenticated traffic — one series per probe.
+- A route label is always a route pattern, never a raw path: a raw path is an unbounded label, and on unauthenticated traffic it is one series per probe.
 - **Escrow id is safe on gauges and expensive on counters.** Escrow ids are monotonic and never reused, so a counter keyed by one grows with uptime and no scrape retires it. Exactly three counter families carry it — ghost burns, nonce holds, burn budget — because a spent nonce must be attributable to the escrow that paid for it, and the scheduler deletes all three when it reaps that escrow's dispatcher.
 - Iteration with an observable effect is over **sorted** keys: membership publication, the escrow-missing drain, the registry's snapshot and close paths.
 - Request capture admits a deterministic **stride**, not a random sample, so a configured rate is honoured exactly and reproducibly.
@@ -175,33 +175,31 @@ The rule does not reach values. A struct the caller fills with already-checked n
 
 ## Part 2 — Non-goals
 
-### Dropped from the legacy gateway
+### Not provided
 
-| Dropped | Why, and what replaces it |
+| Not provided | Why, and what stands in its place |
 | --- | --- |
-| **Single-escrow mode** and the ten top-level routes that existed only for it | one escrow is now a pool of one; everything is reachable at `/devshard/{id}/…`. Operator scripts using bare paths need the escrow id added |
-| **The hand-written OpenAPI document and Swagger UI** | both had drifted, neither was tested, and the UI pulled assets from a CDN. Shipping a stale hand-written document is worse than shipping none |
-| **Short-content response capture** | capture has two triggers only: a request the filters rejected, and one every attempt failed. What answered the same question is now counted rather than kept — crown strikes, `attempt_failures_total{visibility="no_winner"}`, the per-request record |
+| **Top-level routes for a single escrow** | one escrow is a pool of one; everything is reachable at `/devshard/{id}/…`, so an operator script names the escrow id |
+| **A hand-written OpenAPI document and Swagger UI** | a hand-written document drifts from the routes with no test to catch it, and the UI pulls assets from a CDN. Shipping a stale hand-written document is worse than shipping none |
+| **Short-content response capture** | capture has two triggers only: a request the filters rejected, and one every attempt failed. What answers the same question is counted rather than kept — crown strikes, `attempt_failures_total{visibility="no_winner"}`, the per-request record |
 | **A configurable host route prefix** | derived from the binary's own version and not overridable (`app/compose.go`, `ResolveRoutePrefix`). The prefix names the protocol version sessions are created with and settlements carry; a knob that sets them apart is a way to build a settlement the chain will not take |
-| **The quarantine state machine** (`probe`/`shadow`/`probation`, 30–60 minute sentences) | replaced by the per-host congestion windows plus a cut-off whose worst case is minutes: adaptation instead of punishment. The operator escape hatch survives as `POST /v1/admin/participants/unquarantine` |
-| **The pairwise speed comparator and its 500 ms winner hold** | pairwise routing is gone, so there is no preference signal to hold for — and inline in the writer the hold stalled the eventual winner's own socket while buying nothing |
-| **Host-index-keyed performance metrics** | `host_idx` is not an identity any more; the four families duplicated participant-keyed twins from the same call site |
-| **`devshard_runtime_reserved_tokens`** | token reservation moved into the limiter; the legacy load formula that consumed it was already documented as misleading |
-| **Probe attempts inside the race engine** | unreachable: a nonce that cannot be served is burned inside the scheduler and never becomes an attempt. No probe field and no guard for one remains; the concept survives as ghost burns |
-| **One of the three escalation rules** | rule 3 (switch to a measurably faster secondary) needed a latency model this gateway does not keep, and a faster host is not a reason to abandon an answer already streaming |
-| **Persisted participant health** | Congestion windows, cut-off state and decayed counts all start empty. Minute-scale backoff self-heals faster than replaying stale penalties is worth. The cost is honest and small: a genuinely bad host gets one free window after every deploy |
-| **The legacy `state.db` migration** | state starts fresh, bootstrapped from `DEVSHARDS_JSON` and the admin import endpoint |
-| **The `capacity_aware_limits` toggle** | it was read and never used. Making it real would mean *adding* a path that disables capacity scaling — new behaviour, not a restored one |
-
-The metric families that described the deleted quarantine machinery went with it and have no successor, so a binary swap does not leave the in-repo Grafana dashboard working: it needs an edit either way.
+| **A quarantine state machine** (timed sentences of 30–60 minutes) | per-host congestion windows plus a cut-off whose worst case is minutes: adaptation instead of punishment. The operator escape hatch is `POST /v1/admin/participants/unquarantine` |
+| **A pairwise speed comparator and a winner hold** | the gateway has no pairwise routing, so there is no preference signal to hold for — and inline in the writer a hold stalls the eventual winner's own socket while buying nothing |
+| **Host-index-keyed performance metrics** | `host_idx` is not an identity; performance families are keyed by participant |
+| **`devshard_runtime_reserved_tokens`** | token reservation lives in the limiter |
+| **Probe attempts inside the race engine** | unreachable: a nonce that cannot be served is burned inside the scheduler and never becomes an attempt. There is no probe field and no guard for one; the concept survives as ghost burns |
+| **Escalation to a measurably faster secondary** | it needs a latency model this gateway does not keep, and a faster host is not a reason to abandon an answer already streaming |
+| **Persisted participant health** | congestion windows, cut-off state and decayed counts all start empty. Minute-scale backoff self-heals faster than replaying stale penalties is worth. The cost is honest and small: a genuinely bad host gets one free window after every deploy |
+| **Migrated state** | state starts fresh, bootstrapped from `DEVSHARDS_JSON` and the admin import endpoint |
+| **A `capacity_aware_limits` toggle** | the weight model is always on |
 
 ### Refused mechanisms
 
 **No panic-recovery middleware.** `net/http` already recovers a per-connection panic, and a recovery wrapper would be free to write a JSON error object into a half-written SSE stream. The one hazard recovery would genuinely fix — a panic between a race registering itself and releasing that registration — is fixed inside the engine by a deferred recover that releases through an idempotent token and re-panics with the same value.
 
-**No per-request cost accounting.** The request ledger records tokens and topology, not money. Legacy had no cost column either, and computed its breakdown as a read-time join against live session state, so it printed zeros once an escrow settled. Money lives in chain settlement; the ledger answers "what did this request do", not "what did it cost".
+**No per-request cost accounting.** The request ledger records tokens and topology, not money. A breakdown computed as a read-time join against live session state would print zeros once an escrow settles. Money lives in chain settlement; the ledger answers "what did this request do", not "what did it cost".
 
-**No KV-cache affinity routing.** `scheduler.AffinityHint` is an empty struct with no caller — the extension point exists so adding affinity later is a local change inside the scheduler rather than a fourth selection mechanism bolted beside the three legacy had.
+**No KV-cache affinity routing.** `scheduler.AffinityHint` is an empty struct with no caller — the extension point exists so adding affinity later is a local change inside the scheduler rather than a new selection mechanism bolted beside it.
 
 **No data-driven escalation beyond the first-token budget.** The escalation curve itself is a hardcoded quadratic in prompt size. One measured value stretches it: a host's own p75 to first content, which can only *extend* the budget, never shorten it (`engine/escalation.go`, `firstTokenBudget`). Nothing else in the ladder reads a percentile.
 
@@ -213,22 +211,22 @@ The metric families that described the deleted quarantine machinery went with it
 - **An exhausted deposit is reported by the scheduler, not the engine.** A request whose pick failed may never have been assigned an escrow to name; the dispatcher is the one seam holding the failure and the escrow id at the same moment.
 - **The gateway does not enforce the economics.** It caps `max_tokens`, so the reservation is bounded by what was asked for, and the chain clamps actual cost to that reservation. Within it a host can still over-claim; the defences are on-chain response-hash validation and the permanent state-root-divergence block.
 - **The gateway does not restate chain policy locally.** The maximum active nonce count is a governance parameter. A failed read falls back to a conservative constant; it never invents a policy of its own.
-- **No changes to the shared `devshard/` packages, except where money is lost there.** The rule holds for anything the gateway can normalise at its own boundary. It has four exceptions, all defects that lose money and which no boundary can normalise away: three whose cost is a nonce settled at full reserve — the execution-timeout sweep, the confirm stamp read from the record rather than the session's cache, and the sentinel that names an unposted vote — and the transport's SSE event cap, which refused an honest host's whole answer after its nonce was committed (see [`findings.md`](./findings.md)). Each fixes the shared packages for the legacy gateway too, which is the test for whether the exception applies. The standing example of the rule itself: the shared timeout handler returns a non-nil error on its own success path, so a posted vote is recognised by the handler's `Applied` flag rather than by the error (`api/timeouts.go`, `engine/session.go`).
+- **No changes to the shared `devshard/` packages, except where money is lost there.** The rule holds for anything the gateway can normalise at its own boundary. It has four exceptions, all defects that lose money and which no boundary can normalise away: three whose cost is a nonce settled at full reserve — the execution-timeout sweep, the confirm stamp read from the record rather than the session's cache, and the sentinel that names an unposted vote — and the transport's SSE event cap, which, set below what a host may send, refuses an honest host's whole answer after its nonce is committed (see [`findings.md`](./findings.md)). Each fixes the shared packages for every binary that uses them, which is the test for whether the exception applies. The standing example of the rule itself: the shared timeout handler returns a non-nil error on its own success path, so a posted vote is recognised by the handler's `Applied` flag rather than by the error (`api/timeouts.go`, `engine/session.go`).
 
 ### Known gaps
 
 Each entry below is a capability this gateway does not have, and the reason it does not.
 
 - **One per-escrow recovery tool is not served**: `sync-hosts`. The read-only half of the recovery surface **is** served, and resolves through the settlement lookup so a draining escrow still answers — which is the point, since the escrow needing inspection is usually the one in trouble. `signatures/collect` is served as the one write on that surface: it asks the group again for the signatures of one nonce, into the session a settlement builds from.
-- **`/v1/debug/perf` is not served.** The request ledger at `/v1/requests/{id}` answers the same question per request, and the accounting findings carry the thresholds a host's numbers are judged against. The pairwise summaries the legacy route carried describe a mechanism this gateway does not have.
-- **No test reads the dashboard.** [`gonka-gateway-escrows.json`](../../../../deploy/join/observability/grafana/dashboards/gonka-gateway-escrows.json) is built for this gateway and every family and label value it queries is emitted, but nothing checks that automatically — `devshard/cmd/devshardctl/gateway_dashboard_test.go` covers the legacy dashboard alone, so a change to a family is checked against it by hand, with `jq -r '.. | .expr? // empty'`. The legacy `gonka-gateway-observability.json` queries six families this gateway does not emit — capacity scale, participant limit rejections, quarantine state, picker choice, slot decisions and the skipped-escrow gauge — and is not the dashboard to keep. The repository carries no alerting rules.
+- **`/v1/debug/perf` is not served.** The request ledger at `/v1/requests/{id}` answers the same question per request, and the accounting findings carry the thresholds a host's numbers are judged against.
+- **No test reads the dashboard.** [`gonka-gateway-escrows.json`](../../../../deploy/join/observability/grafana/dashboards/gonka-gateway-escrows.json) is built for this gateway and every family and label value it queries is emitted, but nothing checks that automatically, so a change to a family is checked against it by hand, with `jq -r '.. | .expr? // empty'`. `gonka-gateway-observability.json` queries six families this gateway does not emit — capacity scale, participant limit rejections, quarantine state, picker choice, slot decisions and the skipped-escrow gauge — and is not this gateway's dashboard. The repository carries no alerting rules.
 - **A per-participant decay half-life is captured when a host is first seen**, so changing it at run time reaches only hosts seen afterwards.
 
 ### What a test stand may reach
 
 Three of the bounds a nonce is judged against are out of reach of any test that runs in minutes: an attempt that was sent and went silent is held for `streamingHardTimeout` (20 minutes); the chain's own execution deadline is half an hour, and nothing votes a timeout before it; and a nonce is not classified until a timeout outcome is recorded for it. Without a way in, the whole expensive-failure path — `unfinished_execution`, applied timeouts, the sweep that retries a vote, the chain cross-check — is unprovable end to end.
 
-So a stand may shorten them, and only a stand. The values arrive as `engine.Deps.E2E` and as the session's protocol deadlines, loaded once by [`env.LoadE2E`](../env/e2e.go) and handed to the session the way the legacy gateway already handed them to its own, and every one of them is refused by the shared `devshard/internal/e2econfig` unless the process set `DEVSHARD_E2E=1`. Three properties make that safe, and all three are load-bearing:
+So a stand may shorten them, and only a stand. The values arrive as `engine.Deps.E2E` and as the session's protocol deadlines, loaded once by [`env.LoadE2E`](../env/e2e.go) and handed to the session, and every one of them is refused by the shared `devshard/internal/e2econfig` unless the process set `DEVSHARD_E2E=1`. Three properties make that safe, and all three are load-bearing:
 
 - **An operator gets no knob.** The values are not in `config.Config` and cannot be set through the admin settings endpoint, so "backstops are not tunable" stays true of every deployment.
 - **A refused value cannot stop a boot.** `LoadE2E` returns an empty struct and warns rather than failing, so a stray variable in someone's environment can neither change how a deployment behaves nor keep it from starting.
@@ -254,6 +252,6 @@ A green run of that suite does not verify the following. These are not gaps more
 
 **Settlement money end to end.** The suite asserts the payload the gateway builds. Whether the chain then pays the right participants the right amounts is chain-side.
 
-**Byte-for-byte compatibility with real clients.** The frames now cross a real socket, so their bytes are the bytes. Whether an OpenAI-SDK or aiohttp client in the field parses them as it parsed the legacy gateway's is still an assumption, not a result.
+**Byte-for-byte compatibility with real clients.** The frames cross a real socket, so their bytes are the bytes. Whether an OpenAI-SDK or aiohttp client in the field parses them as intended is still an assumption, not a result.
 
 **In one sentence:** the stand verifies every decision the gateway makes given a set of inputs, the wiring that makes those decisions reachable, and the bytes it puts on the wire — not that its model of the chain is correct, not that a real host answers like the stub, and not any tuning.

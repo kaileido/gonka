@@ -79,7 +79,7 @@ The package uses two: `encoding/json` from the standard library, and `github.com
 
 | Site | Decoder | Why |
 | --- | --- | --- |
-| `ParseDocument` | standard library | Its error text goes to the client verbatim, and the golden corpus pins that wording against the legacy gateway's. A faster library with different phrasing would change what every malformed request sees. |
+| `ParseDocument` | standard library | Its error text goes to the client verbatim, and the golden corpus pins that wording. A faster library with different phrasing would change what every malformed request sees. |
 | `stripInternalFields`, `decodeStreamedEvent`, `completionAsChunks` | standard library | goccy parses a number token even into a `json.RawMessage` and errors past the float64 range. That fails the strip open — a body carrying `1e999` would keep every internal field — and fails the chunk conversion on a `created` out of range. |
 | `Document.Marshal`, `DecodeUpstreamError`, `jsonMarshaledSize` | goccy | Neither the error text nor the range behaviour is load-bearing here, and `Marshal` sorts map keys, so the normalised body is deterministic. |
 

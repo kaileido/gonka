@@ -48,7 +48,7 @@ const (
 	TerminalClientCancelled = "client_cancelled"
 )
 
-// A settled timeout round, in the vocabulary the legacy ledger used, so one reader understands both trees.
+// A settled timeout round, in the ledger's outcome vocabulary.
 const (
 	TimeoutSkipped              TimeoutOutcome = "skipped"
 	TimeoutVoteCollectionFailed TimeoutOutcome = "vote_collection_failed"

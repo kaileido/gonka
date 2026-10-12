@@ -38,13 +38,11 @@ type Deps struct {
 	Now              func() time.Time
 }
 
-// peerRPCAdoption counts each escrow's hosts as reached over Connect or JSON; *transport.PeerRPCAdoption satisfies it.
 type peerRPCAdoption interface {
 	BindEscrowHosts(escrowID string, peers []string)
 	ReleaseEscrow(escrowID string)
 }
 
-// servedBindingObserver hears each served stream checked against its Finish. It runs under the session's lock, so it must never call back into the session or the registry.
 type servedBindingObserver func(escrowID, model, participant string, nonce uint64, verdict user.ServedBinding)
 
 // retiringObserver is told about an escrow once its last request has ended and before its session is
@@ -372,7 +370,6 @@ func (r *Registry) pushMembershipLocked() {
 		return
 	}
 	published := r.live.Load()
-	// A host's weight is per model, so its slots are split only across escrows of the same model.
 	totalSlotsByModel := map[string]map[string]int{}
 	for _, id := range sortedKeys(published.byID) {
 		entry := published.byID[id]

@@ -14,7 +14,7 @@ const (
 	// The request-level "failure" has no engine counterpart: attempts report failed, requests failure.
 	outcomeFailure = "failure"
 
-	// statusNoCode is legacy's label for an attempt that failed without an upstream status.
+	// statusNoCode labels an attempt that failed without an upstream status.
 	statusNoCode = "0"
 
 	reasonNone             = "none"

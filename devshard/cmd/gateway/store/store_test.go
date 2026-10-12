@@ -235,10 +235,10 @@ func TestOpenIsIdempotentAcrossRestarts(t *testing.T) {
 }
 
 // Test flow:
-//  1. Seed a database file with devshardctl's own table names (`gateway_settings`, `gateway_devshards`, `gateway_rotation_status`) and one row.
+//  1. Seed a database file with table names this gateway did not create (`gateway_settings`, `gateway_devshards`, `gateway_rotation_status`) and one row.
 //  2. Open the store against that same file.
 //  3. Assert `Open` refuses it with `ErrLegacyDatabase`.
-func TestOpenRefusesADevshardctlDatabase(t *testing.T) {
+func TestOpenRefusesADatabaseThisGatewayDidNotCreate(t *testing.T) {
 	dir := t.TempDir()
 
 	seed, err := sql.Open("sqlite", filepath.Join(dir, gatewayDatabaseFileName))
@@ -252,7 +252,7 @@ func TestOpenRefusesADevshardctlDatabase(t *testing.T) {
 		`INSERT INTO gateway_devshards (escrow_id, model) VALUES ('escrow-1', 'model-a')`,
 	} {
 		if _, err := seed.Exec(statement); err != nil {
-			t.Fatalf("seeding a devshardctl db with %q: %v", statement, err)
+			t.Fatalf("seeding a foreign db with %q: %v", statement, err)
 		}
 	}
 	if err := seed.Close(); err != nil {
@@ -262,7 +262,7 @@ func TestOpenRefusesADevshardctlDatabase(t *testing.T) {
 	opened, err := Open(dir)
 	if err == nil {
 		opened.Close()
-		t.Fatal("Open() accepted a devshardctl database, want a refusal")
+		t.Fatal("Open() accepted a gateway.db this gateway did not create, want a refusal")
 	}
 	if !errors.Is(err, ErrLegacyDatabase) {
 		t.Fatalf("Open() error = %v, want ErrLegacyDatabase", err)

@@ -41,11 +41,12 @@ func TestALostAttemptStillReportsWhatItProduced(t *testing.T) {
 	book := newTestBook(t, 4)
 
 	if err := book.RecordRace(testEscrow, []Attempt{
-		{Nonce: 5, RequestID: "request-1", Sent: true, Finished: true, Usage: UsageLoser, OutputTokens: 834},
-		{Nonce: 6, RequestID: "request-1", Sent: true, Finished: true, Usage: UsageWinner, OutputTokens: 4096},
+		{Nonce: 5, RequestID: "request-1", Sent: true, Usage: UsageLoser, OutputTokens: 834},
+		{Nonce: 6, RequestID: "request-1", Sent: true, Usage: UsageWinner, OutputTokens: 4096},
 	}); err != nil {
 		t.Fatalf("RecordRace(): %v", err)
 	}
+	markFinished(t, book, testEscrow, 5, 6)
 
 	if got := outputOf(t, book); got != 4_930 {
 		t.Fatalf("output_tokens = %d, want both attempts of the race counted", got)

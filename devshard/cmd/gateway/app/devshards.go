@@ -451,7 +451,6 @@ func copySessionStorage(sourceDir, targetDir string) error {
 	return nil
 }
 
-// peerRPCClientConfig lets each host connection report whether it reached its host over Connect; the courier is nil when height sync is off.
 func peerRPCClientConfig(clientConfig *transport.ClientConfig, adoption *transport.PeerRPCAdoption) *transport.ClientConfig {
 	if adoption == nil {
 		return clientConfig

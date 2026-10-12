@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
+
+	"devshard/testenv/config"
 )
 
 func TestScenario_LogTail(t *testing.T) {
@@ -208,4 +210,29 @@ func TestLoadProfile_Timeout(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "timeout", profile.Profile)
 	require.True(t, profile.Hang)
+}
+
+func TestScenario_GatewayDriver(t *testing.T) {
+	for _, testCase := range []struct {
+		driver  string
+		isValid bool
+	}{
+		{driver: "", isValid: true},
+		{driver: "devshardctl", isValid: true},
+		{driver: "gateway", isValid: true},
+		{driver: "nginx", isValid: false},
+	} {
+		t.Run(testCase.driver, func(t *testing.T) {
+			scenario := testScenario()
+			scenario.Topology.Gateway = config.GatewayDriver(testCase.driver)
+
+			err := scenario.Validate()
+
+			if testCase.isValid {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, "topology.gateway")
+			}
+		})
+	}
 }

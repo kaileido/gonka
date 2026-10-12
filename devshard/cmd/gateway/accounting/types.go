@@ -36,7 +36,6 @@ type Attempt struct {
 	RequestID       string
 	OutputTokens    int64
 	Sent            bool
-	Finished        bool
 	Acknowledged    bool
 	Usage           Usage
 	Terminal        string

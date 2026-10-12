@@ -195,6 +195,9 @@ func (b *Book) ObserveInferences(escrowID string, inferences map[uint64]*types.I
 			if record == nil {
 				continue
 			}
+			if FinishApplied(record.Status) {
+				escrow.markFinished(nonce)
+			}
 			escrow.costs[nonce] = nonceCost{
 				reserved:    record.ReservedCost,
 				actual:      record.ActualCost,
@@ -296,7 +299,6 @@ func (b *Book) RecordRace(escrowID string, attempts []Attempt) error {
 			record := escrow.record(attempt.Nonce)
 			record.requestID = attempt.RequestID
 			record.sent = attempt.Sent
-			record.finished = attempt.Finished
 			record.acknowledged = attempt.Acknowledged
 			record.usage = attempt.Usage
 			record.terminal = attempt.Terminal
@@ -322,40 +324,6 @@ func (b *Book) RecordTimeout(escrowID string, nonce uint64, kind, action, reason
 		record.timeoutAction = action
 		record.timeoutReason = reason
 		escrow.reclassify(nonce, record)
-		return nil
-	})
-}
-
-func (b *Book) UnfinishedNonces(escrowID string) []uint64 {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-	escrow, known := b.escrows[escrowID]
-	if !known {
-		return nil
-	}
-	var unfinished []uint64
-	for nonce, record := range escrow.nonces {
-		if record.isCounted && !record.finished && revisable(record) {
-			unfinished = append(unfinished, nonce)
-		}
-	}
-	slices.Sort(unfinished)
-	return unfinished
-}
-
-func (b *Book) MarkFinished(escrowID string, nonces []uint64) error {
-	if len(nonces) == 0 {
-		return nil
-	}
-	return b.withEscrow(escrowID, func(escrow *escrowLedger) error {
-		for _, nonce := range nonces {
-			record, known := escrow.nonces[nonce]
-			if !known || record.finished {
-				continue
-			}
-			record.finished = true
-			escrow.reclassify(nonce, record)
-		}
 		return nil
 	})
 }
@@ -413,11 +381,13 @@ func (e *escrowLedger) slotOf(nonce uint64) uint32 {
 	return uint32(nonce % uint64(len(e.metadata.Slots)))
 }
 
-// foldSealed moves every nonce the chain no longer holds into the slot's fold, so a restart keeps it. See README.md, "Storage".
 func (e *escrowLedger) foldSealed(inferences map[uint64]*types.InferenceRecord) {
 	for nonce, cost := range e.costs {
 		if _, live := inferences[nonce]; live {
 			continue
+		}
+		if FinishApplied(cost.status) {
+			e.markFinished(nonce)
 		}
 		slotID := e.slotOf(nonce)
 		money := e.folded[slotID]
@@ -435,4 +405,53 @@ func sealedMoney(folded map[uint32]SlotMoney) map[uint32]SlotMoney {
 		}
 	}
 	return money
+}
+
+// FinishApplied reports a record whose Finish the escrow's log holds. See README.md, "Boundaries".
+func FinishApplied(status types.InferenceStatus) bool {
+	switch status {
+	case types.StatusFinished, types.StatusChallenged, types.StatusValidated, types.StatusInvalidated:
+		return true
+	}
+	return false
+}
+
+// UnfinishedNonces lists the dispatched nonces the ledger still holds open or may still revise to finished. See README.md, "Boundaries".
+func (b *Book) UnfinishedNonces(escrowID string) []uint64 {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	escrow, known := b.escrows[escrowID]
+	if !known {
+		return nil
+	}
+	var unfinished []uint64
+	for nonce, record := range escrow.nonces {
+		if record.sent && !record.finished && revisable(record) {
+			unfinished = append(unfinished, nonce)
+		}
+	}
+	slices.Sort(unfinished)
+	return unfinished
+}
+
+// MarkFinished records nonces whose Finish the escrow's log holds but which no sweep read live.
+func (b *Book) MarkFinished(escrowID string, nonces []uint64) error {
+	if len(nonces) == 0 {
+		return nil
+	}
+	return b.withEscrow(escrowID, func(escrow *escrowLedger) error {
+		for _, nonce := range nonces {
+			escrow.markFinished(nonce)
+		}
+		return nil
+	})
+}
+
+func (e *escrowLedger) markFinished(nonce uint64) {
+	record, known := e.nonces[nonce]
+	if !known || record.finished {
+		return
+	}
+	record.finished = true
+	e.reclassify(nonce, record)
 }

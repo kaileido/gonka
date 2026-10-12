@@ -102,7 +102,7 @@ func (r *errorStreamRetainer) proof() (MissProof, bool) {
 
 func eventDataLines(events []byte) []string {
 	var lines []string
-	for _, raw := range bytes.Split(events, []byte("\n")) {
+	for raw := range bytes.SplitSeq(events, []byte("\n")) {
 		line := strings.TrimRight(string(raw), "\r")
 		if !strings.HasPrefix(line, completionapi.DataPrefix) || isDevshardEnvelopeLine(line) {
 			continue

@@ -12,6 +12,13 @@ import (
 	"devshard/types"
 )
 
+func markFinished(t *testing.T, ledger *Recorder, escrowID string, nonces ...uint64) {
+	t.Helper()
+	if err := ledger.service.Book.MarkFinished(escrowID, nonces); err != nil {
+		t.Fatalf("MarkFinished(): %v", err)
+	}
+}
+
 func newLedgerForTest(t *testing.T) *Recorder {
 	t.Helper()
 	service, err := accounting.NewService(accounting.Settings{
@@ -45,7 +52,7 @@ func dispositionCount(t *testing.T, ledger *Recorder, want accounting.Dispositio
 }
 
 // Test flow:
-//  1. Record a won race with a winning attempt and a losing attempt on different nonces.
+//  1. Record a won race with a winning attempt and a losing attempt on different nonces, then mark both nonces finished as the sweep does.
 //  2. Assert `finished_used` counts only the winner.
 //  3. Assert `finished_unused` counts the losing attempt, since its work was real but never delivered.
 func TestALosingAttemptOfAWonRaceIsCountedAsUnused(t *testing.T) {
@@ -61,6 +68,7 @@ func TestALosingAttemptOfAWonRaceIsCountedAsUnused(t *testing.T) {
 			{Nonce: 5, SendTime: sent, NonceFinished: true, Terminal: engine.TerminalLost},
 		},
 	})
+	markFinished(t, ledger, "escrow-1", 4, 5)
 
 	if used := dispositionCount(t, ledger, accounting.DispositionFinishedUsed); used != 1 {
 		t.Fatalf("finished_used = %d, want the winner alone", used)
@@ -71,7 +79,7 @@ func TestALosingAttemptOfAWonRaceIsCountedAsUnused(t *testing.T) {
 }
 
 // Test flow:
-//  1. Record a lost race whose single attempt finished.
+//  1. Record a lost race whose single attempt finished, then mark its nonce finished as the sweep does.
 //  2. Assert `finished_usage_unknown` counts that attempt, since a lost race's partial delivery to the client cannot be known.
 func TestAFinishedAttemptOfALostRaceIsCountedAsUnknown(t *testing.T) {
 	ledger := newLedgerForTest(t)
@@ -83,6 +91,7 @@ func TestAFinishedAttemptOfALostRaceIsCountedAsUnknown(t *testing.T) {
 			{Nonce: 4, SendTime: time.Unix(100, 0), NonceFinished: true, Terminal: engine.TerminalLost},
 		},
 	})
+	markFinished(t, ledger, "escrow-1", 4)
 
 	if unknown := dispositionCount(t, ledger, accounting.DispositionFinishedUsageUnknown); unknown != 1 {
 		t.Fatalf("finished_usage_unknown = %d, want the finished attempt", unknown)
@@ -200,7 +209,7 @@ func counterCount(t *testing.T, ledger *Recorder, match func(accounting.CounterK
 
 // Test flow:
 //  1. Define a table of winning attempts, varying the gap between first content and the last chunk and the reported completion tokens across a slow decode, a fast decode, and a host that reported no tokens at all.
-//  2. For each case, record the race outcome.
+//  2. For each case, record the race outcome and mark the winner nonce finished as the sweep does.
 //  3. Assert the `slow_decode` counter matches the case's expectation.
 func TestASlowDecodeReachesTheLedgerAsAFactAboutTheHost(t *testing.T) {
 	sent := time.Unix(100, 0)
@@ -235,6 +244,7 @@ func TestASlowDecodeReachesTheLedgerAsAFactAboutTheHost(t *testing.T) {
 					UsageCompletionTokens: testCase.tokens,
 				}},
 			})
+			markFinished(t, ledger, "escrow-1", 4)
 
 			slow := counterCount(t, ledger, func(key accounting.CounterKey) bool { return key.SlowDecode })
 			if slow != testCase.want {
@@ -257,7 +267,7 @@ func terminalsOf(t *testing.T, ledger *Recorder) map[string]uint64 {
 
 // Test flow:
 //  1. Define a table of race lifecycles, varying whether the client was still waiting or had already left when the winner finished.
-//  2. For each case, record a won race with a winning and a losing attempt.
+//  2. For each case, record a won race with a winning and a losing attempt, then mark both nonces finished.
 //  3. Assert the winner's terminal is named accordingly (`TerminalWon` or `accounting.TerminalClientGone`).
 //  4. Assert the loser's terminal is left untouched.
 func TestAWinnerWhoseClientLeftIsNamedApartFromOneThatWasRead(t *testing.T) {
@@ -284,6 +294,7 @@ func TestAWinnerWhoseClientLeftIsNamedApartFromOneThatWasRead(t *testing.T) {
 					{Nonce: 5, SendTime: sent, NonceFinished: true, Terminal: engine.TerminalLost},
 				},
 			})
+			markFinished(t, ledger, "escrow-1", 4, 5)
 
 			terminals := terminalsOf(t, ledger)
 			if terminals[testCase.want] != 1 {
@@ -372,17 +383,19 @@ func TestASweepTellsTheLedgerWhatTheChainCharges(t *testing.T) {
 // Test flow:
 //  1. Record a warmup probe attempt.
 //  2. Assert it settles with no error.
-//  3. Assert its terminal is counted under `accounting.TerminalWarmupProbe`, kept apart from every serving ratio.
+//  3. Mark its nonce finished, as the sweep does once the chain applied the Finish.
+//  4. Assert its terminal is counted under `accounting.TerminalWarmupProbe`, kept apart from every serving ratio.
 func TestAProbeLandsUnderItsOwnTerminal(t *testing.T) {
 	ledger := newLedgerForTest(t)
 
 	err := ledger.RecordProbe("escrow-1", accounting.Attempt{
-		Nonce: 4, Sent: true, Finished: true, Acknowledged: true,
+		Nonce: 4, Sent: true, Acknowledged: true,
 		Usage: accounting.UsageLoser, Phase: accounting.PhaseNormal, Terminal: accounting.TerminalWarmupProbe,
 	})
 	if err != nil {
 		t.Fatalf("RecordProbe() = %v, want the probe settled", err)
 	}
+	markFinished(t, ledger, "escrow-1", 4)
 	if terminals := terminalsOf(t, ledger); terminals[accounting.TerminalWarmupProbe] != 1 {
 		t.Fatalf("terminals = %v, want the probe under %q", terminals, accounting.TerminalWarmupProbe)
 	}

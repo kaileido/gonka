@@ -2,10 +2,8 @@ package engine
 
 import "sync"
 
-// lookupRefusalsTrusted is how many escrow-lookup refusals in a row a host is believed; the header is the host's own word.
 const lookupRefusalsTrusted = 3
 
-// lookupRefusals excuses a host's escrow_lookup_limited only while it is not all the host ever answers. See ../docs/race.md, "The exemption ladder".
 type lookupRefusals struct {
 	mu          sync.Mutex
 	consecutive map[hostModelKey]int

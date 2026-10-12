@@ -257,11 +257,12 @@ func TestOnlyRevisableNoncesAreWrittenDown(t *testing.T) {
 		t.Fatalf("RecordGhost(): %v", err)
 	}
 	if err := book.RecordRace(testEscrow, []Attempt{
-		{Nonce: 9, Sent: true, Finished: true, Usage: UsageWinner},
+		{Nonce: 9, Sent: true, Usage: UsageWinner},
 		{Nonce: 6, Sent: true, Usage: UsageLoser},
 	}); err != nil {
 		t.Fatalf("RecordRace(): %v", err)
 	}
+	markFinished(t, book, testEscrow, 9)
 	if err := book.RecordTimeout(testEscrow, 6, "execution", "failed", "timeout_collection_error"); err != nil {
 		t.Fatalf("RecordTimeout(): %v", err)
 	}
@@ -371,11 +372,12 @@ func TestCountersDifferingOnlyByARaceFactBothPersist(t *testing.T) {
 		t.Fatalf("ObserveLatestNonce(): %v", err)
 	}
 	if err := book.RecordRace(testEscrow, []Attempt{
-		{Nonce: 1, Sent: true, Acknowledged: true, Finished: true, Usage: UsageWinner, Terminal: "won", Phase: PhaseNormal},
-		{Nonce: 2, Sent: true, Acknowledged: true, Finished: true, Usage: UsageWinner, Terminal: "won", Phase: PhasePoC, SlowChunk: true},
+		{Nonce: 1, Sent: true, Acknowledged: true, Usage: UsageWinner, Terminal: "won", Phase: PhaseNormal},
+		{Nonce: 2, Sent: true, Acknowledged: true, Usage: UsageWinner, Terminal: "won", Phase: PhasePoC, SlowChunk: true},
 	}); err != nil {
 		t.Fatalf("RecordRace(): %v", err)
 	}
+	markFinished(t, book, testEscrow, 1, 2)
 
 	if err := store.Save(context.Background(), book); err != nil {
 		t.Fatalf("Save(): %v", err)
@@ -423,10 +425,11 @@ func TestAStoreFromAnEarlierSchemaIsDiscarded(t *testing.T) {
 
 	book := newTestBook(t, 1)
 	if err := book.RecordRace(testEscrow, []Attempt{
-		{Nonce: 1, Sent: true, Acknowledged: true, Finished: true, Usage: UsageWinner, Terminal: "won"},
+		{Nonce: 1, Sent: true, Acknowledged: true, Usage: UsageWinner, Terminal: "won"},
 	}); err != nil {
 		t.Fatalf("RecordRace(): %v", err)
 	}
+	markFinished(t, book, testEscrow, 1)
 	if err := store.Save(context.Background(), book); err != nil {
 		t.Fatalf("Save() over a discarded older schema: %v", err)
 	}
@@ -445,7 +448,7 @@ func TestEveryPersistedFieldSurvivesTheRoundTrip(t *testing.T) {
 	}
 	if err := book.RecordRace(testEscrow, []Attempt{
 		{
-			Nonce: 1, Sent: true, Acknowledged: true, Finished: true, Usage: UsageLoser,
+			Nonce: 1, Sent: true, Acknowledged: true, Usage: UsageLoser,
 			Terminal: "lost", Phase: PhasePoC, SlowReceipt: true, SlowChunk: true, ClockDrifted: true,
 		},
 		{
@@ -455,6 +458,7 @@ func TestEveryPersistedFieldSurvivesTheRoundTrip(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("RecordRace(): %v", err)
 	}
+	markFinished(t, book, testEscrow, 1)
 
 	written := book.Snapshot()
 	if err := store.Save(context.Background(), book); err != nil {
@@ -512,10 +516,11 @@ func TestAStoreWhoseVersionAgreesButShapeDoesNotIsDiscarded(t *testing.T) {
 
 	book := newTestBook(t, 1)
 	if err := book.RecordRace(testEscrow, []Attempt{
-		{Nonce: 1, Sent: true, Acknowledged: true, Finished: true, Usage: UsageWinner, Terminal: "won"},
+		{Nonce: 1, Sent: true, Acknowledged: true, Usage: UsageWinner, Terminal: "won"},
 	}); err != nil {
 		t.Fatalf("RecordRace(): %v", err)
 	}
+	markFinished(t, book, testEscrow, 1)
 	if err := store.Save(context.Background(), book); err != nil {
 		t.Fatalf("Save() over a store whose shape this build cannot write: %v", err)
 	}
@@ -569,10 +574,11 @@ func TestAStoreWhoseVersionCannotBeReadIsDiscarded(t *testing.T) {
 
 			book := newTestBook(t, 1)
 			if err := book.RecordRace(testEscrow, []Attempt{
-				{Nonce: 1, Sent: true, Acknowledged: true, Finished: true, Usage: UsageWinner, Terminal: "won"},
+				{Nonce: 1, Sent: true, Acknowledged: true, Usage: UsageWinner, Terminal: "won"},
 			}); err != nil {
 				t.Fatalf("RecordRace(): %v", err)
 			}
+			markFinished(t, book, testEscrow, 1)
 			if err := store.Save(context.Background(), book); err != nil {
 				t.Fatalf("Save() over a store with no readable version: %v", err)
 			}

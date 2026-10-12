@@ -4,7 +4,7 @@ import "devshard/cmd/gateway/engine"
 
 type TimeoutOutcome string
 
-// Where the engine's action-and-reason meets the old ledger's single outcome. See README.md.
+// Where the engine's action-and-reason meets the ledger's single timeout outcome. See README.md.
 func timeoutOutcomeOf(action, reason string) (TimeoutOutcome, bool) {
 	switch action {
 	case engine.TimeoutActionSkipped:

@@ -160,10 +160,34 @@ type VersiondRouterCfg struct {
 
 // DevshardctlCfg is the gateway service (Phase 7 wires REST paths).
 type DevshardctlCfg struct {
-	Host      string `yaml:"host"`
-	Port      int    `yaml:"port"`
-	StatsPort int    `yaml:"stats_port"`
-	IP        string `yaml:"ip"`
+	Host      string        `yaml:"host"`
+	Port      int           `yaml:"port"`
+	StatsPort int           `yaml:"stats_port"`
+	IP        string        `yaml:"ip"`
+	Driver    GatewayDriver `yaml:"driver,omitempty"`
+}
+
+// GatewayDriver names the binary the gateway service runs; empty means devshardctl.
+type GatewayDriver string
+
+const (
+	GatewayDriverDevshardctl GatewayDriver = "devshardctl"
+	GatewayDriverGateway     GatewayDriver = "gateway"
+)
+
+// Validate accepts the empty driver as devshardctl.
+func (d GatewayDriver) Validate() error {
+	switch d {
+	case "", GatewayDriverDevshardctl, GatewayDriverGateway:
+		return nil
+	default:
+		return fmt.Errorf("gateway driver %q must be %q or %q", d, GatewayDriverDevshardctl, GatewayDriverGateway)
+	}
+}
+
+// IsGateway reports whether the service runs cmd/gateway instead of devshardctl.
+func (d GatewayDriver) IsGateway() bool {
+	return d == GatewayDriverGateway
 }
 
 // PostgresCfg is optional shared storage for devshardd children.
@@ -683,6 +707,9 @@ func (c *File) Validate() error {
 	}
 	if strings.TrimSpace(c.User.Address) == "" || strings.TrimSpace(c.User.PrivateKeyHex) == "" {
 		return errors.New("user key and address must be set (run gencompose)")
+	}
+	if err := c.Devshardctl.Driver.Validate(); err != nil {
+		return fmt.Errorf("devshardctl.driver: %w", err)
 	}
 	if c.Versiond.Mode == VersiondModeMulti && !c.Postgres.Enabled {
 		return errors.New("versiond.mode multi requires postgres.enabled: true (shared payload/session store for multiple versiond hosts)")

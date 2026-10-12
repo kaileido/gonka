@@ -318,7 +318,7 @@ func TestRunServesTheChatCompletionsRouteFromTheComposedServer(t *testing.T) {
 }
 
 // Test flow:
-//  1. Set GATEWAY_MATCH_WAIT_MS, a variable devshardctl never had, to a non-numeric value.
+//  1. Set GATEWAY_MATCH_WAIT_MS, a variable the deployed names never included, to a non-numeric value.
 //  2. Call run().
 //  3. Assert it returns an error naming GATEWAY_MATCH_WAIT_MS.
 func TestRunFailsFastOnInvalidEnvironment(t *testing.T) {
@@ -1244,6 +1244,10 @@ func (s weightlessSession) SweepExecutionTimeouts(context.Context, time.Duration
 func (s weightlessSession) ProtocolVersion() string { return "" }
 
 func (s weightlessSession) Inference(uint64) (types.InferenceRecord, bool) {
+	return types.InferenceRecord{}, false
+}
+
+func (s weightlessSession) SealedInference(uint64) (types.InferenceRecord, bool) {
 	return types.InferenceRecord{}, false
 }
 func (s weightlessSession) HostDials() []registry.HostDial            { return nil }

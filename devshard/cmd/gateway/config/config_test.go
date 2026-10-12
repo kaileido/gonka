@@ -242,7 +242,7 @@ func TestValidateCatchesEveryRuleBreach(t *testing.T) {
 
 // Test flow:
 //  1. Table-driven: build a default config with retention 0, once with the nonce ledger off and once on.
-//  2. Assert `Validate` accepts both, since devshardctl read DEVSHARD_STATS_RETENTION_EPOCHS=0 as "keep every epoch".
+//  2. Assert `Validate` accepts both, since DEVSHARD_STATS_RETENTION_EPOCHS=0 is read as "keep every epoch".
 func TestValidateAcceptsAnUnboundedRetention(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		configuration := Defaults()

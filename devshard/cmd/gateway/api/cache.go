@@ -267,7 +267,6 @@ func (w *cacheRecorder) cannotBuildEntry(unstorable error, escrowID string) bool
 	return w.entryRefusal(unstorable, escrowID) != filters.CacheStorable
 }
 
-// entryRefusal names why a recording cannot become an entry, in the cache-result vocabulary.
 func (w *cacheRecorder) entryRefusal(unstorable error, escrowID string) string {
 	switch {
 	case w.overflowed:

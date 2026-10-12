@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"devshard/testenv/config"
 )
 
 type Scenario struct {
@@ -93,11 +95,12 @@ type GatewayEscrowRotation struct {
 const DefaultSecondaryWaitAfterWinner = 10 * time.Minute
 
 type Topology struct {
-	VersiondMode string         `yaml:"versiond_mode"`
-	Storage      string         `yaml:"storage"`
-	Participants int            `yaml:"participants"`
-	Chain        ChainTopology  `yaml:"chain"`
-	MockML       MockMLTopology `yaml:"mock_ml"`
+	VersiondMode string               `yaml:"versiond_mode"`
+	Storage      string               `yaml:"storage"`
+	Participants int                  `yaml:"participants"`
+	Gateway      config.GatewayDriver `yaml:"gateway"`
+	Chain        ChainTopology        `yaml:"chain"`
+	MockML       MockMLTopology       `yaml:"mock_ml"`
 }
 
 // HostFault freezes a whole versiond container, including its devshardd child.
@@ -262,6 +265,9 @@ func (s Scenario) Validate() error {
 	}
 	if s.Topology.Storage != "per_participant" {
 		return fmt.Errorf("only topology.storage per_participant is supported")
+	}
+	if err := s.Topology.Gateway.Validate(); err != nil {
+		return fmt.Errorf("topology.gateway: %w", err)
 	}
 	if s.Topology.Participants != 0 && s.Topology.Participants < 2 {
 		return fmt.Errorf("topology.participants must be at least 2 when set")

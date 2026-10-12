@@ -79,8 +79,7 @@ func TestEachWaveReadsWhoIsLiveNow(t *testing.T) {
 	if pinger == nil {
 		t.Fatal("New() returned nothing for a runnable schedule")
 	}
-	ctx, stop := context.WithCancel(context.Background())
-	defer stop()
+	ctx := t.Context()
 
 	pinger.Start(ctx)
 
@@ -89,8 +88,10 @@ func TestEachWaveReadsWhoIsLiveNow(t *testing.T) {
 	}
 }
 
-var _ liveDials = dialsHeld(nil)
-var _ = registry.HostDial{}
+var (
+	_ liveDials = dialsHeld(nil)
+	_           = registry.HostDial{}
+)
 
 // Test flow:
 //  1. Start a loopback stub that counts hits and close the dial guard.

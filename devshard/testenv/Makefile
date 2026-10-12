@@ -39,8 +39,8 @@ loadtest: ## Run a scenario in an isolated Docker testenv (SCENARIO=name).
 	@echo "SCENARIO is required, for example: make loadtest SCENARIO=normal-load"
 	@false
 else
-loadtest: build-devshardd ## Run a scenario in an isolated Docker testenv (SCENARIO=name).
-	go run ./cmd/loadtest -scenario loadtest/scenarios/$(SCENARIO).yaml
+loadtest: build-devshardd ## Run a scenario in an isolated Docker testenv (SCENARIO=name [GATEWAY=gateway]).
+	go run ./cmd/loadtest -scenario loadtest/scenarios/$(SCENARIO).yaml $(if $(GATEWAY),-gateway $(GATEWAY))
 endif
 
 test-compose: ## gencompose + docker compose config validation.

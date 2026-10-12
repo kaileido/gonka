@@ -267,10 +267,11 @@ func TestObservingTheSameNonceTwiceDoesNotDoubleTheMoney(t *testing.T) {
 func recordProduced(t *testing.T, book *Book, escrowID string, nonce uint64, tokens int64) {
 	t.Helper()
 	if err := book.RecordRace(escrowID, []Attempt{{
-		Nonce: nonce, RequestID: "request-1", Sent: true, Finished: true, Usage: UsageWinner, OutputTokens: tokens,
+		Nonce: nonce, RequestID: "request-1", Sent: true, Usage: UsageWinner, OutputTokens: tokens,
 	}}); err != nil {
 		t.Fatalf("RecordRace(): %v", err)
 	}
+	markFinished(t, book, escrowID, nonce)
 }
 
 func queryTotals(t *testing.T, book *Book) nonceTotals {

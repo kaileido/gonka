@@ -2,7 +2,7 @@
 
 The scenario tests run the real gateway — composed by [`app.Compose`](../app/composed.go), as `run` composes it — inside a `testing/synctest` bubble against a fake chain (`chain_test.go`) and real in-process hosts (`fleet_test.go`). An escrow's whole life (create, drain, timeout votes, settle, prune) runs on fake time, in seconds of wall time. Each test is a list of steps; after every step the harness checks every invariant below and stops at the first violation.
 
-They exist because the escrow lifecycle fails in the seams between the planner, the scheduler, the hosts and the chain, where a unit test of one package cannot see. The design they were written against is [`docs/superpowers/specs/2026-10-03-gateway-escrow-planner-design.md`](../../../../docs/superpowers/specs/2026-10-03-gateway-escrow-planner-design.md); its catalogue IDs are mapped to tests at the end of this file and nowhere else.
+They exist because the escrow lifecycle fails in the seams between the planner, the scheduler, the hosts and the chain, where a unit test of one package cannot see. The design they check is [`docs/superpowers/specs/2026-10-03-gateway-escrow-planner-design.md`](../../../../docs/superpowers/specs/2026-10-03-gateway-escrow-planner-design.md); its catalogue IDs are mapped to tests at the end of this file and nowhere else.
 
 ## Running them
 
@@ -250,10 +250,10 @@ Checked after every step by `invariants_test.go`. A test that legitimately break
 | `TestRandomSeedsKeepEveryInvariant` | the catalogue cannot list every interleaving; random fleets and actions find the rest | every invariant holds after every step of sixteen seeds, within the wall budget |
 | `FuzzEscrowLifecycle` | the fuzzer explores action lists the seeds never generate | every invariant holds for every decoded action list |
 | `TestSeedsAreDeterministicAndInsideTheirRanges` | a seed must reproduce its actions to be a regression | the same seed gives the same shape and actions, inside their ranges |
-| `TestTheLedgerPrunesSettledEscrowsPastItsRetention` | regression from a shrunk seed: retention pruning read as a missing ledger | every invariant holds and the ledger did prune a charged settled escrow |
+| `TestTheLedgerPrunesSettledEscrowsPastItsRetention` | a shrunk seed: retention pruning must not read as a missing ledger | every invariant holds and the ledger did prune a charged settled escrow |
 | `TestHarnessJudgesABootCreateWhenNoStepRuns` | regression: a boot create must be judged even with no step | the run ends clean with the boot create stored and narrated |
 | `TestTheLedgerIsComparedOnceTheSessionsStandStill` | regression from a shrunk seed: the ledger compared while sessions still moved | every invariant holds and the ledger is compared at rest |
-| `TestHarnessEndsAfterARestartThatLeftVotesOwed` | regression from a shrunk seed: a restart's owed votes deadlocked the bubble | the run ends clean and waits out the replaced engine's votes |
+| `TestHarnessEndsAfterARestartThatLeftVotesOwed` | a shrunk seed: a restart's owed votes must not deadlock the bubble | the run ends clean and waits out the replaced engine's votes |
 
 ### This README — `readme_test.go`
 

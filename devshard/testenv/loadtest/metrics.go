@@ -250,7 +250,11 @@ func startMetricsCollector(ctx context.Context, opts RunnerConfig, cfg *config.F
 			add(sample)
 		}
 		wg.Add(1)
-		go scrape("gateway", "devshardctl", "devshardctl", "")
+		gatewayExecutable := "devshardctl"
+		if cfg.Devshardctl.Driver.IsGateway() {
+			gatewayExecutable = "gateway"
+		}
+		go scrape("gateway", "devshardctl", gatewayExecutable, "")
 		for _, host := range cfg.Hosts {
 			wg.Add(1)
 			go scrape(host.ID+"/devshardd", host.ID, "devshardd", fmt.Sprintf("http://127.0.0.1:%d/%s/metrics", config.DefaultHostPort, cfg.Versiond.VersionName))
@@ -266,23 +270,23 @@ func startMetricsCollector(ctx context.Context, opts RunnerConfig, cfg *config.F
 			for _, id := range ids {
 				base := scopedGatewayURL(gatewayURL, id)
 				sample := MetricsSample{At: time.Now().UTC(), Target: "escrow", EscrowID: id}
-				sizes, err := fetchGatewayStateSizes(ctx, base, apiKey)
-				if err != nil {
-					sample.Errors = append(sample.Errors, err.Error())
-				} else {
-					sample.State = &sizes
+				if !cfg.Devshardctl.Driver.IsGateway() {
+					sizes, err := fetchGatewayStateSizes(ctx, base, apiKey)
+					if err != nil {
+						sample.Errors = append(sample.Errors, err.Error())
+					} else {
+						sample.State = &sizes
+					}
 				}
 				statusBody, err := getMetricsHTTP(ctx, base+"/v1/status", apiKey)
 				if err != nil {
 					sample.Errors = append(sample.Errors, err.Error())
 				} else {
-					var status struct {
-						Nonce *uint64 `json:"nonce"`
-					}
-					if err := json.Unmarshal([]byte(statusBody), &status); err != nil {
+					nonce, err := parseStatusNonce(statusBody)
+					if err != nil {
 						sample.Errors = append(sample.Errors, err.Error())
 					} else {
-						sample.Nonce = status.Nonce
+						sample.Nonce = nonce
 					}
 				}
 				add(sample)
@@ -310,6 +314,24 @@ func startMetricsCollector(ctx context.Context, opts RunnerConfig, cfg *config.F
 		}
 	}()
 	return c, nil
+}
+
+// parseStatusNonce reads devshardctl's top-level nonce or the single escrow cmd/gateway lists under devshards.
+func parseStatusNonce(body string) (*uint64, error) {
+	var status struct {
+		Nonce     *uint64 `json:"nonce"`
+		Devshards []struct {
+			Nonce uint64 `json:"nonce"`
+		} `json:"devshards"`
+	}
+	if err := json.Unmarshal([]byte(body), &status); err != nil {
+		return nil, err
+	}
+	if status.Nonce == nil && len(status.Devshards) == 1 {
+		nonce := status.Devshards[0].Nonce
+		return &nonce, nil
+	}
+	return status.Nonce, nil
 }
 
 func newMetricsCollector(ctx context.Context, file *os.File, outputDir string, interval time.Duration) *metricsCollector {
