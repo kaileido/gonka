@@ -3,6 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -337,6 +341,7 @@ func newRuntimeMux(proxy *Proxy) http.Handler {
 	mux.HandleFunc("GET /v1/state", proxy.handleState)
 	mux.HandleFunc("GET /v1/debug/pending", proxy.handleDebugPending)
 	mux.HandleFunc("GET /v1/debug/state", proxy.handleDebugState)
+	mux.HandleFunc("GET /v1/debug/state-sizes", proxy.handleDebugStateSizes)
 	mux.HandleFunc("GET /v1/debug/perf", proxy.handleDebugPerf)
 	mux.HandleFunc("GET /v1/debug/pairwise", proxy.handleDebugPairwise)
 	mux.HandleFunc("GET /v1/debug/signatures", proxy.handleDebugSignatures)
@@ -666,6 +671,7 @@ func isReadOnlyDevshardPath(method, innerPath string) bool {
 		"/v1/models",
 		"/v1/debug/pending",
 		"/v1/debug/state",
+		"/v1/debug/state-sizes",
 		"/v1/debug/inferences",
 		"/v1/debug/perf",
 		"/v1/debug/pairwise",
@@ -1035,7 +1041,7 @@ func (g *Gateway) checkBalances() {
 		nonce := rt.proxy.sm.LatestNonce()
 		nonceLimit := escrowNonceLimit(chainMaxNonce, rt.proxy.sm.TotalSlots())
 		if chainMaxNonce != 0 && nonce >= nonceLimit {
-			log.Printf("escrow_nonce_high escrow=%s nonce=%d limit=%d — deactivating before replacement",
+			log.Printf("escrow_nonce_high escrow=%s nonce=%d limit=%d — scheduling replacement before deactivation",
 				rt.id, nonce, nonceLimit)
 			g.scheduleDepletedEscrowReplacement(rt.id, rt.model, "high_nonce")
 		}
@@ -1201,29 +1207,37 @@ func bearerToken(r *http.Request) (string, bool) {
 	return key, key != ""
 }
 
-func apiKeySuffix(key string) string {
-	key = strings.TrimSpace(key)
-	if len(key) <= 8 {
-		return key
+var apiKeyLogSalt = mustRandomBytes(32)
+
+func mustRandomBytes(n int) []byte {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("read random bytes: %v", err))
 	}
-	return key[len(key)-8:]
+	return b
+}
+
+func apiKeyID(key string) string {
+	mac := hmac.New(sha256.New, apiKeyLogSalt)
+	mac.Write([]byte(key))
+	return hex.EncodeToString(mac.Sum(nil)[:8])
 }
 
 func (g *Gateway) apiKeyLogFields(r *http.Request) []any {
-	if suffix, ok := requestAdminAPIKeySuffix(r); ok {
-		return []any{"api_key_suffix", suffix, "api_key_kind", "admin"}
+	if requestHasAdminAuth(r) {
+		return []any{"api_key_kind", "admin"}
 	}
 	key, ok := bearerToken(r)
 	if !ok {
 		return nil
 	}
-	kind := "unknown"
 	g.mu.Lock()
-	if _, valid := g.apiKeys[key]; valid {
-		kind = "api"
-	}
+	_, valid := g.apiKeys[key]
 	g.mu.Unlock()
-	return []any{"api_key_suffix", apiKeySuffix(key), "api_key_kind", kind}
+	if !valid {
+		return []any{"api_key_kind", "unknown"}
+	}
+	return []any{"api_key_id", apiKeyID(key), "api_key_kind", "api"}
 }
 
 func (g *Gateway) statusModels(runtimes []*devshardRuntime) []string {
@@ -1506,6 +1520,7 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("/v1/state", g.handleSingleOnly)
 	mux.HandleFunc("/v1/debug/pending", g.handleSingleOnly)
 	mux.HandleFunc("/v1/debug/state", g.handleSingleOnly)
+	mux.HandleFunc("/v1/debug/state-sizes", g.handleSingleOnly)
 	mux.HandleFunc("/v1/debug/perf", g.handleSingleOnly)
 	mux.HandleFunc("/v1/debug/pairwise", g.handleSingleOnly)
 	mux.HandleFunc("/v1/debug/signatures", g.handleSingleOnly)
@@ -2226,7 +2241,7 @@ func (g *Gateway) reserveRuntimeForModel(requestModel string, cost chatRequestCo
 	skipReasonCounts := make(map[string]int)
 	chainMaxNonce := g.chainMaxNonce()
 	for _, rt := range g.runtimeOrder {
-		if runtimeAtNonceLimit(rt, chainMaxNonce) {
+		if g.runtimeAtNonceLimit(rt, chainMaxNonce) {
 			if g.settings.EscrowRotation.Enabled && chainMaxNonce != 0 {
 				depletedEscrows = append(depletedEscrows, struct {
 					id     string
@@ -2349,7 +2364,7 @@ func runtimesFundingAttempts(runtimes []*devshardRuntime, cost chatRequestCost, 
 	return funded
 }
 
-func runtimeAtNonceLimit(rt *devshardRuntime, chainMaxNonce uint32) bool {
+func (g *Gateway) runtimeAtNonceLimit(rt *devshardRuntime, chainMaxNonce uint32) bool {
 	if rt == nil || !rt.active.Load() || rt.proxy == nil || rt.proxy.sm == nil {
 		return false
 	}
