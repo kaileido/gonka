@@ -74,13 +74,14 @@ type NonceIntent struct {
 // session is the narrow view of devshard/user.Session the scheduler needs; Advance is the atomic peek->decide->commit unit. See README, "The boundary types".
 type session interface {
 	Advance(decide func(HostBinding) NonceIntent) (Prepared, error)
-	ParticipantKeys() []string  // distinct participants (slots deduped) -- the exclusion universe
-	SlotParticipants() []string // one per slot, duplicates kept, read-only; nonce % GroupSize indexes it
-	GroupSize() int             // len(group); nonce % GroupSize == hostIdx
-	LatestNonce() uint64        // for the nonce-cap gate and the burn forecast
-	Balance() uint64            // for the balance floor
-	TokenPrice() uint64         // for the balance floor
-	FeePerNonce() uint64        // for the balance floor
+	ParticipantKeys() []string               // distinct participants (slots deduped) -- the exclusion universe
+	SlotParticipants() []string              // one per slot, duplicates kept, read-only; nonce % GroupSize indexes it
+	GroupSize() int                          // len(group); nonce % GroupSize == hostIdx
+	LatestNonce() uint64                     // for the nonce-cap gate and the burn forecast
+	Balance() uint64                         // for the balance floor
+	TokenPrice() uint64                      // for the balance floor
+	FeePerNonce() uint64                     // for the balance floor
+	ChatBudgetSpent(participant string) bool // the host's advertised peer budget has no chat in it now
 }
 
 // HostBinding is the nonce the session is offering and the host it is bound to, deduped across a validator's slots.

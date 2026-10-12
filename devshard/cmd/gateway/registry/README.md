@@ -76,7 +76,7 @@ Three `EscrowSession` methods have non-obvious contracts. `SealedInferences` cou
 
 ## Nonces and ghost burns
 
-`nonceStream.slots` is taken once, at construction: the group is fixed for the escrow's life, and asking the session takes the lock a nonce commit holds. It carries one participant per slot, duplicates kept, so `nonce % GroupSize` indexes it — the group size is its length, and the escrow pick walks it to forecast burns ([routing.md](../docs/routing.md), "Pricing an escrow by the burns it will cost"). `newNonceStream` is the only way to build one, so the cached group cannot disagree with the session's.
+`nonceStream.slots` is taken once, at construction: the group is fixed for the escrow's life, and asking the session takes the lock a nonce commit holds. It carries one participant per slot, duplicates kept, so `nonce % GroupSize` indexes it — the group size is its length, and the escrow pick walks it to forecast burns ([routing.md](../docs/routing.md), "Pricing an escrow by the burns it will cost"). `newNonceStream` is the only way to build one, so the cached group cannot disagree with the session's. Its hosts' chat budgets (`ChatBudgets`) are taken the same way, one connection per participant, and `ChatBudgetSpent` reads one without the session's lock: the connection holds the budget, not the session ([routing.md](../docs/routing.md), "A host with no chat budget").
 
 `errNonceDeclined` leaves the bound nonce unconsumed, so the next caller sees the same nonce.
 

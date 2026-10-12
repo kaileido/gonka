@@ -9,6 +9,8 @@ import (
 	"devshard/transport"
 )
 
+const connectChatPath = "/chat/completions"
+
 var (
 	ErrEmptyStream = errors.New("empty content stream")
 
@@ -50,13 +52,23 @@ func (e *HostApplicationError) HTTPStatus() int {
 	return http.StatusBadGateway
 }
 
-// UpstreamStatus reports the HTTP status a transport error carries, the only place a host's refusal is visible.
+// UpstreamStatus reports the HTTP status a host's refusal stands for, whether it came over HTTP or Connect.
 func UpstreamStatus(err error) (int, bool) {
-	var upstream *transport.UpstreamStatusError
-	if errors.As(err, &upstream) && upstream != nil {
+	if upstream, refused := hostRefusal(err); refused {
 		return upstream.StatusCode, true
 	}
 	return 0, false
+}
+
+func hostRefusal(err error) (*transport.UpstreamStatusError, bool) {
+	var upstream *transport.UpstreamStatusError
+	if errors.As(err, &upstream) && upstream != nil {
+		return upstream, true
+	}
+	if status, devshardError, message, refused := transport.ConnectApplicationStatus(err); refused {
+		return &transport.UpstreamStatusError{Path: connectChatPath, StatusCode: status, Body: message, DevshardError: devshardError}, true
+	}
+	return nil, false
 }
 
 func StatusForError(err error) int {

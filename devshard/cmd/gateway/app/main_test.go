@@ -1250,10 +1250,11 @@ func (s weightlessSession) Inference(uint64) (types.InferenceRecord, bool) {
 func (s weightlessSession) SealedInference(uint64) (types.InferenceRecord, bool) {
 	return types.InferenceRecord{}, false
 }
-func (s weightlessSession) HostDials() []registry.HostDial            { return nil }
-func (s weightlessSession) HeightSyncView() heightsync.OperatorView   { return heightsync.OperatorView{} }
-func (s weightlessSession) WaitRouterCatalog(context.Context) error   { return nil }
-func (s weightlessSession) WaitHeightSeedReady(context.Context) error { return nil }
+func (s weightlessSession) HostDials() []registry.HostDial              { return nil }
+func (s weightlessSession) ChatBudgets() map[string]registry.ChatBudget { return nil }
+func (s weightlessSession) HeightSyncView() heightsync.OperatorView     { return heightsync.OperatorView{} }
+func (s weightlessSession) WaitRouterCatalog(context.Context) error     { return nil }
+func (s weightlessSession) WaitHeightSeedReady(context.Context) error   { return nil }
 
 func (s weightlessSession) PrepareInferenceFn(user.ParamsForHost) (*user.PreparedInference, error) {
 	return nil, nil

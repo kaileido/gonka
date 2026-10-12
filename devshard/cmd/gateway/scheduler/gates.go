@@ -11,7 +11,7 @@ import (
 func (s *Scheduler) predicates(escrow Escrow) func(chain.PhaseSnapshot) availability {
 	model, escrowID := escrow.Model, escrow.ID
 	return func(snapshot chain.PhaseSnapshot) availability {
-		return s.fleetGates(model, snapshot).forEscrow(s.stateBlocked(escrowID))
+		return s.fleetGates(model, snapshot).forEscrow(s.stateBlocked(escrowID), chatBudgetSpent(escrow))
 	}
 }
 
@@ -26,6 +26,13 @@ func (s *Scheduler) fleetGates(model string, snapshot chain.PhaseSnapshot) avail
 		congested:   func(participant string) blockReason { return blockForAdmission(s.limiter.Admits(participant, model)) },
 		ejected:     func(participant string) bool { return s.perf.Ejected(participant, model) },
 	}
+}
+
+func chatBudgetSpent(escrow Escrow) func(participant string) bool {
+	if escrow.Session == nil {
+		return nil
+	}
+	return escrow.Session.ChatBudgetSpent
 }
 
 // blockForAdmission maps the limiter's verdict onto the drain's ladder, so only a full window is ever forced through. See routing.md, "The forced send".

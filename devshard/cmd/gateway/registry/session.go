@@ -33,10 +33,16 @@ type HostDial struct {
 	RoutePrefix    string
 }
 
+// ChatBudget is a host connection that reports how long a chat would wait for the peer budget the host advertised.
+type ChatBudget interface {
+	ChatBudgetWait() time.Duration
+}
+
 // EscrowSession is one escrow's session as the registry uses it; two of its methods carry a trap. See README.md, "The two session kinds".
 type EscrowSession interface {
 	ParticipantKeys() []string
 	HostDials() []HostDial
+	ChatBudgets() map[string]ChatBudget
 	HeightSyncView() heightsync.OperatorView
 	WaitRouterCatalog(ctx context.Context) error
 	WaitHeightSeedReady(ctx context.Context) error
@@ -170,17 +176,32 @@ func (h sessionHandle) HostDials() []HostDial {
 	return dials
 }
 
+func (h sessionHandle) ChatBudgets() map[string]ChatBudget {
+	clients := h.Clients()
+	keys := h.HostParticipantKeyList()
+	budgets := make(map[string]ChatBudget, len(clients))
+	for slot, client := range clients {
+		budget, paced := client.(ChatBudget)
+		if !paced || slot >= len(keys) {
+			continue
+		}
+		budgets[keys[slot]] = budget
+	}
+	return budgets
+}
+
 // slots is taken once: the group is fixed for the life of a session, and asking the session takes the lock a nonce commit holds.
 type nonceStream struct {
 	session EscrowSession
 	model   string
 	slots   []string
+	budgets map[string]ChatBudget
 	now     func() time.Time
 }
 
 // newNonceStream is the only way to build one, so the cached group cannot disagree with the session's.
 func newNonceStream(session EscrowSession, model string, now func() time.Time) nonceStream {
-	return nonceStream{session: session, model: model, slots: session.HostParticipantKeyList(), now: now}
+	return nonceStream{session: session, model: model, slots: session.HostParticipantKeyList(), budgets: session.ChatBudgets(), now: now}
 }
 
 func (s nonceStream) ParticipantKeys() []string  { return s.session.ParticipantKeys() }
@@ -190,6 +211,11 @@ func (s nonceStream) LatestNonce() uint64        { return s.session.Nonce() }
 func (s nonceStream) Balance() uint64            { return s.session.Balance() }
 func (s nonceStream) TokenPrice() uint64         { return s.session.TokenPrice() }
 func (s nonceStream) FeePerNonce() uint64        { return s.session.FeePerNonce() }
+
+func (s nonceStream) ChatBudgetSpent(participant string) bool {
+	budget, paced := s.budgets[participant]
+	return paced && budget.ChatBudgetWait() > 0
+}
 
 func (s nonceStream) Advance(decide func(scheduler.HostBinding) scheduler.NonceIntent) (scheduler.Prepared, error) {
 	prepared, err := s.session.PrepareInferenceFn(func(binding user.HostBinding) (user.InferenceParams, bool, context.Context, error) {

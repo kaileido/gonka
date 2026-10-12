@@ -38,6 +38,8 @@ func (f *fakeSession) ParticipantKeys() []string {
 	return f.participants
 }
 
+func (f *fakeSession) ChatBudgetSpent(string) bool { return false }
+
 func (f *fakeSession) SlotParticipants() []string {
 	f.calls = append(f.calls, "SlotParticipants")
 	return f.slots

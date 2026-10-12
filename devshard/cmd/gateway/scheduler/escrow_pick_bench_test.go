@@ -19,6 +19,7 @@ type benchSession struct {
 func (b *benchSession) Advance(func(HostBinding) NonceIntent) (Prepared, error) { return nil, nil }
 func (b *benchSession) ParticipantKeys() []string                               { return b.slots }
 func (b *benchSession) SlotParticipants() []string                              { return b.slots }
+func (b *benchSession) ChatBudgetSpent(string) bool                             { return false }
 func (b *benchSession) GroupSize() int                                          { return len(b.slots) }
 func (b *benchSession) LatestNonce() uint64                                     { return b.latestNonce }
 func (b *benchSession) Balance() uint64                                         { return 1 << 40 }

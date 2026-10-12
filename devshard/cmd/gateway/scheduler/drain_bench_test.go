@@ -40,13 +40,14 @@ func (s *drainSession) Advance(decide func(HostBinding) NonceIntent) (Prepared, 
 	return &s.prepared, nil
 }
 
-func (s *drainSession) ParticipantKeys() []string  { return s.keys }
-func (s *drainSession) SlotParticipants() []string { return s.slots }
-func (s *drainSession) GroupSize() int             { return len(s.slots) }
-func (s *drainSession) LatestNonce() uint64        { return s.nonce }
-func (s *drainSession) Balance() uint64            { return 1 << 40 }
-func (s *drainSession) TokenPrice() uint64         { return 1 }
-func (s *drainSession) FeePerNonce() uint64        { return 0 }
+func (s *drainSession) ParticipantKeys() []string   { return s.keys }
+func (s *drainSession) SlotParticipants() []string  { return s.slots }
+func (s *drainSession) ChatBudgetSpent(string) bool { return false }
+func (s *drainSession) GroupSize() int              { return len(s.slots) }
+func (s *drainSession) LatestNonce() uint64         { return s.nonce }
+func (s *drainSession) Balance() uint64             { return 1 << 40 }
+func (s *drainSession) TokenPrice() uint64          { return 1 }
+func (s *drainSession) FeePerNonce() uint64         { return 0 }
 
 type leanLimiter struct {
 	refused  map[string]bool

@@ -116,7 +116,7 @@ func Defaults() Config {
 			InterChunkStallMS:         30_000,
 			LoserGraceMS:              600_000,
 			MaxAttemptsPerRequest:     2,
-			MaxConcurrentTimeoutVotes: 2_048,
+			MaxConcurrentTimeoutVotes: 64,
 			HedgeFirstTokenFloorMS:    1_500,
 		},
 		Scheduler: Scheduler{

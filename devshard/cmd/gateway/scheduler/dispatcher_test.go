@@ -40,6 +40,7 @@ type scriptedSession struct {
 	gate            chan struct{}
 	entered         chan struct{}
 	afterDecide     func(HostBinding)
+	budgetSpent     map[string]bool
 }
 
 func (s *scriptedSession) Advance(decide func(HostBinding) NonceIntent) (Prepared, error) {
@@ -103,6 +104,10 @@ func (s *scriptedSession) SlotParticipants() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.slots
+}
+
+func (s *scriptedSession) ChatBudgetSpent(participant string) bool {
+	return s.budgetSpent[participant]
 }
 
 func (s *scriptedSession) GroupSize() int {

@@ -11,6 +11,7 @@ type availability struct {
 	ejected      func(participant string) bool
 	notAllowed   func(participant string) bool
 	stateBlocked func(participant string) bool
+	budgetSpent  func(participant string) bool
 	unthrottled  func(participant string) bool
 
 	frozen          map[string]blockReason
@@ -96,15 +97,21 @@ func (a availability) firstBlock(participant string) blockReason {
 }
 
 func (a availability) congestionBlock(participant string) blockReason {
-	if a.congested == nil {
-		return blockNone
+	if a.congested != nil {
+		if reason := a.congested(participant); reason != blockNone {
+			return reason
+		}
 	}
-	return a.congested(participant)
+	if a.budgetSpent != nil && a.budgetSpent(participant) {
+		return blockWindowFull
+	}
+	return blockNone
 }
 
-// forEscrow adds the one rung that belongs to a single escrow rather than to the fleet, and must be applied before the ladder is frozen. See routing.md, "Pricing an escrow by the burns it will cost".
-func (a availability) forEscrow(stateBlocked func(participant string) bool) availability {
+// forEscrow adds the rungs that belong to a single escrow rather than to the fleet, its state block and its hosts' chat budgets, and must be applied before the ladder is frozen. See routing.md, "Pricing an escrow by the burns it will cost".
+func (a availability) forEscrow(stateBlocked, budgetSpent func(participant string) bool) availability {
 	a.stateBlocked = stateBlocked
+	a.budgetSpent = budgetSpent
 	return a
 }
 

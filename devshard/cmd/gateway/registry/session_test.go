@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	"common/completionapi"
 
@@ -254,5 +255,26 @@ func TestGhostPromptAgreesWithItsReservation(t *testing.T) {
 	}
 	if ghostMaxTokens < completionapi.MinTokensFloor {
 		t.Errorf("ghostMaxTokens = %d, below the floor %d the chain refuses", ghostMaxTokens, completionapi.MinTokensFloor)
+	}
+}
+
+type fixedChatBudget time.Duration
+
+func (budget fixedChatBudget) ChatBudgetWait() time.Duration { return time.Duration(budget) }
+
+// Test flow:
+//  1. Build a nonce stream over a session whose host A has budget for a chat, whose host B would wait for one, and which has no connection for host C.
+//  2. Ask the stream whether each host's chat budget is spent.
+//  3. Assert only host B reads as spent: a host with budget or with no paced connection is never held back.
+func TestANonceStreamReadsAHostWithNoChatBudgetAsSpent(t *testing.T) {
+	t.Parallel()
+	session := newFakeSession("hostA", "hostB", "hostC")
+	session.budgets = map[string]ChatBudget{"hostA": fixedChatBudget(0), "hostB": fixedChatBudget(50 * time.Millisecond)}
+	stream := newNonceStream(session, "qwen", fixedClock())
+
+	spent := []bool{stream.ChatBudgetSpent("hostA"), stream.ChatBudgetSpent("hostB"), stream.ChatBudgetSpent("hostC")}
+
+	if !reflect.DeepEqual(spent, []bool{false, true, false}) {
+		t.Fatalf("ChatBudgetSpent(hostA, hostB, hostC) = %v, want [false true false]", spent)
 	}
 }

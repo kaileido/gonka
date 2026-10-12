@@ -169,6 +169,7 @@ type schedulerConfig struct {
 	hostWindow    int
 	gate          chan struct{}
 	health        hostHealth
+	budgetSpent   []string
 }
 
 // escrowHolds counts the in-flight holds the commit takes.
@@ -251,6 +252,10 @@ func newSchedulerHarness(t *testing.T, cfg schedulerConfig) *schedulerHarness {
 			slots = own
 		}
 		session := &scriptedSession{balance: 1 << 40, slots: slots, gate: cfg.gate, entered: make(chan struct{}, 1)}
+		session.budgetSpent = map[string]bool{}
+		for _, participant := range cfg.budgetSpent {
+			session.budgetSpent[participant] = true
+		}
 		sessions[escrowID] = session
 		escrows.byModel[modelA] = append(escrows.byModel[modelA], Escrow{ID: escrowID, Model: modelA, Session: session, Hold: holds.source()})
 		weights.byEscrow[escrowID] = 10
@@ -1303,4 +1308,31 @@ func TestADispatcherRetiresAnEscrowThatCanNoLongerAffordAFullContextRequest(t *t
 			}
 		})
 	}
+}
+
+// Test flow:
+//  1. Spend host B's chat budget and pick for a request.
+//  2. Assert the pick lands on host A, burning the nonce bound to host B as a full window.
+//  3. Spend both hosts' chat budgets and assert the pick fails with `ErrHostsBusy`, so the client is answered at once instead of a request waiting on a host's budget.
+func TestPickTreatsAHostWithNoChatBudgetAsAFullWindow(t *testing.T) {
+	t.Run("the host with budget serves", func(t *testing.T) {
+		test := newSchedulerHarness(t, schedulerConfig{budgetSpent: []string{hostB}})
+
+		assignment, err := test.scheduler.Pick(context.Background(), RequestProfile{Model: modelA})
+
+		wantHost(t, assignment, err, escrowA, hostA, 2)
+		if burns := test.observer.burns(); len(burns) != 1 || burns[0] != ghostWindowFull.reason() {
+			t.Fatalf("ghost burns = %v, want exactly one %q", burns, ghostWindowFull.reason())
+		}
+	})
+
+	t.Run("no host has budget", func(t *testing.T) {
+		test := newSchedulerHarness(t, schedulerConfig{budgetSpent: []string{hostA, hostB}})
+
+		_, err := test.scheduler.Pick(context.Background(), RequestProfile{Model: modelA})
+
+		if !errors.Is(err, ErrHostsBusy) {
+			t.Fatalf("err = %v, want ErrHostsBusy", err)
+		}
+	})
 }

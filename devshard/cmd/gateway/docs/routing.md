@@ -220,6 +220,12 @@ The gateway writes a `forced_send` line naming the host and the run it ended (`j
 
 **What the waiver must not touch.** `Admits` and `Available` answer for the limiter, and `limits.Capacity` reads `Available` to size `EscrowWeight`, which sizes the gateway-wide concurrency limit. A participant that always reported itself available would inflate that door for every model it serves. The waiver lives in what the scheduler does with the answer, never in the answer.
 
+### A host with no chat budget
+
+A host advertises, when this gateway attaches, how many messages a minute it accepts from it, and charges each chat, vote and catch-up against that one budget (`transport/rpc_budget.go`). The budget is the host's own setting, the same for a host of any weight, so the gateway reads it rather than deriving it: a host whose budget holds no chat right now is a full window for the drain (`match.go`, `congestionBlock`; `registry/session.go`, `ChatBudgetSpent`). It is read through the escrow's own session, because each version of a host is a process with a budget of its own, and the escrow pick's burn forecast reads it the same way.
+
+Without the rung a request bound to that host waits inside the send for the budget to refill, which the limiter sees as a slow host rather than a busy one: it keeps admitting, the waits outgrow the timeouts, and the timeouts' votes spend the same budget the chats needed. With it, the nonce goes to a host that has budget, and when none has, the sweep answers `ErrHostsBusy` at once and spends no nonce. The rung is a congestion rung, so an unthrottled participant is not asked it and a burn run may force a send over it, where the send waits for its budget as it would without the gate.
+
 ### Paths that ignore the routing lists, by design
 
 Both lists narrow **routing**, and nothing else. The traffic a gateway owes the whole group is not filtered by them: host pings (`/clock`, `/healthz`) walk every live escrow's dials, diff catch-up teaches the group, finalize collects signatures from every slot, the pending-diff flush on retirement tries hosts until one accepts, and the timeout sweep votes on what the group holds. Filtering them would blind the gateway to hosts it may route to the moment a list changes, and reachability and clock drift are wanted for the whole group either way.

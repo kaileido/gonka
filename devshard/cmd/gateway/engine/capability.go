@@ -1,14 +1,12 @@
 package engine
 
 import (
-	"errors"
 	"net/http"
 	"regexp"
 	"strings"
 
 	"devshard/cmd/gateway/filters"
 	"devshard/storage"
-	"devshard/transport"
 )
 
 var versionNotFound = regexp.MustCompile(`version "[^"]*" not found`)
@@ -54,8 +52,8 @@ func ParseCapabilityError(message string) CapabilitySignal {
 }
 
 func capabilityOfDispatchError(err error) CapabilitySignal {
-	var status *transport.UpstreamStatusError
-	if !errors.As(err, &status) {
+	status, refused := hostRefusal(err)
+	if !refused {
 		return CapabilitySignal{}
 	}
 	return ParseVersionRefusal(status.Body)

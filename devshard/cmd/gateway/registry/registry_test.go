@@ -42,6 +42,7 @@ type fakeSession struct {
 	perSlotKeys  []string
 	participants []string
 	dials        []HostDial
+	budgets      map[string]ChatBudget
 
 	heightSyncView heightsync.OperatorView
 
@@ -168,6 +169,8 @@ func (f *fakeSession) SweepExecutionTimeouts(context.Context, time.Duration, int
 }
 
 func (f *fakeSession) HostDials() []HostDial { return f.dials }
+
+func (f *fakeSession) ChatBudgets() map[string]ChatBudget { return f.budgets }
 
 func (f *fakeSession) HeightSyncView() heightsync.OperatorView { return f.heightSyncView }
 

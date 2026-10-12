@@ -56,8 +56,8 @@ func (s *attemptState) emptyChunkHeads() (first, last string) {
 
 // upstreamRefusal keeps what the host said when it refused, truncated: a log line needs the reason, not the payload.
 func upstreamRefusal(err error) (int, string) {
-	var status *transport.UpstreamStatusError
-	if !errors.As(err, &status) {
+	status, refused := hostRefusal(err)
+	if !refused {
 		return 0, ""
 	}
 	body := strings.TrimSpace(status.Body)
@@ -75,8 +75,7 @@ func classifyDispatchError(ctx context.Context, err error) Terminal {
 	if transport.IsEscrowLookupLimitedError(err) {
 		return TerminalEscrowLookupLimited
 	}
-	var status *transport.UpstreamStatusError
-	if errors.As(err, &status) {
+	if status, refused := hostRefusal(err); refused {
 		if !strings.Contains(status.Path, "/chat/completions") {
 			return TerminalOffPath
 		}
@@ -87,7 +86,7 @@ func classifyDispatchError(ctx context.Context, err error) Terminal {
 		if terminal, recovered := terminalForStatus[status.StatusCode]; recovered {
 			return terminal
 		}
-		if status.StatusCode >= http.StatusInternalServerError && !transport.IsUpstreamRequestFault(err) {
+		if status.StatusCode >= http.StatusInternalServerError && !transport.IsUpstreamRequestFault(status) {
 			return TerminalUpstreamServerError
 		}
 		return TerminalRejected
