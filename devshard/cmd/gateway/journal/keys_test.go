@@ -147,6 +147,7 @@ func everyProducer() map[string]func(events *Journal) {
 		},
 		"SettlementUnverifiable": func(events *Journal) { events.SettlementUnverifiable("5", 9, failure) },
 		"EscrowUnservable":       func(events *Journal) { events.EscrowUnservable("gone", failure) },
+		"EscrowUnopened":         func(events *Journal) { events.EscrowUnopened("stalled", failure) },
 		"EscrowCreated":          func(events *Journal) { events.EscrowCreated("42", "qwen", "temp", "bridge", 7, "TX") },
 		"EscrowRecovered":        func(events *Journal) { events.EscrowRecovered("55", "qwen", "temp", 3, "TX") },
 		"CommitmentCleared": func(events *Journal) {

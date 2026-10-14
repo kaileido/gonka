@@ -1,12 +1,15 @@
 package user
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"devshard/bridge"
+	"devshard/host"
 	"devshard/storage"
 	"devshard/transport"
 	"devshard/types"
@@ -147,8 +150,9 @@ func (httpsessionTestBridge) SubmitDisputeState(string, []byte, uint64, map[uint
 
 type rpcLifecycleBridge struct {
 	httpsessionTestBridge
-	slots    []string
-	failHost string
+	slots      []string
+	failHost   string
+	absentHost string
 }
 
 func (b rpcLifecycleBridge) GetEscrow(id string) (*bridge.EscrowInfo, error) {
@@ -166,6 +170,9 @@ func (b rpcLifecycleBridge) GetEscrow(id string) (*bridge.EscrowInfo, error) {
 func (b rpcLifecycleBridge) GetHostInfo(address string) (*bridge.HostInfo, error) {
 	if b.failHost != "" && address == b.failHost {
 		return nil, errors.New("host info failed")
+	}
+	if b.absentHost != "" && address == b.absentHost {
+		return nil, fmt.Errorf("participant %s: %w", address, bridge.ErrParticipantNotFound)
 	}
 	return &bridge.HostInfo{Address: address, URL: "http://127.0.0.1:1"}, nil
 }
@@ -192,6 +199,26 @@ func TestNewHTTPSession_GetHostInfoErrorReleasesPeerConn(t *testing.T) {
 	require.Error(t, err)
 	require.ErrorContains(t, err, "get host info")
 	require.False(t, transport.PeerConnRegistered(hostA, "dev"))
+}
+
+// Test flow:
+//  1. Open a session whose group has one host the chain no longer lists.
+//  2. Require the session to open, and that host's slot to fail every call as absent from the chain.
+func TestNewHTTPSession_HostAbsentFromChainLeavesADeadSlot(t *testing.T) {
+	const privateKeyHex = "0000000000000000000000000000000000000000000000000000000000000001"
+	session, _, err := NewHTTPSession(HTTPSessionConfig{
+		PrivateKeyHex: privateKeyHex,
+		EscrowID:      "9801",
+		Bridge:        rpcLifecycleBridge{slots: []string{"host-live", "host-gone"}, absentHost: "host-gone"},
+		StoragePath:   filepath.Join(t.TempDir(), "session"),
+		RoutePrefix:   "/devshard/dev",
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = session.Close() })
+
+	_, err = session.clients[1].Send(context.Background(), host.HostRequest{}, nil, nil)
+
+	require.ErrorIs(t, err, ErrHostAbsentFromChain)
 }
 
 func TestNewHTTPSession_RecoverErrorReleasesPeerConn(t *testing.T) {

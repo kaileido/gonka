@@ -532,6 +532,7 @@ type escrowPublisher struct {
 	retired     []string
 	deactivated []string
 	unserved    []string
+	unopened    []string
 	causes      map[string]error
 
 	failures map[string]error
@@ -585,15 +586,21 @@ func (p *escrowPublisher) unservable(escrowID string, _ error) {
 	p.unserved = append(p.unserved, escrowID)
 }
 
+func (p *escrowPublisher) unopenedEscrow(escrowID string, _ error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.unopened = append(p.unopened, escrowID)
+}
+
 func devshard(escrowID string, active bool) store.DevshardRecord {
 	return store.DevshardRecord{EscrowID: escrowID, Model: "model-a", Active: active}
 }
 
 // Test flow:
-//  1. Build a table of devshard records and per-escrow build failures, varying whether the record is inactive, missing from the chain, missing its key, failing for another reason, or healthy.
+//  1. Build a table of devshard records and per-escrow build failures, varying whether the record is inactive, missing from the chain, missing its key, failing for another reason (left unpublished for a retry), or healthy.
 //  2. Run publishEscrows over each case's records with a fake publisher.
 //  3. Assert the returned error matches the case's expectation.
-//  4. Assert the publisher's added, retired, deactivated and unserved lists match the case's expectations.
+//  4. Assert the publisher's added, retired, deactivated, unserved and unopened lists match the case's expectations.
 //  5. Assert each deactivation carried the build failure that caused it.
 func TestPublishEscrowsWalksTheThreeArmedBuildLadder(t *testing.T) {
 	buildFailure := errors.New("chain REST unreachable")
@@ -604,6 +611,7 @@ func TestPublishEscrowsWalksTheThreeArmedBuildLadder(t *testing.T) {
 		wantAdded       []string
 		wantRetired     []string
 		wantDeactivated []string
+		wantUnopened    []string
 		wantCauses      map[string]error
 		wantError       error
 	}{
@@ -629,11 +637,11 @@ func TestPublishEscrowsWalksTheThreeArmedBuildLadder(t *testing.T) {
 			wantCauses:      map[string]error{"keyless": env.ErrPrivateKeyMissing},
 		},
 		{
-			name:      "any other failure is fatal and marks nothing inactive",
-			records:   []store.DevshardRecord{devshard("unreachable", true)},
-			failures:  map[string]error{"unreachable": buildFailure},
-			wantAdded: []string{"unreachable"},
-			wantError: buildFailure,
+			name:         "any other failure leaves the escrow unpublished for a retry and marks nothing inactive",
+			records:      []store.DevshardRecord{devshard("unreachable", true), devshard("serving", true)},
+			failures:     map[string]error{"unreachable": buildFailure},
+			wantAdded:    []string{"serving", "unreachable"},
+			wantUnopened: []string{"unreachable"},
 		},
 		{
 			name:      "a healthy devshard is published",
@@ -646,8 +654,8 @@ func TestPublishEscrowsWalksTheThreeArmedBuildLadder(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			publisher := &escrowPublisher{failures: testCase.failures}
 
-			err := publishEscrows(context.Background(), testCase.records, 4,
-				publisher.add, publisher.retire, publisher.deactivate, publisher.unservable)
+			unopened, err := publishEscrows(context.Background(), testCase.records, 4,
+				publisher.add, publisher.retire, publisher.deactivate, publisher.unservable, publisher.unopenedEscrow)
 
 			if testCase.wantError == nil && err != nil {
 				t.Fatalf("publishEscrows() = %v, want nil", err)
@@ -659,6 +667,10 @@ func TestPublishEscrowsWalksTheThreeArmedBuildLadder(t *testing.T) {
 			assertSame(t, "retired", publisher.retired, testCase.wantRetired)
 			assertSame(t, "deactivated", publisher.deactivated, testCase.wantDeactivated)
 			assertSame(t, "unserved", publisher.unserved, testCase.wantDeactivated)
+			assertSame(t, "unopened", publisher.unopened, testCase.wantUnopened)
+			if unopened != len(testCase.wantUnopened) {
+				t.Fatalf("publishEscrows() reported %d unopened, want %d", unopened, len(testCase.wantUnopened))
+			}
 			for escrowID, wantCause := range testCase.wantCauses {
 				if !errors.Is(publisher.causes[escrowID], wantCause) {
 					t.Fatalf("deactivate(%s) cause = %v, want %v", escrowID, publisher.causes[escrowID], wantCause)
@@ -728,6 +740,7 @@ func TestTheExhaustionProbeReadsTheSchedulersVerdict(t *testing.T) {
 
 func assertSame(t *testing.T, label string, got, want []string) {
 	t.Helper()
+	got, want = slices.Sorted(slices.Values(got)), slices.Sorted(slices.Values(want))
 	if len(got) != len(want) {
 		t.Fatalf("%s = %v, want %v", label, got, want)
 	}
@@ -753,8 +766,9 @@ func TestPublishEscrowsBuildsNoMoreThanTheBuilderLimitAtOnce(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- publishEscrows(context.Background(), records, builders,
-			publisher.add, publisher.retire, publisher.deactivate, publisher.unservable)
+		_, err := publishEscrows(context.Background(), records, builders,
+			publisher.add, publisher.retire, publisher.deactivate, publisher.unservable, publisher.unopenedEscrow)
+		done <- err
 	}()
 
 	deadline := time.Now().Add(5 * time.Second)

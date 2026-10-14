@@ -77,12 +77,12 @@ func resolveStorageDir(explicit *string) (string, error) {
 }
 
 // publishEscrows brings the registry to what the store calls active, builders at a time. See operations.md, "Boot".
-func (g *gateway) publishEscrows(ctx context.Context) error {
+func (g *gateway) publishEscrows(ctx context.Context) (int, error) {
 	records, err := g.store.ListDevshards(ctx)
 	if err != nil {
-		return fmt.Errorf("listing devshards: %w", err)
+		return 0, fmt.Errorf("listing devshards: %w", err)
 	}
-	return publishEscrows(ctx, records, g.builders, g.addEscrow, g.escrows.Retire, unservableDeactivation(ctx, g.store), g.events.EscrowUnservable)
+	return publishEscrows(ctx, records, g.builders, g.addEscrow, g.escrows.Retire, unservableDeactivation(ctx, g.store), g.events.EscrowUnservable, g.events.EscrowUnopened)
 }
 
 type devshardDeactivator interface {
@@ -120,7 +120,8 @@ func publishEscrows(
 	retire func(escrowID string) error,
 	deactivate func(escrowID string, cause error) error,
 	unservable func(escrowID string, err error),
-) error {
+	unopened func(escrowID string, err error),
+) (int, error) {
 	var (
 		active   []store.DevshardRecord
 		problems []error
@@ -146,6 +147,7 @@ func publishEscrows(
 	}
 	_ = building.Wait()
 
+	unopenedCount := 0
 	for index, err := range built {
 		escrowID := active[index].EscrowID
 		switch {
@@ -156,25 +158,46 @@ func publishEscrows(
 				problems = append(problems, fmt.Errorf("deactivating escrow %s: %w", escrowID, deactivateErr))
 			}
 		default:
-			problems = append(problems, err)
+			unopened(escrowID, err)
+			unopenedCount++
 		}
 	}
-	return errors.Join(problems...)
+	return unopenedCount, errors.Join(problems...)
 }
 
 // republishOnDevshardWrites keeps routing in step with the rotation lifecycle, which knows no registry.
-func (g *gateway) republishOnDevshardWrites(ctx context.Context) <-chan struct{} {
+func (g *gateway) republishOnDevshardWrites(ctx context.Context, unopenedAtBoot int) <-chan struct{} {
+	return republishEscrows(ctx, g.devshardWork, unopenedAtBoot, g.publishEscrows)
+}
+
+// unopenedEscrowRetryDelay is the lifecycle tick, so an escrow that would not open is retried as often as rotation looks at it.
+const unopenedEscrowRetryDelay = escrow.TickInterval
+
+// republishEscrows republishes on every devshard write, and on a timer while an active escrow is left unopened. See operations.md, "Boot".
+func republishEscrows(ctx context.Context, writes <-chan struct{}, unopenedAtBoot int, publish func(context.Context) (int, error)) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
+		retry := time.NewTimer(unopenedEscrowRetryDelay)
+		defer retry.Stop()
+		if unopenedAtBoot == 0 {
+			retry.Stop()
+		}
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-g.devshardWork:
-				if err := g.publishEscrows(ctx); err != nil && ctx.Err() == nil {
-					logging.Error("republishing escrows", logkey.Error, err)
-				}
+			case <-writes:
+			case <-retry.C:
+			}
+			unopened, err := publish(ctx)
+			if err != nil && ctx.Err() == nil {
+				logging.Error("republishing escrows", logkey.Error, err)
+			}
+			if unopened > 0 {
+				retry.Reset(unopenedEscrowRetryDelay)
+			} else {
+				retry.Stop()
 			}
 		}
 	}()

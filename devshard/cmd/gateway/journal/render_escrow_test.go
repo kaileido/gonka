@@ -67,6 +67,13 @@ func TestEscrowTransitionsRenderTheLinesTheirProducersNarrate(t *testing.T) {
 				"escrow", "gone", "error", missing,
 			}},
 		},
+		{
+			name:    "an escrow fails to open and waits for a retry",
+			produce: func(events *Journal) { events.EscrowUnopened("stalled", missing) },
+			want: logcapture.Entry{Level: "warn", Msg: "devshard could not be opened, retrying", Fields: []any{
+				"escrow", "stalled", "error", missing,
+			}},
+		},
 	}
 
 	for _, testCase := range testCases {

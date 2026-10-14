@@ -66,6 +66,13 @@ func (j *Journal) EscrowUnservable(escrowID string, err error) {
 	})
 }
 
+// EscrowUnopened renders an active devshard whose session would not open; it stays unpublished and the republish retries it.
+func (j *Journal) EscrowUnopened(escrowID string, err error) {
+	j.emitLine(KindEscrowTransition, func(lines logSink) {
+		lines.Warn("devshard could not be opened, retrying", logkey.Escrow, escrowID, logkey.Error, err)
+	})
+}
+
 // EscrowCreated renders funds committed to a new escrow and why it was created; the id is text like every other escrow id.
 func (j *Journal) EscrowCreated(escrowID, model, role, reason string, epoch uint64, txHash string) {
 	j.emitLine(KindEscrowTransition, func(lines logSink) {

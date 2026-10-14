@@ -1,8 +1,10 @@
 package user
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +14,8 @@ import (
 	devshardpkg "devshard"
 	"devshard/bridge"
 	"devshard/heightsync"
+	"devshard/host"
+	"devshard/logging"
 	"devshard/signing"
 	"devshard/state"
 	"devshard/storage"
@@ -82,6 +86,18 @@ func hostClientConfig(
 		}
 	}
 	return clientConfig
+}
+
+// ErrHostAbsentFromChain is every call to a group member the chain no longer lists.
+var ErrHostAbsentFromChain = errors.New("host is absent from the chain")
+
+// absentHostClient stands in for a group member the chain no longer lists, so the escrow keeps serving on the rest of its group.
+type absentHostClient struct {
+	address string
+}
+
+func (c absentHostClient) Send(context.Context, host.HostRequest, io.Writer, func(*host.HostResponse)) (*host.HostResponse, error) {
+	return nil, fmt.Errorf("host %s: %w", c.address, ErrHostAbsentFromChain)
 }
 
 func asHostClient(v any) HostClient {
@@ -245,6 +261,12 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 			continue
 		}
 		info, err := cfg.Bridge.GetHostInfo(slot.ValidatorAddress)
+		if errors.Is(err, bridge.ErrParticipantNotFound) {
+			logging.Warn("group member is absent from the chain; its slot fails every call", "subsystem", "session",
+				"escrow", cfg.EscrowID, "host", slot.ValidatorAddress)
+			clients[i] = absentHostClient{address: slot.ValidatorAddress}
+			continue
+		}
 		if err != nil {
 			closeHostClients(hostClientsFromCache(clientCache))
 			sqlStore.Close()

@@ -57,8 +57,9 @@ func (g *gateway) serve(ctx context.Context) error {
 
 // bootState carries out of the boot steps what serve blocks on once they have all run.
 type bootState struct {
-	republished <-chan struct{}
-	listening   chan error
+	unopenedEscrows int
+	republished     <-chan struct{}
+	listening       chan error
 }
 
 // bootStep is one step of the boot contract; the boot stops at the first one that fails. See operations.md, "Boot".
@@ -74,11 +75,15 @@ func (g *gateway) bootOrder(ctx, backgroundCtx context.Context, settings *config
 		{name: "warmup prober", start: func() error { g.warmup.Start(backgroundCtx); return nil }},
 		{name: "host pings", start: func() error { g.hostPings.Start(backgroundCtx); return nil }},
 		{name: "seed devshards", start: func() error { return seedDevshards(ctx, g.store, settings.Server.DevshardsJSON) }},
-		{name: "publish escrows", start: func() error { return g.publishEscrows(ctx) }},
+		{name: "publish escrows", start: func() error {
+			unopened, err := g.publishEscrows(ctx)
+			started.unopenedEscrows = unopened
+			return err
+		}},
 		{name: "nonce ledger", start: func() error { g.nonces.Start(backgroundCtx, g.escrows, g.events); return nil }},
 		{name: "escrow lifecycle", start: func() error { g.manager.Start(backgroundCtx); return nil }},
 		{name: "devshard write republish", start: func() error {
-			started.republished = g.republishOnDevshardWrites(backgroundCtx)
+			started.republished = g.republishOnDevshardWrites(backgroundCtx, started.unopenedEscrows)
 			return nil
 		}},
 		{name: "http listener", start: func() error {
