@@ -8,6 +8,7 @@ Which escrows exist right now, what each serves, and who its hosts are.
 - **Sessions** (`session.go`) — two kinds. A serving session has host clients and can dispatch; a read-only one rehydrates from local storage alone and can build a settlement but can neither serve nor finalize.
 - **Membership and capacity** (`membership.go`, `views.go`) — the participant set each escrow contributes to the capacity model, and the in-flight count routing scores by.
 - **Where the hosts are** (`views.go`, `HostDials`) — each live escrow's reachable addresses, deduplicated per address, so an observer such as [`hostping`](../hostping/README.md) reads the live set instead of keeping a mirror of it. A retired escrow contributes none.
+- **The chain's nonce cap** (`views.go`, `ShareChainMaxNonce`) — the composition root subscribes it to every chain snapshot, and it hands `max_nonce` to each published and draining session, so the shared session stops composing active work past `types.MaxActiveNonce` and keeps the rest for finalization. A session opened between two polls runs without it until the next one, behind routing's nonce ceiling ([`docs/routing.md`](../docs/routing.md)).
 - **Open records** (`open_records.go`) — each published escrow's `Pending`, `Started` and `Challenged` records for the escrow manager's funding planner, read through an index the entry keeps.
 - **Settlement handles** (`settlement.go`) — a retired escrow still resolves, because its committed nonces have no other settlement path.
 

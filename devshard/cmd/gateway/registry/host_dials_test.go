@@ -74,3 +74,35 @@ func TestAHostWithNoAddressIsNoTarget(t *testing.T) {
 		t.Fatalf("HostDials() = %+v, want none", got)
 	}
 }
+
+// Test flow:
+//  1. Add two escrows, then take a hold on one and retire it, so it drains instead of closing.
+//  2. Share the chain's max_nonce with the registry.
+//  3. Assert the published and the draining session both hold it: a draining session still votes timeouts, which must respect the hosts' cap too.
+func TestShareChainMaxNonceReachesPublishedAndDrainingSessions(t *testing.T) {
+	t.Parallel()
+	published, draining := newFakeSession("hostA"), newFakeSession("hostB")
+	registry := New(Deps{
+		ServingSessions: newSessions(map[string]*fakeSession{"1": published, "2": draining}).open,
+		Now:             fixedClock(),
+	})
+	mustAdd(t, registry, "1", "qwen")
+	mustAdd(t, registry, "2", "qwen")
+	_, release, acquired := registry.Acquire("2")
+	if !acquired {
+		t.Fatalf("Acquire(2) acquired = false, want true")
+	}
+	t.Cleanup(release)
+	if err := registry.Retire("2"); err != nil {
+		t.Fatalf("Retire(2) = %v", err)
+	}
+
+	registry.ShareChainMaxNonce(1_700)
+
+	if got := published.chainMaxNonce.Load(); got != 1_700 {
+		t.Fatalf("published session max_nonce = %d, want 1700", got)
+	}
+	if got := draining.chainMaxNonce.Load(); got != 1_700 {
+		t.Fatalf("draining session max_nonce = %d, want 1700", got)
+	}
+}

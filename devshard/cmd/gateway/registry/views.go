@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"math"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -188,6 +189,19 @@ func (r *Registry) Holds(escrowID string) uint64 {
 		return 0
 	}
 	return entry.holds.Load()
+}
+
+// ShareChainMaxNonce hands every published and draining session the chain's max_nonce. See README.md.
+func (r *Registry) ShareChainMaxNonce(maxNonce uint64) {
+	capped := uint32(min(maxNonce, math.MaxUint32))
+	for _, entry := range r.live.Load().ordered {
+		entry.session.SetChainMaxNonce(capped)
+	}
+	if draining := r.drainingView.Load(); draining != nil {
+		for _, entry := range *draining {
+			entry.session.SetChainMaxNonce(capped)
+		}
+	}
 }
 
 // HostDials is every address the live escrows can reach, once each. See README.md.

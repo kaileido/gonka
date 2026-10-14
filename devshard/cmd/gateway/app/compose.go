@@ -262,6 +262,7 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 	}
 	retention := newSessionRetention(storageDir, configuration.Server.SessionRetentionEpochs, gatewayStore, escrows)
 	observer.Subscribe(func(snapshot chain.PhaseSnapshot) { retention.observe(ctx, snapshot) })
+	observer.Subscribe(func(snapshot chain.PhaseSnapshot) { escrows.ShareChainMaxNonce(snapshot.MaxNonce) })
 	hostStaleness := func() time.Duration {
 		return time.Duration(configHolder.Load().Perf.HostStalenessSeconds) * time.Second
 	}

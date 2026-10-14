@@ -129,6 +129,7 @@ func TestAnUnusableValueIsIgnoredNotRefused(t *testing.T) {
 		"GATEWAY_MAX_CONCURRENT_REQUESTS":                  "lots",
 		"DEVSHARD_MAX_CONCURRENT_RUNTIME_BUILDS":           "0",
 		"DEVSHARD_SESSION_RETENTION_EPOCHS":                "-1",
+		"DEVSHARD_QUIET_SETTLE_DELAY":                      "soon",
 		"DEVSHARD_ENABLE_CONTENTION_PROFILES":              "maybe",
 	} {
 		t.Setenv(name, value)
@@ -157,6 +158,7 @@ func TestAnUnusableValueIsIgnoredNotRefused(t *testing.T) {
 		"MaxConcurrentRequests":               values.MaxConcurrentRequests != nil,
 		"MaxConcurrentRuntimeBuilds":          values.MaxConcurrentRuntimeBuilds != nil,
 		"SessionRetentionEpochs":              values.SessionRetentionEpochs != nil,
+		"HeightSyncQuietSettleDelayMS":        values.HeightSyncQuietSettleDelayMS != nil,
 		"ContentionProfiles":                  values.ContentionProfiles != nil,
 	} {
 		if isSet {

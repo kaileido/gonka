@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	commonchain "common/chain"
 	"golang.org/x/sync/errgroup"
@@ -386,6 +387,7 @@ func servingSessions(records devshardLookup, storageDir string, escrowBridge bri
 			DisableHeightSyncHeartbeat: !heightSettings.Heartbeat,
 			ExtraClientConfig:          peerRPCClientConfig(heights.BuildCourier(heightSettings, follower), adoption),
 			Heartbeat:                  governance.Heartbeat(),
+			QuietSettleDelay:           time.Duration(heightSettings.QuietSettleDelayMS) * time.Millisecond,
 		})
 		if err != nil {
 			return nil, err

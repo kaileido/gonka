@@ -99,10 +99,11 @@ func Defaults() Config {
 			HostStalenessSeconds:     3_600,
 		},
 		HeightSync: HeightSync{
-			Enabled:     true,
-			RequireSeed: true,
-			AnchorK:     10,
-			AnchorSlots: 1,
+			Enabled:            true,
+			RequireSeed:        true,
+			AnchorK:            10,
+			AnchorSlots:        1,
+			QuietSettleDelayMS: 300_000,
 		},
 		HostPing: HostPing{
 			IntervalMS:  15_000,

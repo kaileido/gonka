@@ -58,6 +58,7 @@ type fakeSession struct {
 	flushErr      error
 	flushCalls    atomic.Int64
 	closeErr      error
+	chainMaxNonce atomic.Uint32
 	closeCalls    atomic.Int64
 	onFlush       func()
 	prepare       func(user.ParamsForHost) (*user.PreparedInference, error)
@@ -1272,3 +1273,5 @@ func TestTheDrainingViewShrinksWhenAnEscrowFinishes(t *testing.T) {
 		t.Fatalf("draining view holds %d entries after both drained, want none", len(*view))
 	}
 }
+
+func (f *fakeSession) SetChainMaxNonce(maxNonce uint32) { f.chainMaxNonce.Store(maxNonce) }

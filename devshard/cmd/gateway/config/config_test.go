@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"devshard/user"
 )
 
 // Test flow:
@@ -85,6 +87,7 @@ func TestDefaultsMatchSpec(t *testing.T) {
 		{"Engine.MaxConcurrentTimeoutVotes", configuration.Engine.MaxConcurrentTimeoutVotes, int64(64)},
 		{"HeightSync.Enabled", configuration.HeightSync.Enabled, true},
 		{"HeightSync.RequireSeed", configuration.HeightSync.RequireSeed, true},
+		{"HeightSync.QuietSettleDelayMS", configuration.HeightSync.QuietSettleDelayMS, user.DefaultQuietSettleDelay.Milliseconds()},
 		{"NonceAccounting.RetentionEpochs", configuration.NonceAccounting.RetentionEpochs, int64(2)},
 		{"NonceAccounting.Port", configuration.NonceAccounting.Port, int64(9091)},
 	}
@@ -131,6 +134,7 @@ func TestValidateCatchesEveryRuleBreach(t *testing.T) {
 		{"port too high", func(c *Config) { c.Server.Port = 65536 }, "port"},
 		{"max_concurrent_runtime_builds too low", func(c *Config) { c.Server.MaxConcurrentRuntimeBuilds = 0 }, "max_concurrent_runtime_builds"},
 		{"session_retention_epochs negative", func(c *Config) { c.Server.SessionRetentionEpochs = -1 }, "session_retention_epochs"},
+		{"quiet_settle_delay_ms too low", func(c *Config) { c.HeightSync.QuietSettleDelayMS = 0 }, "quiet_settle_delay_ms"},
 		{"public_api not a url", func(c *Config) { c.Chain.PublicAPIBaseURL = "://not-a-url" }, "public_api"},
 		{"tx_fee_amount negative", func(c *Config) { c.Tx.FeeAmount = -1 }, "tx_fee_amount"},
 		{"tx_gas_limit too low", func(c *Config) { c.Tx.GasLimit = 0 }, "tx_gas_limit"},

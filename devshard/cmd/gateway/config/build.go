@@ -85,6 +85,7 @@ func Build(values env.Values, overrides Overrides) (*Config, error) {
 	overrideIfSet(&configuration.HeightSync.Heartbeat, values.HeightSyncHeartbeat)
 	overrideIfSet(&configuration.HeightSync.AnchorK, values.HeightSyncAnchorK)
 	overrideIfSet(&configuration.HeightSync.AnchorSlots, values.HeightSyncAnchorSlots)
+	overrideIfSet(&configuration.HeightSync.QuietSettleDelayMS, values.HeightSyncQuietSettleDelayMS)
 	overrideIfSet(&configuration.HostPing.Disabled, values.HostPingDisabled)
 	overrideIfSet(&configuration.HostPing.IntervalMS, values.HostPingIntervalMS)
 	overrideIfSet(&configuration.HostPing.TimeoutMS, values.HostPingTimeoutMS)

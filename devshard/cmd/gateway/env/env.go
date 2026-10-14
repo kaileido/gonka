@@ -92,12 +92,13 @@ type Values struct {
 	PerfMinAvailableHosts        *int64
 	PerfHostStalenessSeconds     *int64
 
-	HeightSyncEnabled     *bool
-	HeightSyncRequireSeed *bool
-	HeightSyncChainOracle *bool
-	HeightSyncHeartbeat   *bool
-	HeightSyncAnchorK     *int64
-	HeightSyncAnchorSlots *int64
+	HeightSyncEnabled            *bool
+	HeightSyncRequireSeed        *bool
+	HeightSyncChainOracle        *bool
+	HeightSyncHeartbeat          *bool
+	HeightSyncAnchorK            *int64
+	HeightSyncAnchorSlots        *int64
+	HeightSyncQuietSettleDelayMS *int64
 
 	HostPingDisabled    *bool
 	HostPingIntervalMS  *int64
@@ -355,6 +356,7 @@ func Load() (Values, error) {
 	readOnOnlySwitch("DEVSHARD_HEIGHTSYNC_HEARTBEAT", &values.HeightSyncHeartbeat)
 	readLenientInt("DEVSHARD_HEIGHTSYNC_K", 0, &values.HeightSyncAnchorK)
 	readLenientInt("DEVSHARD_HEIGHTSYNC_SLOTS", 0, &values.HeightSyncAnchorSlots)
+	readDurationAsMilliseconds("DEVSHARD_QUIET_SETTLE_DELAY", &values.HeightSyncQuietSettleDelayMS)
 	readLenientBool("DEVSHARD_GATEWAY_HOST_PING_DISABLED", &values.HostPingDisabled)
 	readDurationAsMilliseconds("DEVSHARD_GATEWAY_HOST_PING_INTERVAL", &values.HostPingIntervalMS)
 	readDurationAsMilliseconds("DEVSHARD_GATEWAY_HOST_PING_TIMEOUT", &values.HostPingTimeoutMS)

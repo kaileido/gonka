@@ -50,6 +50,9 @@ func (c *Config) Validate() error {
 	if c.Server.SessionRetentionEpochs < 0 {
 		complain("session_retention_epochs: %d must be >= 0", c.Server.SessionRetentionEpochs)
 	}
+	if c.HeightSync.QuietSettleDelayMS < 1 {
+		complain("quiet_settle_delay_ms: %d must be >= 1", c.HeightSync.QuietSettleDelayMS)
+	}
 	checkBaseURL := func(name, value string) {
 		parsed, err := url.Parse(value)
 		if err != nil || parsed.Scheme == "" || parsed.Host == "" {

@@ -1233,6 +1233,7 @@ func (s weightlessSession) SignatureStatus() ([]user.SignatureStatusEntry, uint6
 func (s weightlessSession) SignedSlots() map[uint64]types.Bitmap128 { return nil }
 func (s weightlessSession) SnapshotState() types.EscrowState        { return types.EscrowState{} }
 func (s weightlessSession) SealedInferences() int                   { return 0 }
+func (s weightlessSession) SetChainMaxNonce(uint32)                 {}
 func (s weightlessSession) Finalize(context.Context) error          { return nil }
 func (s weightlessSession) FlushSnapshot() error                    { return nil }
 func (s weightlessSession) Close() error                            { return nil }

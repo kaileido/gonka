@@ -62,6 +62,7 @@ type EscrowSession interface {
 	ProtocolVersion() string
 	LiveInferences() (types.SessionConfig, []types.InferenceRecord)
 	SealedInferences() int
+	SetChainMaxNonce(maxNonce uint32)
 	PendingTxs() []*types.DevshardTx
 	SendPendingDiff(ctx context.Context) error
 	Finalize(ctx context.Context) error

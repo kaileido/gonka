@@ -65,7 +65,7 @@ func (s *InferenceServer) Participant(_ context.Context, req *inferencetypes.Que
 	}
 	p := s.store.GetParticipant(req.GetIndex())
 	if p == nil {
-		return &inferencetypes.QueryGetParticipantResponse{}, nil
+		return nil, status.Error(codes.NotFound, "not found")
 	}
 	return &inferencetypes.QueryGetParticipantResponse{Participant: *p}, nil
 }

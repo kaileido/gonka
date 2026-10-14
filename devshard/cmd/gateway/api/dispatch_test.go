@@ -71,7 +71,7 @@ func newLiveSession(t *testing.T, hostClients ...user.HostClient) (*user.Session
 			aware.joinGroup(t, signers, machine)
 		}
 	}
-	session, err := user.NewSession(machine, creator, liveEscrowID, group, clients, verifier, user.WithStorage(store))
+	session, err := user.NewSession(machine, creator, liveEscrowID, group, clients, verifier, user.WithStorage(store), user.WithQuietSettleDelay(user.TestQuietSettleDelay))
 	if err != nil {
 		t.Fatalf("NewSession = %v, want nil", err)
 	}

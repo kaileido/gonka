@@ -162,12 +162,13 @@ type Perf struct {
 
 // HeightSync groups the escrow's height cadence. See ../docs/escrows.md, "Height sync".
 type HeightSync struct {
-	Enabled     bool
-	RequireSeed bool
-	ChainOracle bool
-	Heartbeat   bool
-	AnchorK     int64
-	AnchorSlots int64
+	Enabled            bool
+	RequireSeed        bool
+	ChainOracle        bool
+	Heartbeat          bool
+	AnchorK            int64
+	AnchorSlots        int64
+	QuietSettleDelayMS int64
 }
 
 // HostPing groups the probe of the live escrows' hosts. See ../hostping/README.md.
