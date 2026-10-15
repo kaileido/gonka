@@ -49,7 +49,7 @@ stateDiagram-v2
 
 ## The tick
 
-`escrow/manager.go`, `tick`, every **15 s** (`TickInterval`), single-threaded per process. Order matters, and the first eight steps run **whatever `rotation.enabled` says**:
+`escrow/manager.go`, `runTick`, every **15 s** (`TickInterval`), single-threaded per process apart from the settlement and the timeout sweep it starts off the tick. Order matters, and the first eight steps run **whatever `rotation.enabled` says**:
 
 | # | Step | Runs regardless of the toggle because |
 | --- | --- | --- |
@@ -57,8 +57,8 @@ stateDiagram-v2
 | 2 | `resolveChainFacts` | a money deadline reads the chain epoch, whatever rotation does; up to sixteen unresolved rows a tick |
 | 3 | `checkSettleMargin` | the margin the deadline rule uses is only worth what the measured block time says; the check narrates and never refuses, and runs first so a stale snapshot is projected with this tick's block time |
 | 4 | `parkAtDeadline` | an escrow whose chain settlement window is closing loses its whole amount unless something parks it (see "Settlement by deadline") |
-| 5 | `settlePending` | a parked escrow's row is the only record of its key; nothing else picks it up |
-| 6 | `markPrunedPastDeadline` | a row nothing will settle would hold its place in the unsettled count for good; it is marked gone once the chain pruned it, up to sixteen lookups a tick, after the deadline is narrated and settlement had its turn |
+| 5 | `settleOffTick` | a parked escrow's row is the only record of its key; nothing else picks it up. The order is chosen on the tick and the settling runs off it, one pass at a time, so a finalize that waits out a slow host holds no retirement or funding of any other escrow |
+| 6 | `markPrunedPastDeadline` | a row nothing will settle would hold its place in the unsettled count for good; it is marked gone once the chain pruned it, up to sixteen lookups a tick, after the deadline is narrated and settlement was started; one it overlaps is an escrow the chain already pruned, whose settlement fails as pruned anyway |
 | 7 | `checkMissing` | an escrow gone from chain must stop taking traffic |
 | 8 | `sweepTimeouts` | a nonce the chain still settles is owed a vote whether or not rotation is on |
 

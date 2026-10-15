@@ -1274,4 +1274,6 @@ func TestTheDrainingViewShrinksWhenAnEscrowFinishes(t *testing.T) {
 	}
 }
 
-func (f *fakeSession) SetChainMaxNonce(maxNonce uint32) { f.chainMaxNonce.Store(maxNonce) }
+func (f *fakeSession) SetChainMaxNonce(maxNonce uint32)                { f.chainMaxNonce.Store(maxNonce) }
+func (f *fakeSession) ArmQuietSettle()                                 {}
+func (f *fakeSession) AllInferences() map[uint64]types.InferenceRecord { return nil }

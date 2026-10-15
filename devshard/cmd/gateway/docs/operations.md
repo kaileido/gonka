@@ -21,6 +21,8 @@ The `/devshard/{id}/…` prefix pins a request to one escrow instead of letting 
 
 `POST /devshard/{id}/v1/debug/signatures/collect?nonce=N` asks the escrow's group again for its signatures at nonce `N`, which must not be ahead of the session's own, and answers `sig_weight`, `quorum_threshold`, `total_slots` and `has_quorum`. It reaches a live or draining escrow only: the signatures land in that session, which is the one a settlement builds its payload from; a settled or non-resident escrow answers 404. The call is written to the admin audit log.
 
+`/devshard/{id}/v1/debug/inferences` lists every record of the escrow, the sealed ones included: an escrow that settled has sealed all of them, and a live-only view reads as one that served nothing. Sealed records are read back from storage under the state's read lock, so on a large escrow it is a slow call; `/devshard/{id}/v1/debug/pending` reads the live records alone, since a sealed record is never unresolved.
+
 `/debug/pprof/` is the Go runtime profiler (`net/http/pprof`) behind the admin key: the index and every named profile (`goroutine`, `heap`, `allocs`, `mutex`, `block`, `threadcreate`), plus `cmdline`, `profile`, `symbol` and `trace`. It carries no route label, so profiling never shows in the request metrics. A binary profile is fetched with the admin header and read with `go tool pprof`, since the tool cannot send the header itself; `?debug=1` or `?debug=2` on a named profile answers plain text. `profile` and `trace` hold the request for their `seconds` and load the process while they run. `mutex` and `block` stay empty unless `DEVSHARD_ENABLE_CONTENTION_PROFILES` is on.
 
 `/v1/debug/memstats` reads the heap, stack and GC figures through `runtime/metrics` (`api/memory.go`, `readMemory`), which never stops the world, so polling it under load costs no pause; a runtime sample of an unexpected kind answers 500 rather than a zero.
@@ -106,7 +108,7 @@ Signing keys are addressed **by the name of the variable that holds them**, neve
 | `DEVSHARD_STATS_ENABLED` | false | the per-nonce ledger and its JSON API on `DEVSHARD_STATS_PORT` (9091) |
 | `DEVSHARD_STATS_RETENTION_EPOCHS` | 2 | how many epochs before the current one the nonce ledger keeps retired escrows; `0` keeps every epoch |
 | `GATEWAY_PERF_EWMA_HALFLIFE_SECONDS` | 600 | how fast a host's history forgets |
-| `GATEWAY_TIMEOUT_SWEEP_BUDGET_PER_TICK` | 8 | execution-timeout votes one tick may retry across every escrow; `0` turns the sweep off |
+| `GATEWAY_TIMEOUT_SWEEP_BUDGET_PER_TICK` | 8 | execution-timeout votes one tick may retry across every escrow, the most overdue first; `0` turns the sweep off |
 | `GATEWAY_TIMEOUT_SWEEP_GRACE_SECONDS` | 120 | how far past its deadline a nonce must be before the sweep claims it from its own race |
 | `DEVSHARD_POC_REQUEST_MODE` | relaxed | `relaxed` keeps serving through proof-of-compute; `off` refuses new requests while the chain blocks them |
 | `GATEWAY_HEIGHT_SYNC_ENABLED` | true | whether the escrow's heartbeat cadence runs. Turn it off for a fleet whose hosts do not carry height sync, or every interval logs a heartbeat it could not stamp ([`docs/escrows.md`](escrows.md), "Height sync") |

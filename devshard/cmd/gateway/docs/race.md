@@ -260,9 +260,9 @@ The vote above is attempted at the end of the race that owned the nonce, and an 
 
 The sweep is what claims it back. Every escrow tick scans its own live records for ones started and past their execution deadline by a grace, counted from the executor's stamp or, when it stamped none (`ConfirmedAt` not positive), from the start, and re-votes them through the same `HandleTimeout` (`state/started_deadline.go`, `user/timeout_sweep.go`, `registry/timeout_sweep.go`). Three properties keep it off the hot path:
 
-- **the scan is bounded by live records, not by traffic** — one pass under the read lock, no allocation when nothing is due (1.4 ms at 100 000 live records, 12 µs at 1 000);
-- **the votes are bounded by one budget per tick across every escrow** (8 by default, so at most 32 a minute), and the walk rotates its starting escrow, so the RPC it adds never follows the request rate and no escrow starves;
-- **the grace keeps it off a nonce whose own race is still due to wake and vote**, which is the ordinary case.
+- **the scan is bounded by live records, not by traffic** — one pass under the read lock that keeps only the budget's most overdue records, so it allocates nothing when nothing is due and two small slices otherwise (about 2.5 ms at 100 000 live records, 20 µs at 1 000);
+- **the votes are bounded by one budget per tick across every escrow** (8 by default, so at most 32 a minute: each asks every other host of the group for one `VerifyTimeout`, and a larger burst crowds out the chats of a host whose peer budget is already tight), the most overdue first within an escrow, and the walk rotates its starting escrow, so the RPC it adds never follows the request rate, no escrow starves and no record waits behind younger ones;
+- **the grace keeps it off a nonce whose own race is still due to wake and vote**, which is the ordinary case. A nonce a previous process committed waits out no grace: the restart took its race with it, so a recovered session sweeps it from its deadline on (`user/timeout_sweep.go`, `adoptRecoveredNonces`).
 
 A nonce the verifiers decline stays started, and the next sweep finds it again; nothing is retried faster than the budget allows.
 

@@ -85,6 +85,8 @@ func TestDefaultsMatchSpec(t *testing.T) {
 		{"Engine.MaxAttemptsPerRequest", configuration.Engine.MaxAttemptsPerRequest, int64(2)},
 		{"Engine.HedgeFirstTokenFloorMS", configuration.Engine.HedgeFirstTokenFloorMS, int64(1_500)},
 		{"Engine.MaxConcurrentTimeoutVotes", configuration.Engine.MaxConcurrentTimeoutVotes, int64(64)},
+		{"TimeoutSweep.BudgetPerTick", configuration.TimeoutSweep.BudgetPerTick, int64(8)},
+		{"TimeoutSweep.GraceSeconds", configuration.TimeoutSweep.GraceSeconds, int64(120)},
 		{"HeightSync.Enabled", configuration.HeightSync.Enabled, true},
 		{"HeightSync.RequireSeed", configuration.HeightSync.RequireSeed, true},
 		{"HeightSync.QuietSettleDelayMS", configuration.HeightSync.QuietSettleDelayMS, user.DefaultQuietSettleDelay.Milliseconds()},

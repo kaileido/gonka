@@ -57,6 +57,31 @@ func TestCutoffIsNarratedWhenItOpens(t *testing.T) {
 }
 
 // Test flow:
+//  1. Trip the breaker on a fixed clock with `AfterFailures` transport faults.
+//  2. Answer with three times as many transport faults while the cut-off is still open, as the attempts already in flight fail.
+//  3. Assert the host was cut off once, at backoff count 1 and for 5 seconds: faults behind an open cut-off neither reopen nor lengthen it.
+func TestFaultsWhileTheCutoffIsOpenNeitherReopenNorLengthenIt(t *testing.T) {
+	settings := testConfig()
+	settings.BaseOpen, settings.MaxOpen = 5*time.Second, time.Minute
+	limiter := NewParticipantLimiter(settings, fixedNow(testEpoch))
+	limiter.jitter = func(time.Duration) time.Duration { return 0 }
+	narrator := &recordingCutoffNarrator{}
+	limiter.SetNarrator(narrator)
+	for range int(limiter.cfg.AfterFailures) {
+		limiter.answered("participant-a", "model-a", TransportFault)
+	}
+
+	for range 3 * int(limiter.cfg.AfterFailures) {
+		limiter.answered("participant-a", "model-a", TransportFault)
+	}
+
+	require.Equal(t, []recordedCutoff{{
+		participant: "participant-a", model: "model-a", reason: "consecutive_transport_faults",
+		backoffCount: 1, cutOffFor: 5 * time.Second,
+	}}, narrator.cutoffs)
+}
+
+// Test flow:
 //  1. Trip the breaker with `TransportFault` answers, then force it half-open via `markHalfOpen`, before attaching a narrator.
 //  2. Attach a `recordingCutoffNarrator` and answer with `TransportFault` again.
 //  3. Assert the recorded cut-off's reason is "half_open_probe_failed", distinct from the earlier trip.

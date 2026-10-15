@@ -154,6 +154,8 @@ func (w *Prober) warm(escrowID, model string) {
 	if probeErr != nil {
 		w.settleUnfinishedProbe(ctx, escrowID, model, params, nonce, acknowledged)
 	}
+	// A fresh escrow may take no request for minutes, a reserve none at all, so nothing else would carry the probe's Finish.
+	session.ArmQuietSettle()
 
 	if w.narrator != nil {
 		w.narrator.EscrowWarmed(escrowID, model, nonce, probeErr == nil, catchUpErr)

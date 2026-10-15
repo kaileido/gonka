@@ -62,6 +62,7 @@ type Manager struct {
 	sweepRecorder  SweepRecorder
 	narrator       lifecycleNarrator
 	sweeping       atomic.Bool
+	settling       atomic.Bool
 	sweepWork      sync.WaitGroup
 	planner        fundingPlanner
 

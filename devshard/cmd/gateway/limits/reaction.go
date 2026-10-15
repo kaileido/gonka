@@ -128,6 +128,9 @@ func (l *ParticipantLimiter) applyBreakerLocked(state *hostState, effect breaker
 			l.narrator.HostCutOffLifted(participant, model, state.backoffCount)
 		}
 	case breakerCounts:
+		if now.Before(state.openUntil) {
+			return
+		}
 		state.consecutiveCutoffFaults++
 		if state.consecutiveCutoffFaults < int(l.cfg.AfterFailures) && !state.halfOpen {
 			return

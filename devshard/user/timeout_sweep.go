@@ -14,12 +14,17 @@ type SweepReport struct {
 	Failed  int
 }
 
+// adoptRecoveredNonces marks every nonce so far as a previous process's: none of them has a race left to wake in this one.
+func (s *Session) adoptRecoveredNonces() {
+	s.racesFromNonce = s.nonce + 1
+}
+
 // SweepExecutionTimeouts votes the execution timeouts no race is left to retry. The race that owned a
 // nonce votes once; a round that found no verifiers, or a restart that outlived the round, leaves the
 // nonce settleable and unclaimed until the escrow settles it at full reserve. Work is bounded by budget
 // and votes run one at a time, so the load this adds does not follow the request rate.
 func (s *Session) SweepExecutionTimeouts(ctx context.Context, grace time.Duration, budget int) SweepReport {
-	due := s.sm.StartedInferencesPastDeadline(time.Now(), TimeoutBuffer+grace, budget)
+	due := s.sm.StartedInferencesPastDeadline(time.Now(), TimeoutBuffer, grace, s.racesFromNonce, budget)
 	report := SweepReport{Due: len(due)}
 	for _, nonce := range due {
 		if ctx.Err() != nil {

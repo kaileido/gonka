@@ -378,6 +378,7 @@ type Session struct {
 	heightSeedStop             context.CancelFunc
 	heightSeedDoneCh           chan struct{}
 	heightSeedSweeps           sync.WaitGroup
+	racesFromNonce             uint64
 
 	lastContact   []time.Time
 	lastPeerSeen  map[uint32][]byte
@@ -3094,6 +3095,9 @@ func (s *Session) CollectSignatures(ctx context.Context, nonce uint64) (weight, 
 				if err := s.sendCatchUpWith(collectCtx, h.idx, finClients[h.idx]); err != nil {
 					logging.Warn("collect signatures: send catch-up error", "subsystem", "finalize", "escrow", s.escrowID,
 						"nonce", nonce, "host", h.idx, "attempt", attempt, "error", err)
+					if errors.Is(err, ErrHostAbsentFromChain) {
+						return
+					}
 				}
 
 				if s.hasQuorum(nonce, threshold) {

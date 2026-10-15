@@ -57,12 +57,14 @@ type EscrowSession interface {
 	SignedSlots() map[uint64]types.Bitmap128
 	SignatureStatus() (entries []user.SignatureStatusEntry, highestQuorum uint64, hasAny bool)
 	SnapshotState() types.EscrowState
+	AllInferences() map[uint64]types.InferenceRecord
 	Inference(id uint64) (types.InferenceRecord, bool)
 	SealedInference(id uint64) (types.InferenceRecord, bool)
 	ProtocolVersion() string
 	LiveInferences() (types.SessionConfig, []types.InferenceRecord)
 	SealedInferences() int
 	SetChainMaxNonce(maxNonce uint32)
+	ArmQuietSettle()
 	PendingTxs() []*types.DevshardTx
 	SendPendingDiff(ctx context.Context) error
 	Finalize(ctx context.Context) error
@@ -143,6 +145,11 @@ func (h sessionHandle) Inference(id uint64) (types.InferenceRecord, bool) {
 
 func (h sessionHandle) SealedInference(id uint64) (types.InferenceRecord, bool) {
 	return h.machine.LookupSealedInference(id)
+}
+
+// AllInferences reads sealed records back from storage beside the live ones, so it is for inspection, never the request path.
+func (h sessionHandle) AllInferences() map[uint64]types.InferenceRecord {
+	return h.machine.ExportAllInferenceRecords()
 }
 
 type hostDialer interface {

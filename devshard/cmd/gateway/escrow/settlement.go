@@ -32,6 +32,11 @@ const pendingSettleBudget = 4
 
 // settlePending drains escrows parked by retire or by depletion, earliest deadline first; a busy or failing escrow simply stays parked.
 func (m *Manager) settlePending(ctx context.Context, snapshot chain.PhaseSnapshot, devshards []store.DevshardRecord) error {
+	return m.settleParked(ctx, m.parkedToSettle(snapshot, devshards))
+}
+
+// parkedToSettle is the settlement order: the nearest deadline first, then the escrow id.
+func (m *Manager) parkedToSettle(snapshot chain.PhaseSnapshot, devshards []store.DevshardRecord) []pendingSettle {
 	policy := newSettlementPolicy(m.config.Load().Rotation)
 	var parked []pendingSettle
 	for _, record := range devshards {
@@ -46,6 +51,10 @@ func (m *Manager) settlePending(ctx context.Context, snapshot chain.PhaseSnapsho
 	slices.SortStableFunc(parked, func(left, right pendingSettle) int {
 		return cmp.Or(cmp.Compare(left.deadline.order(), right.deadline.order()), cmp.Compare(left.record.EscrowID, right.record.EscrowID))
 	})
+	return parked
+}
+
+func (m *Manager) settleParked(ctx context.Context, parked []pendingSettle) error {
 	var errs []error
 	attempted := 0
 	for _, pending := range parked {

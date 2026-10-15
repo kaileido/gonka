@@ -39,7 +39,7 @@ An escrow is funds on chain plus a group of hosts. This package creates one, kee
 2. `resolveChainFacts`: a money deadline reads the chain epoch whether or not rotation runs.
 3. `checkSettleMargin`: the margin the deadline rule uses is only worth what the measured block time says; it narrates and never refuses, and runs first so a stale snapshot is projected with this tick's block time.
 4. `parkAtDeadline`: an escrow whose chain epoch's settlement window is closing loses its whole amount if nothing parks it (see "Settlement by deadline").
-5. `settlePending`: a parked escrow's row is the only record of which key can settle it, so nothing else will ever pick it up.
+5. `settleOffTick`: a parked escrow's row is the only record of which key can settle it, so nothing else will ever pick it up.
 6. `markPrunedPastDeadline`: a row out of service that settlement will never pick up would hold its place in the unsettled count for good once the chain prunes it (see "Settlement by deadline").
 7. `checkMissing`: an escrow the chain no longer holds must stop taking traffic.
 8. `sweepTimeouts`: a nonce the chain will still settle is owed a vote whether or not rotation is on.
@@ -51,7 +51,7 @@ An escrow is funds on chain plus a group of hosts. This package creates one, kee
 
 Steps 1 to 8 run whatever the `Rotation.Enabled` toggle says, because each of them is about an escrow that already exists rather than about creating one; so do 9 to 11. `rotationModels` returns an empty set when rotation is off, so no caller downstream has to re-read the toggle.
 
-`sweepTimeouts` is the only step that does not run *on* the tick: a vote round can outlast 15 s, so it runs in its own goroutine, a second tick starts nothing while the first is still voting, and `Stop` waits for it as well as for the tick.
+`settleOffTick` and `sweepTimeouts` are the two steps that do not run *on* the tick. A finalize collects signatures from every host and waits out the slow ones, and a vote round can outlast 15 s as well; on the tick either would hold the retirements and funding of every other escrow, so a nonce-capped escrow would keep its place while a stranger finalizes. Each runs in its own goroutine, a second tick starts nothing while the first is still at it, and `Stop` waits for both as well as for the tick. The settlement order is chosen on the tick (`parkedToSettle`), and no goroutine starts when nothing is parked.
 
 The chain snapshot is pulled from the observer once per tick rather than subscribed to: at this cadence a poll is equivalent and it avoids callback races. The devshard rows are likewise loaded once, have their chain epoch and amount resolved where still missing (`resolveChainFacts`, see "Chain epochs and amounts"), and are passed down; the steps filter that one slice rather than reloading it, except `markSpent`, `drainPlannedMarks` and the bridge step, which read the slice `promoteTakenReserves` returns.
 

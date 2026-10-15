@@ -7,6 +7,7 @@ import (
 
 	"devshard/cmd/gateway/chain"
 	"devshard/cmd/gateway/config"
+	"devshard/cmd/gateway/store"
 )
 
 // TickInterval is how often the manager plans, settles and republishes. See README.md, "The tick".
@@ -117,6 +118,21 @@ func (m *Manager) Stop() {
 	m.sweepWork.Wait()
 }
 
+// settleOffTick runs off the tick for the sweep's reason: one finalize can outlast the tick interval, and the
+// retirements and funding of every other escrow must not wait on it. One pass at a time, so a slow one is not doubled.
+func (m *Manager) settleOffTick(ctx context.Context, snapshot chain.PhaseSnapshot, devshards []store.DevshardRecord) {
+	parked := m.parkedToSettle(snapshot, devshards)
+	if len(parked) == 0 || !m.settling.CompareAndSwap(false, true) {
+		return
+	}
+	m.sweepWork.Go(func() {
+		defer m.settling.Store(false)
+		if err := m.settleParked(ctx, parked); err != nil && m.narrator != nil {
+			m.narrator.EscrowTickFailed(err)
+		}
+	})
+}
+
 // sweepTimeouts runs off the tick rather than on it: one vote round can outlast the tick interval, and
 // a second sweep over the same escrows would double the load the budget exists to bound.
 func (m *Manager) sweepTimeouts(ctx context.Context) {
@@ -142,8 +158,11 @@ func (m *Manager) sweepTimeouts(ctx context.Context) {
 	})
 }
 
+// tick is one whole tick, the work it starts off the tick included, so a caller reads what the tick did.
 func (m *Manager) tick(ctx context.Context) error {
-	return m.tickWith(ctx, true)
+	err := m.tickWith(ctx, true)
+	m.sweepWork.Wait()
+	return err
 }
 
 func (m *Manager) tickWith(ctx context.Context, scheduled bool) error {
@@ -165,7 +184,7 @@ func (m *Manager) runLifecycle(ctx context.Context) error {
 	deadlineSnapshot := m.projectStale(snapshot)
 	devshards, deadlineErr := m.parkAtDeadline(ctx, deadlineSnapshot, devshards)
 	// Parked escrows must settle whatever the rotation toggle says: nothing else will ever pick them up.
-	pendingErr := m.settlePending(ctx, deadlineSnapshot, devshards)
+	m.settleOffTick(ctx, deadlineSnapshot, devshards)
 	devshards, prunedErr := m.markPrunedPastDeadline(ctx, snapshot, devshards)
 	// An escrow gone from chain must stop taking traffic whatever the rotation toggle says.
 	missingErr := m.checkMissing(ctx)
@@ -174,7 +193,7 @@ func (m *Manager) runLifecycle(ctx context.Context) error {
 	configuration := m.config.Load()
 	models, modelsErr := rotationModels(configuration.Rotation)
 	plannedErr := m.runPlannedLifecycle(ctx, snapshot, models, devshards, configuration.Rotation)
-	return errors.Join(reconcileErr, deadlineErr, pendingErr, prunedErr, missingErr, modelsErr, plannedErr)
+	return errors.Join(reconcileErr, deadlineErr, prunedErr, missingErr, modelsErr, plannedErr)
 }
 
 // rotationModels is empty when rotation is off, so no caller downstream has to re-read the toggle.

@@ -87,12 +87,25 @@ func (s *Server) handleDevshardDebugState(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, detail)
 }
 
+// handleDevshardDebugInferences lists sealed records too: a settled escrow has sealed every one, and the live view alone reads as an escrow that served nothing.
 func (s *Server) handleDevshardDebugInferences(w http.ResponseWriter, r *http.Request) {
-	s.writeInferences(w, r, func(types.InferenceStatus) bool { return true })
+	s.writeInferences(w, r, registry.EscrowSession.AllInferences, func(types.InferenceStatus) bool { return true })
 }
 
+// handleDevshardDebugPending reads the live records alone, since a sealed record is never unresolved and is read back from storage.
 func (s *Server) handleDevshardDebugPending(w http.ResponseWriter, r *http.Request) {
-	s.writeInferences(w, r, unresolved)
+	s.writeInferences(w, r, liveInferences, unresolved)
+}
+
+func liveInferences(session registry.EscrowSession) map[uint64]types.InferenceRecord {
+	live := session.SnapshotState().Inferences
+	records := make(map[uint64]types.InferenceRecord, len(live))
+	for nonce, record := range live {
+		if record != nil {
+			records[nonce] = *record
+		}
+	}
+	return records
 }
 
 func (s *Server) handleDevshardDebugSignatures(w http.ResponseWriter, r *http.Request) {
@@ -129,20 +142,20 @@ func signatureEntries(signed map[uint64]types.Bitmap128, status []user.Signature
 	return entries
 }
 
-func (s *Server) writeInferences(w http.ResponseWriter, r *http.Request, keep func(types.InferenceStatus) bool) {
+func (s *Server) writeInferences(w http.ResponseWriter, r *http.Request, read func(registry.EscrowSession) map[uint64]types.InferenceRecord, keep func(types.InferenceStatus) bool) {
 	session, escrowID, release, held := s.inspectable(w, r)
 	if !held {
 		return
 	}
 	defer release()
-	records := session.SnapshotState().Inferences
+	records := read(session)
 	entries := make([]inferenceEntry, 0, len(records))
 	for _, nonce := range slices.Sorted(maps.Keys(records)) {
 		record := records[nonce]
-		if record == nil || !keep(record.Status) {
+		if !keep(record.Status) {
 			continue
 		}
-		entries = append(entries, inferenceEntry{Nonce: nonce, Status: statusName(record.Status), Record: *record})
+		entries = append(entries, inferenceEntry{Nonce: nonce, Status: statusName(record.Status), Record: record})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"escrow_id": escrowID, "inferences": entries})
 }

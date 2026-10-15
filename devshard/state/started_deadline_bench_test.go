@@ -45,7 +45,7 @@ func BenchmarkStartedInferencesPastDeadline(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for range b.N {
-				_ = machine.StartedInferencesPastDeadline(now, 0, 8)
+				_ = machine.StartedInferencesPastDeadline(now, 0, 0, 0, 8)
 			}
 		})
 		b.Run(fmt.Sprintf("live=%d/due=all", live), func(b *testing.B) {
@@ -53,7 +53,7 @@ func BenchmarkStartedInferencesPastDeadline(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for range b.N {
-				_ = machine.StartedInferencesPastDeadline(now, 0, 8)
+				_ = machine.StartedInferencesPastDeadline(now, 0, 0, 0, 8)
 			}
 		})
 	}

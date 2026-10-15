@@ -129,6 +129,7 @@ func TestRecoverSession_HappyPath(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint64(numInferences), session.Nonce())
 	require.Len(t, session.Diffs(), numInferences)
+	require.Equal(t, uint64(numInferences+1), session.racesFromNonce, "every recovered nonce belongs to a previous process, so none has a race to wait for")
 
 	// Verify can send nonce 6.
 	ctx := context.Background()

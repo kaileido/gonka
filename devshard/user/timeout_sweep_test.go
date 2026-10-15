@@ -99,6 +99,21 @@ func TestSweepHonoursTheGraceBeforeClaimingANonce(t *testing.T) {
 	require.Equal(t, SweepReport{}, report)
 }
 
+// A nonce a previous process committed has no race left to wake in this one, so waiting out the grace only delays its vote.
+func TestSweepClaimsANonceFromBeforeTheRestartWithoutWaitingOutTheGrace(t *testing.T) {
+	session, hosts := setupSweepSession(t, true)
+	executionTimeout := time.Duration(session.sm.Config().ExecutionTimeout) * time.Second
+	nonce := startedNonce(t, session, hosts, time.Now().Add(-executionTimeout-time.Minute).Unix())
+	session.adoptRecoveredNonces()
+
+	report := session.SweepExecutionTimeouts(context.Background(), time.Hour, 4)
+
+	require.Equal(t, SweepReport{Due: 1, Applied: 1}, report)
+	record, tracked := session.sm.GetInference(nonce)
+	require.True(t, tracked)
+	require.Equal(t, types.StatusTimedOut, record.Status)
+}
+
 // A cancelled context stops the sweep where it stands: shutdown must not wait out a vote round.
 func TestSweepStopsOnACancelledContext(t *testing.T) {
 	session, hosts := setupSweepSession(t, true)

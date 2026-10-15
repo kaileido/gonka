@@ -13,6 +13,7 @@ import (
 	"devshard/cmd/gateway/internal/leakcheck"
 	"devshard/cmd/gateway/scheduler"
 	"devshard/cmd/gateway/store"
+	"devshard/signing"
 )
 
 type fakeSnapshotSource struct {
@@ -279,6 +280,44 @@ func TestStartStopConcurrentCallsAreRaceFree(t *testing.T) {
 	}
 	wg.Wait()
 	m.Stop()
+}
+
+// Test flow:
+//  1. Store a parked record whose settlement blocks until released, with settlement enabled.
+//  2. Run one lifecycle tick and assert it returns while the settlement is still in flight.
+//  3. Release the settlement, wait for the work the tick started, and assert the record was settled and dropped.
+func TestASlowSettlementDoesNotHoldTheTick(t *testing.T) {
+	testStore := newFakeStore()
+	record := parkedRecord("42")
+	testStore.devshards[record.EscrowID] = record
+	cfg := config.Defaults()
+	cfg.Rotation.SettlementEnabled = true
+	release := make(chan struct{})
+	txClient := &fakeTxClient{
+		settleEscrowFn: func(ctx context.Context, _ *signing.Secp256k1Signer, input chain.SettlementInput) (chain.SettleEscrowResult, error) {
+			<-release
+			return chain.SettleEscrowResult{EscrowID: input.EscrowID}, nil
+		},
+	}
+	m := mustManager(t, testManagerDeps(t, testStore, txClient, &fakeSnapshotSource{}, &cfg))
+
+	ticked := make(chan error, 1)
+	go func() { ticked <- m.tickWith(context.Background(), true) }()
+	select {
+	case <-ticked:
+	case <-time.After(5 * time.Second):
+		close(release)
+		t.Fatal("the tick waited on a settlement: a slow finalize holds retirement and funding for every other escrow")
+	}
+	close(release)
+	m.sweepWork.Wait()
+
+	testStore.mu.Lock()
+	_, survived := testStore.devshards[record.EscrowID]
+	testStore.mu.Unlock()
+	if survived {
+		t.Fatal("parked escrow survived its settlement; nothing else will ever settle it")
+	}
 }
 
 // Test flow:

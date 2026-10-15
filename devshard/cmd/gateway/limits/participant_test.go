@@ -670,9 +670,9 @@ func TestTransportFaultTripsAtExactThreshold(t *testing.T) {
 }
 
 // Test flow:
-//  1. Build a config with AfterFailures 1 (so every fault re-trips the cutoff), BaseOpen 1s, and MaxOpen 3s.
-//  2. Post one TransportFault verdict at a time, four times, following the backoff ladder base × 1.6^n (1s, 1.6s, 2.56s, then capped at the 3s MaxOpen).
-//  3. After each fault, assert the cutoff's openUntil matches the expected ladder value within tolerance.
+//  1. Build a config with AfterFailures 1, BaseOpen 1s, and MaxOpen 3s.
+//  2. Trip the cutoff four times, each after the previous one expired and left a half-open probe that failed, following the backoff ladder base × 1.6^n (1s, 1.6s, 2.56s, then capped at the 3s MaxOpen).
+//  3. After each trip, assert the cutoff's openUntil matches the expected ladder value within tolerance.
 func TestTransportFaultBackoffLadderGrowsThenCaps(t *testing.T) {
 	t.Parallel()
 	cfg := testConfig()
@@ -686,6 +686,9 @@ func TestTransportFaultBackoffLadderGrowsThenCaps(t *testing.T) {
 		3 * time.Second,
 	}
 	for i, wantBackoff := range want {
+		if i > 0 {
+			l.markHalfOpen("p", "m")
+		}
 		l.answered("p", "m", TransportFault)
 		got := l.states[key{participant: "p", model: "m"}].openUntil.Sub(testEpoch)
 		if !withinTolerance(got, wantBackoff) {
@@ -1197,7 +1200,7 @@ func TestReconfigureLeavesAWindowThatAlreadyGrewPastTheNewInitial(t *testing.T) 
 
 // Test flow:
 //  1. Build a config with AfterFailures 1, BaseOpen 1s, MaxOpen 3s, and a fixed jitter function of one fifth of the backoff.
-//  2. Post four TransportFault verdicts, one at a time, so the ladder saturates well before the fourth trip.
+//  2. Trip the cutoff four times, each after the previous one expired and its half-open probe failed, so the ladder saturates well before the fourth trip.
 //  3. Assert the resulting openUntil equals MaxOpen plus its jitter, showing jitter survives clamping at the ceiling.
 func TestSaturatedBackoffStillCarriesJitter(t *testing.T) {
 	t.Parallel()
@@ -1206,7 +1209,10 @@ func TestSaturatedBackoffStillCarriesJitter(t *testing.T) {
 	l := NewParticipantLimiter(cfg, fixedNow(testEpoch))
 	l.jitter = func(backoff time.Duration) time.Duration { return backoff / 5 }
 
-	for range 4 {
+	for trip := range 4 {
+		if trip > 0 {
+			l.markHalfOpen("p", "m")
+		}
 		l.answered("p", "m", TransportFault)
 	}
 

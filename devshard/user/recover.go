@@ -377,6 +377,7 @@ func restoreSignaturesFromStore(sess *Session, store storage.Storage, escrowID s
 }
 
 func finishRecover(sess *Session, sm *state.StateMachine, replayFrom uint64) (*Session, *state.StateMachine, error) {
+	sess.adoptRecoveredNonces()
 	if err := sm.RebuildSealedInferenceIndex(); err != nil {
 		return nil, nil, fmt.Errorf("rebuild sealed inference index: %w", err)
 	}

@@ -243,7 +243,14 @@ func TestTheWarmupStopsWithTheGateway(t *testing.T) {
 // stubSession implements only what the warmup reads; anything else panics.
 type stubSession struct {
 	registry.EscrowSession
-	nonce uint64
+	nonce          uint64
+	quietSettleArm *int
+}
+
+func (s stubSession) ArmQuietSettle() {
+	if s.quietSettleArm != nil {
+		*s.quietSettleArm++
+	}
 }
 
 func (s stubSession) Nonce() uint64 { return s.nonce }
@@ -285,6 +292,20 @@ func TestEveryHostLearnsTheEscrowAfterTheProbe(t *testing.T) {
 
 	if *caughtUp != 1 {
 		t.Errorf("catch-up ran %d times, want 1: without it a host the dispatch missed never holds the escrow", *caughtUp)
+	}
+}
+
+// Test flow:
+//  1. Warm an escrow whose probe succeeds, on a session that counts the quiet-settle arms.
+//  2. Assert the session's quiet settle was armed, so the probe's Finish settles even when no request ever follows it on this escrow.
+func TestTheProbeArmsTheQuietSettleSoItsFinishSettlesWithoutTraffic(t *testing.T) {
+	arms := 0
+	warmup, _, _ := newWarmupUnderTest(stubSession{quietSettleArm: &arms}, nil)
+
+	warmup.warm("escrow-1", "test-model")
+
+	if arms != 1 {
+		t.Errorf("quiet settle armed %d times, want 1: a reserve escrow takes no request, so its probe's Finish would stay pending until retirement", arms)
 	}
 }
 
