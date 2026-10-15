@@ -165,6 +165,17 @@ func (r *Registry) Acquire(escrowID string) (session EscrowSession, release func
 	return entry.session, r.holdLocked(entry), true
 }
 
+// AcquireCommitted resolves the escrow a committed nonce is bound to, published or draining, with a request hold: a rotation since the pick changes nothing the nonce owes. See rules.md, "4. Routing and settlement read the escrow set asymmetrically".
+func (r *Registry) AcquireCommitted(escrowID string) (session EscrowSession, release func(), ok bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	entry, known := r.settlementEntryLocked(escrowID)
+	if !known || entry.closeClaimed {
+		return nil, nil, false
+	}
+	return entry.session, r.holdLocked(entry), true
+}
+
 // holdFor is bound to the entry rather than its id. See routing.md, "Where the nonce, the slot and the hold are taken".
 func (r *Registry) holdFor(entry *escrowEntry) func() (func(), bool) {
 	return func() (func(), bool) {

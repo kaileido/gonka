@@ -26,7 +26,7 @@ type fixedEscrows struct {
 	releases atomic.Int64
 }
 
-func (f *fixedEscrows) Acquire(escrowID string) (registry.EscrowSession, func(), bool) {
+func (f *fixedEscrows) AcquireCommitted(escrowID string) (registry.EscrowSession, func(), bool) {
 	if f.retired {
 		return nil, nil, false
 	}

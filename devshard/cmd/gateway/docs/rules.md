@@ -57,9 +57,12 @@ Precedence is therefore explicit, never inherited from arm order: `nextDeadline`
 
 ```
 Routing      → published entries only
+Dispatch     → published, then draining, for a nonce the pick already committed
 Settlement   → published, then draining
 Status reads → published or draining, without counting
 ```
+
+Dispatch is the step between the two: the pick committed the nonce on a published escrow, and a rotation in the moment before the race resolves its target must not strand it, so the target is taken with a request hold on the published or the draining entry (`registry.AcquireCommitted`; `api/dispatch.go`, `Sessions.Target`). The assignment's own hold keeps that entry from closing until then.
 
 Routing must refuse a retired escrow. The nonces it already committed still owe votes, and the draining entry holds the storage those votes settle through. Unifying the two lookups — the obvious tidy-up — either dispatches into an escrow that is going away or strands the votes of one that already did.
 

@@ -327,7 +327,7 @@ func TestCrownStrikesDenyOnlyAfterRepeatedContentlessAnswers(t *testing.T) {
 }
 
 // Test flow:
-//  1. For each table case's race outcome (no attempt started, the winner breaking after streaming with and without a named reason, a host's own refusal, a trusted or suspicious context-length rejection competing with an earlier refusal, the crowned attempt's refusal outranking a rejection, an empty stream, an unexplained failure, hosts refusing as unavailable/throttled/mixed, one non-availability failure among unavailable ones, a trusted host error over an all-unavailable race), compute `outcome.failure()`.
+//  1. For each table case's race outcome (no attempt started, the winner breaking after streaming with and without a named reason, a host's own refusal, a trusted or suspicious context-length rejection competing with an earlier refusal, the crowned attempt's refusal outranking a rejection, an empty stream, every attempt taken by proof of compute, an unexplained failure, hosts refusing as unavailable/throttled/mixed, one non-availability failure among unavailable ones, a trusted host error over an all-unavailable race), compute `outcome.failure()`.
 //  2. Assert a `HostApplicationError` case matches by type and message, and any other case matches the expected sentinel via `errors.Is`.
 func TestOutcomeFailureNamesWhatTheClientLost(t *testing.T) {
 	t.Parallel()
@@ -442,6 +442,11 @@ func TestOutcomeFailureNamesWhatTheClientLost(t *testing.T) {
 			want:    ErrEmptyStream,
 		},
 		{
+			name:    "proof_of_compute_took_every_host_the_request_reached",
+			outcome: failedRace(phaseAbortedAttempt(failedAttempt(TerminalEmptyStream))),
+			want:    ErrPoCTookTheHosts,
+		},
+		{
 			name:    "nothing_upstream_explained_itself",
 			outcome: failedRace(failedAttempt(TerminalDialFailure)),
 			want:    ErrAllAttemptsFailed,
@@ -499,6 +504,11 @@ func TestOutcomeFailureNamesWhatTheClientLost(t *testing.T) {
 			}
 		})
 	}
+}
+
+func phaseAbortedAttempt(attempt AttemptOutcome) AttemptOutcome {
+	attempt.PhaseTransitionAborted = true
+	return attempt
 }
 
 func failedRace(attempt AttemptOutcome) RaceOutcome {

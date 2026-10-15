@@ -17,7 +17,8 @@ func (s *Scheduler) Pick(ctx context.Context, profile RequestProfile) (Assignmen
 	}
 
 	assignment, routedTo, err := s.pickPastEmptyEscrows(ctx, profile, nil)
-	if !errors.Is(err, ErrHostsBusy) {
+	reason, gaveUp := escrowGaveUp(err)
+	if !gaveUp {
 		return assignment, err
 	}
 
@@ -25,11 +26,22 @@ func (s *Scheduler) Pick(ctx context.Context, profile RequestProfile) (Assignmen
 		return Assignment{}, err
 	}
 
-	retried, _, retryErr := s.pickPastEmptyEscrows(ctx, profile, avoidedEscrows{routedTo: avoidedHostsBusy})
-	if retryErr == nil || outranksBusy(retryErr) {
+	retried, _, retryErr := s.pickPastEmptyEscrows(ctx, profile, avoidedEscrows{routedTo: reason})
+	if retryErr == nil || outranksBusy(retryErr) || reason == avoidedRetired {
 		return retried, retryErr
 	}
 	return Assignment{}, err
+}
+
+// escrowGaveUp names the two answers that mean "this escrow, right now": a busy group, and an escrow retired while the request waited in its queue, which an unpinned request never chose and spent no nonce on.
+func escrowGaveUp(err error) (avoidReason, bool) {
+	switch {
+	case errors.Is(err, ErrHostsBusy):
+		return avoidedHostsBusy, true
+	case errors.Is(err, ErrEscrowGone):
+		return avoidedRetired, true
+	}
+	return 0, false
 }
 
 // pickPastEmptyEscrows steps over every escrow that cannot pay for this request, so a caller hears "no balance" only once no escrow has any. See routing.md, "Past every escrow that cannot pay".

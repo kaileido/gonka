@@ -105,9 +105,18 @@ type recordingSession struct {
 	receipts int
 	applied  appliedReply
 
-	reply    *host.HostResponse
-	sendErr  error
-	applyErr error
+	caughtUp *user.PreparedInference
+
+	reply      *host.HostResponse
+	sendErr    error
+	applyErr   error
+	catchUpErr error
+}
+
+func (s *recordingSession) CatchUpBeforeSend(_ context.Context, prepared *user.PreparedInference) error {
+	s.calls = append(s.calls, "CatchUpBeforeSend")
+	s.caughtUp = prepared
+	return s.catchUpErr
 }
 
 func (s *recordingSession) SendOnly(_ context.Context, prepared *user.PreparedInference, stream io.Writer, onReceipt func()) (*host.HostResponse, error) {
@@ -179,6 +188,29 @@ func TestSendDispatchesThenAppliesTheReply(t *testing.T) {
 	}
 	if !response.Confirmed() {
 		t.Error("Confirmed() = false, want true for a reply carrying a ConfirmedAt")
+	}
+}
+
+// Test flow:
+//  1. Wrap a `recordingSession` whose catch-up fails in an `escrowTarget`.
+//  2. Catch up a real prepared nonce, then a nonce of a foreign type.
+//  3. Assert the session caught up the same prepared nonce and its error came back, and the foreign nonce was refused before reaching the session.
+func TestCatchUpHandsThePreparedNonceToTheSession(t *testing.T) {
+	t.Parallel()
+	session, _ := newLiveSession(t)
+	prepared := prepareNonce(t, session)
+	errCatchUp := errors.New("host refused the diffs")
+	recorded := &recordingSession{catchUpErr: errCatchUp}
+	target := escrowTarget{session: recorded}
+
+	err := target.CatchUp(context.Background(), prepared)
+	foreignErr := target.CatchUp(context.Background(), foreignNonce{})
+
+	if !errors.Is(err, errCatchUp) || recorded.caughtUp != prepared {
+		t.Fatalf("CatchUp = %v on %p, want the session's error on the prepared nonce %p", err, recorded.caughtUp, prepared)
+	}
+	if foreignErr == nil || len(recorded.calls) != 1 {
+		t.Fatalf("foreign nonce: err = %v, session calls = %v, want a refusal that never reached the session", foreignErr, recorded.calls)
 	}
 }
 
@@ -665,7 +697,7 @@ func TestAReleasedFinishSettlesOnAQuietEscrowWhileTheRaceStillOwesAVote(t *testi
 // heldEscrow is one live escrow that every race can take.
 type heldEscrow struct{ session registry.EscrowSession }
 
-func (h heldEscrow) Acquire(string) (registry.EscrowSession, func(), bool) {
+func (h heldEscrow) AcquireCommitted(string) (registry.EscrowSession, func(), bool) {
 	return h.session, func() {}, true
 }
 

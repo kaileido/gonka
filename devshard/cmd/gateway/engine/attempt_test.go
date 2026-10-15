@@ -73,6 +73,14 @@ type fakeDispatcher struct {
 	response Response
 	err      error
 	calls    int
+	catchUp  func() error
+}
+
+func (d *fakeDispatcher) CatchUp(context.Context, scheduler.Prepared) error {
+	if d.catchUp == nil {
+		return nil
+	}
+	return d.catchUp()
 }
 
 func (d *fakeDispatcher) Send(ctx context.Context, nonce scheduler.Prepared, stream io.Writer, onReceipt func()) (Response, error) {
@@ -525,6 +533,56 @@ func TestRunAttempt_ReleasesTheHostSlotOnEveryExitPath(t *testing.T) {
 				t.Fatalf("classifier releases = %d, want 1", classifier.releases)
 			}
 		})
+	}
+}
+
+// Test flow:
+//  1. Configure a dispatcher whose session catch-up reads the clock before the send.
+//  2. Run the attempt.
+//  3. Assert the Dispatched event and the outcome's send time come after the catch-up: the host's receipt deadline and the hedge are timed from when the request leaves, not from the session teaching it earlier nonces.
+func TestRunAttempt_TheHostsClockStartsAfterTheSessionsCatchUp(t *testing.T) {
+	t.Parallel()
+
+	dispatch := &fakeDispatcher{receipt: true, chunks: []string{"data: hello\n\n"}, response: fakeResponse{confirmed: true}}
+	fixture := newAttemptFixture(dispatch, &fakeClassifier{perChunk: []chunkFacts{contentFacts("delta.content")}})
+	var caughtUpAt time.Time
+	dispatch.catchUp = func() error {
+		caughtUpAt = fixture.spec.Now()
+		return nil
+	}
+
+	runAttempt(context.Background(), fixture.spec)
+	events := fixture.drain()
+
+	if caughtUpAt.IsZero() {
+		t.Fatal("the session was never asked to catch the host up")
+	}
+	if events[0].Kind != AttemptDispatched || !events[0].At.After(caughtUpAt) {
+		t.Fatalf("first event = %v at %v, want Dispatched after the catch-up at %v", events[0].Kind, events[0].At, caughtUpAt)
+	}
+	if sent := doneEvent(t, events).Outcome.SendTime; !sent.After(caughtUpAt) {
+		t.Fatalf("outcome send time = %v, want after the catch-up at %v", sent, caughtUpAt)
+	}
+}
+
+// Test flow:
+//  1. Configure a dispatcher whose session catch-up fails.
+//  2. Run the attempt.
+//  3. Assert the request was never sent and the attempt ends on the catch-up's error, classified as a send failure is.
+func TestRunAttempt_AFailedCatchUpEndsTheAttemptUnsent(t *testing.T) {
+	t.Parallel()
+
+	dispatch := &fakeDispatcher{catchUp: func() error { return errors.New("dial tcp: connection refused") }}
+	fixture := newAttemptFixture(dispatch, &fakeClassifier{})
+
+	runAttempt(context.Background(), fixture.spec)
+	outcome := doneEvent(t, fixture.drain()).Outcome
+
+	if dispatch.calls != 0 {
+		t.Fatalf("sends = %d, want none after a failed catch-up", dispatch.calls)
+	}
+	if outcome.Terminal != TerminalDialFailure {
+		t.Fatalf("terminal = %v, want %v", outcome.Terminal, TerminalDialFailure)
 	}
 }
 

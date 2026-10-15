@@ -21,6 +21,7 @@ const (
 	avoidedOutOfFunds avoidReason = iota + 1
 	avoidedHostsBusy
 	avoidedQueueFull
+	avoidedRetired
 )
 
 type avoidedEscrows map[string]avoidReason
@@ -134,7 +135,7 @@ func (s *Scheduler) rankCandidates(candidates []Escrow, ranking escrowRanking, r
 		}
 		result.admitted++
 		if reason, avoided := ranking.avoided[candidate.ID]; avoided {
-			if reason == avoidedHostsBusy || reason == avoidedQueueFull {
+			if reason == avoidedHostsBusy || reason == avoidedQueueFull || reason == avoidedRetired {
 				result.passedOverForHosts++
 			} else {
 				result.moneyDeclined = true

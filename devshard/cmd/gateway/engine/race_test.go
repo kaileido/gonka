@@ -127,6 +127,8 @@ func (t *scriptedTarget) script(nonce uint64) *hostScript {
 	return t.scripts[nonce]
 }
 
+func (t *scriptedTarget) CatchUp(context.Context, scheduler.Prepared) error { return nil }
+
 func (t *scriptedTarget) Send(ctx context.Context, nonce scheduler.Prepared, stream io.Writer, onReceipt func()) (Response, error) {
 	script := t.script(nonce.Nonce())
 	if script == nil {
@@ -1503,6 +1505,28 @@ func pausedCoordinatorForClient(clientCtx context.Context, fixture *raceFixture,
 
 func stalledFixtureCoordinator(policy EscalationPolicy, attempts ...*liveAttempt) *raceCoordinator {
 	return pausedCoordinator(newRaceFixture(policy, 1), 1, attempts...)
+}
+
+// Test flow:
+//  1. Start a paused coordinator with one running attempt, a speculative pick still waiting in the scheduler and another immediate pick owed.
+//  2. Crown the running attempt.
+//  3. Assert the waiting pick was cancelled and no further pick is owed: a nonce the scheduler hands over after the crown serves nobody, is stranded, and costs a refused-timeout vote against an honest host.
+func TestCrowningAWinnerGivesUpThePickStillWaiting(t *testing.T) {
+	fixture := newRaceFixture(refusalPolicy(), 2)
+	running := &liveAttempt{nonce: 100, participant: "host-0", sendTime: testEpoch, receiptTime: testEpoch, cancel: func() {}}
+	coordinator := pausedCoordinator(fixture, 3, running)
+	pickCancelled := false
+	coordinator.pickCancel = func() { pickCancelled = true }
+	coordinator.moreImmediate = 1
+
+	coordinator.crownWinner(running, "first_content")
+
+	if !pickCancelled {
+		t.Fatal("the waiting pick was not cancelled when the race crowned its winner")
+	}
+	if coordinator.moreImmediate != 0 {
+		t.Fatalf("immediate picks still owed = %d, want 0 once a winner is crowned", coordinator.moreImmediate)
+	}
 }
 
 // Test flow:

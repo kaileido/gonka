@@ -18,10 +18,17 @@ func (o RaceOutcome) failure() error {
 	if len(o.Attempts) > 0 && o.everyAttempt(refusedAsUnavailable) {
 		return ErrHostsUnavailable
 	}
+	if o.everyAttempt(endedByProofOfCompute) {
+		return ErrPoCTookTheHosts
+	}
 	if o.everyAttempt(AttemptOutcome.emptyStream) {
 		return ErrEmptyStream
 	}
 	return ErrAllAttemptsFailed
+}
+
+func endedByProofOfCompute(attempt AttemptOutcome) bool {
+	return attempt.PhaseTransitionAborted
 }
 
 func refusedAsUnavailable(attempt AttemptOutcome) bool {

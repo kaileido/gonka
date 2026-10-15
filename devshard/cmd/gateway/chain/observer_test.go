@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -191,6 +192,17 @@ func observerEpochPoCJSON(phase EpochPhase, pocStartHeight int64) string {
 		"latest_epoch": {"index": 7, "poc_start_block_height": %d},
 		"is_confirmation_poc_active": false
 	}`, string(phase), pocStartHeight)
+}
+
+// observerEpochBeforePoCJSON is an Inference epoch body whose next PoC starts at nextPoCStart.
+func observerEpochBeforePoCJSON(blockHeight, nextPoCStart int64) string {
+	return fmt.Sprintf(`{
+		"block_height": %d,
+		"phase": "Inference",
+		"latest_epoch": {"index": 7, "poc_start_block_height": 900},
+		"epoch_stages": {"next_poc_start": %d},
+		"is_confirmation_poc_active": false
+	}`, blockHeight, nextPoCStart)
 }
 
 // observerEpochConfirmationJSON is an Inference epoch body with an active confirmation-PoC event.
@@ -940,6 +952,35 @@ func TestPhaseObserver_ConfirmationGraceMissingSnapshotPreservesAll(t *testing.T
 	}
 	if want := map[string]float64{"gonka1abc": 100, "gonka1bcd": 40}; !reflect.DeepEqual(snapshot.CurrentWeights, want) {
 		t.Errorf("CurrentWeights = %v, want all-node %v", snapshot.CurrentWeights, want)
+	}
+}
+
+// Test flow:
+//  1. Configure an Inference epoch whose next PoC starts at 950, with two miners only one of which keeps a node through PoC, and no chain reader.
+//  2. Refresh at height 948, two blocks before the start, and again at 940.
+//  3. Assert at 948 only the preserved miner is left serving while requests are not marked blocked, and at 940 nothing is narrowed: a request sent in the last poll before PoC would land on a host already generating.
+func TestPhaseObserver_TheHostsPoCWillTakeStopServingTwoBlocksBeforeIt(t *testing.T) {
+	stub := newPhaseObserverStub()
+	server := httptest.NewServer(stub.handler())
+	defer server.Close()
+	stub.setParticipants(http.StatusOK, observerTwoMinerParticipantsJSON(server.URL))
+	observer := newPoCPhaseObserver(t, server, nil)
+
+	stub.setEpoch(http.StatusOK, observerEpochBeforePoCJSON(948, 950))
+	observer.refresh(context.Background())
+	imminent := observer.Snapshot()
+	stub.setEpoch(http.StatusOK, observerEpochBeforePoCJSON(940, 950))
+	observer.refresh(context.Background())
+	early := observer.Snapshot()
+
+	if want := []string{"gonka1bcd"}; !reflect.DeepEqual(imminent.Preserved, want) {
+		t.Errorf("Preserved two blocks before PoC = %v, want %v", imminent.Preserved, want)
+	}
+	if imminent.RequestsBlocked {
+		t.Error("RequestsBlocked two blocks before PoC = true, want false: only routing looks ahead, the chain phase is still Inference")
+	}
+	if slices.Equal(early.Preserved, []string{"gonka1bcd"}) {
+		t.Errorf("Preserved ten blocks before PoC = %v, want every miner still serving", early.Preserved)
 	}
 }
 

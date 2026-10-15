@@ -20,8 +20,9 @@ var ErrStateRootDivergence = errors.New("post state root divergence")
 // ErrLocalRootUnavailable is the gateway's own store failing to give a post state root; the host did nothing wrong.
 var ErrLocalRootUnavailable = errors.New("local post state root unavailable")
 
-// dispatcher is the engine's only route to a host; an adapter over devshard/user.Session satisfies it.
+// dispatcher is the engine's only route to a host; an adapter over devshard/user.Session satisfies it. CatchUp is the session's own wait before a send, so the host's clock starts after it. See race.md, "Deadlines".
 type dispatcher interface {
+	CatchUp(ctx context.Context, nonce scheduler.Prepared) error
 	Send(ctx context.Context, nonce scheduler.Prepared, stream io.Writer, onReceipt func()) (Response, error)
 }
 
@@ -157,17 +158,22 @@ func runAttempt(ctx context.Context, spec AttemptSpec) {
 	defer releaseSlot()
 
 	nonce := spec.Nonce.Nonce()
+	catchUpErr := spec.Dispatch.CatchUp(ctx, spec.Nonce)
 	state := &attemptState{sendTime: spec.Now()}
 	spec.emit(AttemptEvent{Kind: AttemptDispatched, Nonce: nonce, At: state.sendTime})
 
-	writer := &attemptWriter{spec: spec, state: state, nonce: nonce}
-	response, err := spec.Dispatch.Send(ctx, spec.Nonce, writer, func() {
-		if !state.receiptTime.IsZero() {
-			return
-		}
-		state.receiptTime = spec.Now()
-		spec.emit(AttemptEvent{Kind: AttemptReceipt, Nonce: nonce, At: state.receiptTime})
-	})
+	var response Response
+	err := catchUpErr
+	if catchUpErr == nil {
+		writer := &attemptWriter{spec: spec, state: state, nonce: nonce}
+		response, err = spec.Dispatch.Send(ctx, spec.Nonce, writer, func() {
+			if !state.receiptTime.IsZero() {
+				return
+			}
+			state.receiptTime = spec.Now()
+			spec.emit(AttemptEvent{Kind: AttemptReceipt, Nonce: nonce, At: state.receiptTime})
+		})
+	}
 
 	state.completed = spec.Now()
 	if response != nil {

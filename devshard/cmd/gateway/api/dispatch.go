@@ -18,7 +18,7 @@ import (
 
 // escrows is satisfied by *registry.Registry. See rules.md, "4. Routing and settlement read the escrow set asymmetrically".
 type escrows interface {
-	Acquire(escrowID string) (registry.EscrowSession, func(), bool)
+	AcquireCommitted(escrowID string) (registry.EscrowSession, func(), bool)
 	SettlementSession(escrowID string) (registry.EscrowSession, bool)
 }
 
@@ -27,9 +27,9 @@ type Sessions struct{ escrows escrows }
 
 func NewSessions(escrows escrows) Sessions { return Sessions{escrows: escrows} }
 
-// Target resolves one escrow per race, because an escrow can rotate out between the pick and the send.
+// Target resolves one escrow per race; it reaches a draining one too, because the pick already committed a nonce that a rotation since must not strand.
 func (s Sessions) Target(escrowID string) (engine.DispatchTarget, func(), bool) {
-	session, release, held := s.escrows.Acquire(escrowID)
+	session, release, held := s.escrows.AcquireCommitted(escrowID)
 	if !held {
 		return nil, nil, false
 	}
@@ -38,6 +38,7 @@ func (s Sessions) Target(escrowID string) (engine.DispatchTarget, func(), bool) 
 
 // dispatchSession is one escrow's session as a race spends it; *user.Session satisfies it.
 type dispatchSession interface {
+	CatchUpBeforeSend(ctx context.Context, prepared *user.PreparedInference) error
 	SendOnly(ctx context.Context, prepared *user.PreparedInference, stream io.Writer, onReceipt func()) (*host.HostResponse, error)
 	ProcessResponse(hostIdx int, reply *host.HostResponse, inferenceNonce uint64) error
 	BindReceivedStream(nonce uint64, received [][32]byte)
@@ -62,10 +63,26 @@ func (t escrowTarget) RewindHostCatchUp(hostIdx int, cause string) bool {
 }
 func (t escrowTarget) NonceFinished(nonce uint64) bool { return t.session.IsNonceFinished(nonce) }
 
-func (t escrowTarget) Send(ctx context.Context, nonce scheduler.Prepared, stream io.Writer, onReceipt func()) (engine.Response, error) {
+func (t escrowTarget) CatchUp(ctx context.Context, nonce scheduler.Prepared) error {
+	prepared, err := preparedInference(nonce)
+	if err != nil {
+		return err
+	}
+	return t.session.CatchUpBeforeSend(ctx, prepared)
+}
+
+func preparedInference(nonce scheduler.Prepared) (*user.PreparedInference, error) {
 	prepared, ok := nonce.(*user.PreparedInference)
 	if !ok {
 		return nil, fmt.Errorf("dispatch nonce is %T, want *user.PreparedInference", nonce)
+	}
+	return prepared, nil
+}
+
+func (t escrowTarget) Send(ctx context.Context, nonce scheduler.Prepared, stream io.Writer, onReceipt func()) (engine.Response, error) {
+	prepared, err := preparedInference(nonce)
+	if err != nil {
+		return nil, err
 	}
 	// stream is handed on unwrapped: the transport type-asserts http.Flusher on it to flush each SSE line.
 	reply, err := t.session.SendOnly(ctx, prepared, stream, onReceipt)

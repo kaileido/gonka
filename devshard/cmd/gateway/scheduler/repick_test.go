@@ -65,6 +65,40 @@ func TestARequestAnEscrowGivesUpOnIsOfferedToAnotherEscrow(t *testing.T) {
 	}
 }
 
+// retireUnderPick makes an escrow refuse every hold, as one retired after the pick routed a request to it does.
+func (h *schedulerHarness) retireUnderPick(t *testing.T, escrowID string) {
+	t.Helper()
+	candidates := h.escrows.byModel[modelA]
+	for index := range candidates {
+		if candidates[index].ID == escrowID {
+			candidates[index].Hold = func() (func(), bool) { return nil, false }
+			return
+		}
+	}
+	t.Fatalf("escrow %s is not a candidate", escrowID)
+}
+
+// Test flow:
+//  1. Build a `busyEscrowHarness` where `escrowA` outweighs `escrowB`, and retire `escrowA` under the pick.
+//  2. Pick an escrow for an unpinned request.
+//  3. Assert the request is served by `escrowB`: the escrow went away, the request did nothing wrong, and no nonce was spent on it.
+func TestARequestWhoseEscrowRetiresWhileItWaitsIsOfferedToAnotherEscrow(t *testing.T) {
+	test := busyEscrowHarness(t, escrowA, escrowB)
+	test.retireUnderPick(t, escrowA)
+
+	assignment, err := test.scheduler.Pick(context.Background(), RequestProfile{Model: modelA})
+
+	if err != nil {
+		t.Fatalf("Pick: %v, want the request carried to %s", err, escrowB)
+	}
+	if assignment.Escrow != escrowB {
+		t.Fatalf("assignment escrow = %q, want %q", assignment.Escrow, escrowB)
+	}
+	if !test.reached(t, escrowA) {
+		t.Fatal("the pick never reached the retiring escrow, so nothing was re-picked")
+	}
+}
+
 // Test flow:
 //  1. Build a `busyEscrowHarness` where `escrowA` outweighs `escrowB`, then fill `escrowA`'s whole group.
 //  2. Pick an escrow for a request.

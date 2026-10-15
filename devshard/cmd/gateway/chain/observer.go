@@ -199,7 +199,8 @@ func (o *PhaseObserver) refresh(ctx context.Context) {
 		return
 	}
 
-	preservation, preservedNodes, preservationErr := o.resolvePreservation(ctx, epoch, blocked, reason)
+	preservedEpoch, preservedBlocked, preservedReason := preservationEpoch(epoch, blocked, reason)
+	preservation, preservedNodes, preservationErr := o.resolvePreservation(ctx, preservedEpoch, preservedBlocked, preservedReason)
 	if preservationErr != nil {
 		// Non-fatal: the preserved-set view falls back to the legacy rule for this poll.
 		snapshot.LastError = joinSnapshotError(snapshot.LastError, fmt.Sprintf("fetch preserved snapshot: %v", preservationErr))

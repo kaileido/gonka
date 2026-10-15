@@ -154,6 +154,22 @@ func TestTheGatewaysOwnLimitAnswersTooManyRequests(t *testing.T) {
 }
 
 // Test flow:
+//  1. Write `engine.ErrPoCTookTheHosts` through `writeErrorFor` on a default-configured server.
+//  2. Assert the response is a retryable 503 with a Retry-After, not a 502: proof of compute took the hosts, nothing about the request failed.
+func TestARaceProofOfComputeEndedIsARetryableUnavailable(t *testing.T) {
+	recorder := httptest.NewRecorder()
+
+	newErrorsTestServer().writeErrorFor(recorder, engine.ErrPoCTookTheHosts)
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", recorder.Code)
+	}
+	if recorder.Header().Get("Retry-After") == "" {
+		t.Fatal("Retry-After is missing: a client has no hint when proof of compute lets the hosts go")
+	}
+}
+
+// Test flow:
 //  1. Write `engine.ErrHostsUnavailable` through `writeErrorFor` on a default-configured server.
 //  2. Assert the response status is 503.
 //  3. Assert Retry-After is "5", the default host cutoff base rounded up to seconds.

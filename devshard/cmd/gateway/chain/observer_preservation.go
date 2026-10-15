@@ -2,6 +2,22 @@ package chain
 
 import "context"
 
+// pocLeadBlocks is how far ahead of a PoC start routing narrows to the preserved nodes: a poll every 5 s and a block about as long leave the last poll before the start up to two blocks early.
+const pocLeadBlocks = 2
+
+// preservationEpoch narrows the serving set ahead of a PoC whose start height is known, so the last requests before it do not land on hosts already generating; the snapshot's blocked flag stays with the chain's phase.
+func preservationEpoch(epoch epochInfo, blocked bool, reason BlockReason) (epochInfo, bool, BlockReason) {
+	if blocked || epoch.NextPoCStartBlockHeight <= 0 || epoch.BlockHeight <= 0 {
+		return epoch, blocked, reason
+	}
+	if epoch.BlockHeight < epoch.NextPoCStartBlockHeight-pocLeadBlocks || epoch.BlockHeight >= epoch.NextPoCStartBlockHeight {
+		return epoch, blocked, reason
+	}
+	upcoming := epoch
+	upcoming.PoCStartBlockHeight = epoch.NextPoCStartBlockHeight
+	return upcoming, true, BlockReasonPoC
+}
+
 // resolvePreservation picks the node-preservation rule for this poll. See README.md, "Which nodes count as preserved".
 func (o *PhaseObserver) resolvePreservation(ctx context.Context, epoch epochInfo, blocked bool, reason BlockReason) (preservationMode, preservedSnapshotState, error) {
 	if !blocked && !epoch.IsConfirmationPoCActive {

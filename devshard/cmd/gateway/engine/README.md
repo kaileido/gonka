@@ -158,6 +158,7 @@ Facts the race observes about the escrow but must not act on travel in `Lifecycl
 - `ErrWinnerIncomplete` — the crowned attempt's bytes are already on the wire, so no other attempt's payload can be put in their place.
 - `ErrEmptyStream` — every attempt ended empty.
 - `ErrHostsUnavailable` — every attempt ended `TerminalUnavailable` or `TerminalThrottled`, and no host error ruled the answer: the shard had nothing wrong with the request, only nowhere to send it.
+- `ErrPoCTookTheHosts` — every attempt was ended by proof of compute starting on its host (`PhaseTransitionAborted`): it wraps `ErrHostsUnavailable`, so the client gets the same retryable 503 instead of the `ErrEmptyStream` 502 the empty streams would otherwise earn, and the log still names the cause.
 - `ErrAllAttemptsFailed` — nothing above applied.
 - `HostApplicationError` — an upstream refusal that is the response: the host answered, and the API writes its message, or its payload when it has no message, under the status `HTTPStatus` reads from its code or class, 502 when neither names one (`api/errors.go`, `writeErrorFor`). `hostError` prefers the crowned attempt's refusal, because a host chosen to answer is the one whose answer the client asked for, and after it a trusted host's refusal or rejection of the request that rules out a retry (race.md, "Escalation").
 - `StatusForError` maps a host application error to its own status, `ErrHostsUnavailable` to 503, and an upstream throttle or unavailability to 429.

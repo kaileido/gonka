@@ -106,3 +106,36 @@ func TestShareChainMaxNonceReachesPublishedAndDrainingSessions(t *testing.T) {
 		t.Fatalf("draining session max_nonce = %d, want 1700", got)
 	}
 }
+
+// Test flow:
+//  1. Add an escrow, take the hold an assignment takes when its nonce commits, and retire the escrow so it drains.
+//  2. Resolve the escrow the way dispatch does for that committed nonce.
+//  3. Assert routing no longer finds it but dispatch still does: a nonce committed before the retirement owes its send and its vote.
+func TestACommittedNonceStillReachesItsEscrowAfterItRetires(t *testing.T) {
+	t.Parallel()
+	registry := New(Deps{
+		ServingSessions: newSessions(map[string]*fakeSession{"1": newFakeSession("hostA")}).open,
+		Now:             fixedClock(),
+	})
+	mustAdd(t, registry, "1", "qwen")
+	_, assignmentHold, acquired := registry.Acquire("1")
+	if !acquired {
+		t.Fatalf("Acquire(1) acquired = false, want true")
+	}
+	t.Cleanup(assignmentHold)
+	if err := registry.Retire("1"); err != nil {
+		t.Fatalf("Retire(1) = %v", err)
+	}
+
+	_, routingRelease, routed := registry.Acquire("1")
+	session, release, committed := registry.AcquireCommitted("1")
+
+	if routed {
+		routingRelease()
+		t.Fatal("Acquire(1) found a retired escrow, want routing to refuse it")
+	}
+	if !committed || session == nil {
+		t.Fatal("AcquireCommitted(1) = not found, want the draining escrow its committed nonce owes a send to")
+	}
+	release()
+}

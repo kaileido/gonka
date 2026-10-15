@@ -30,11 +30,14 @@ func (s *Session) syncLaggingHostsLocked() {
 
 func (s *Session) syncLaggingHost(stop <-chan struct{}, hostIdx int) {
 	defer s.laggingSyncs.Done()
-	hostCatchUpLock := s.hostCatchUpLock(hostIdx)
-	if !hostCatchUpLock.TryLock() {
+	gate := s.hostCatchUpGate(hostIdx)
+	if !gate.TryLock() {
 		return
 	}
-	defer hostCatchUpLock.Unlock()
+	defer gate.Unlock()
+	if gate.refusal(s.clock()) != nil {
+		return
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() {
@@ -47,7 +50,9 @@ func (s *Session) syncLaggingHost(stop <-chan struct{}, hostIdx int) {
 	s.mu.Lock()
 	throughNonce := s.nonce
 	s.mu.Unlock()
-	if err := s.sendCatchUpThrough(ctx, hostIdx, s.getFinalizeClients()[hostIdx], throughNonce); err != nil {
+	err := s.sendCatchUpThrough(ctx, hostIdx, s.getFinalizeClients()[hostIdx], throughNonce)
+	gate.record(ctx, err, s.clock())
+	if err != nil {
 		logging.Debug("lagging host sync did not reach the host", "subsystem", "session",
 			"escrow", s.escrowID, "host", hostIdx, "through", throughNonce, "error", err)
 	}

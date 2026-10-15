@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"sync"
 	"sync/atomic"
@@ -22,6 +23,9 @@ var (
 	// ErrHostsUnavailable is a race whose every attempt was refused as overloaded, not answered badly. See README.md, "Errors the engine returns".
 	ErrHostsUnavailable = errors.New("every host refused the request as unavailable")
 )
+
+// ErrPoCTookTheHosts is a race whose every attempt proof of compute ended; the hosts are unavailable, so it answers as ErrHostsUnavailable does.
+var ErrPoCTookTheHosts = fmt.Errorf("%w: proof of compute started on every host the request reached", ErrHostsUnavailable)
 
 // crownDenialStrikes is how many content-free answers cost a host the crown. See race.md, "Crown denial".
 const crownDenialStrikes = 3

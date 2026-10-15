@@ -63,6 +63,10 @@ The anchor a snapshot must match is the confirmation-PoC trigger height or the e
 
 A chain that answers "no snapshot for this episode" is a different thing from one that could not be reached, and only the second is an error — a non-fatal one: the preserved-set view falls back to the legacy rule for that poll, and the failure is recorded in `LastError`.
 
+### The serving set narrows two blocks before a PoC
+
+The chain announces the next PoC's start height (`epoch_stages.next_poc_start`, the current PoC start plus one epoch length). From two blocks before it (`pocLeadBlocks`) the observer resolves the preserved set as if that PoC had begun, anchored at the coming start height (`preservationEpoch`): a poll every 5 s and a block about as long mean the last poll before the start can land up to two blocks early, and a request routed to a host on that poll would reach it already generating and come back empty. Only the serving set looks ahead. `RequestsBlocked`, `BlockReason` and `EpochPhase` stay with the chain's phase, so the planner, the capacity view, the race and the PoC mode keep reading the phase the chain is in. A confirmation PoC is triggered by an event, not a known height, so it is not anticipated; its grace period is the chain's own lead.
+
 ### PoC validation rejoins capable miners
 
 During PoC validation the preserved and current views are rebuilt by `mergePreservedWithValidationCapable`: preserved miners keep their current weight, and each excluded miner with validation-inference-capable nodes is added back with the summed weight of exactly those nodes, per model. The input state is not mutated. Capability is fail-closed, so a cold versions cache keeps the merge conservative rather than admitting miners it has not confirmed.

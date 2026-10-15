@@ -297,8 +297,8 @@ type Session struct {
 	// sigsTrimmedThrough is the highest nonce whose signatures may be missing
 	// from s.signatures. signaturesAtLocked reads those nonces from the store.
 	sigsTrimmedThrough uint64
-	// hostCatchUp holds one lock per host index for chunked catch-up.
-	hostCatchUp map[int]*sync.Mutex
+	// hostCatchUp holds one gate per host index for chunked catch-up.
+	hostCatchUp map[int]*catchUpGate
 
 	chainMaxNonce          atomic.Uint32
 	composingFinalizeRound bool
@@ -639,8 +639,13 @@ func (s *Session) diffsForHost(hostIdx int) []types.Diff {
 // for hostIdx: at most one catchUpChunkSize chunk from the host's cursor,
 // always reaching target. ok is false when the host is further behind than
 // one chunk; catchUpForSend then teaches it the earlier nonces first, outside
-// the lock. Caller must hold s.mu.
+// the lock. A cursor already past target, moved by another request's catch-up,
+// gets target's diff alone: the host signs a receipt only for a nonce its
+// request carries, and has applied the rest. Caller must hold s.mu.
 func (s *Session) inlineCatchUpLocked(hostIdx int, target uint64) (diffs []types.Diff, ok bool) {
+	if s.hostSyncNonce[hostIdx] >= target {
+		return s.diffRangeLocked(target, target), true
+	}
 	from := s.hostSyncNonce[hostIdx] + 1
 	if from+catchUpChunkSize <= target {
 		return nil, false
@@ -669,16 +674,21 @@ func (s *Session) chunkedCatchUpForSend(ctx context.Context, hostIdx int, target
 		return diffs, nil
 	}
 
-	hostMu := s.hostCatchUpLock(hostIdx)
-	hostMu.Lock()
-	defer hostMu.Unlock()
+	gate := s.hostCatchUpGate(hostIdx)
+	gate.Lock()
+	defer gate.Unlock()
 	s.mu.Lock()
 	diffs, ok = s.inlineCatchUpLocked(hostIdx, target)
 	s.mu.Unlock()
 	if ok {
 		return diffs, nil
 	}
-	if err := s.sendCatchUpThrough(ctx, hostIdx, s.getFinalizeClients()[hostIdx], target-1); err != nil {
+	if refusal := gate.refusal(s.clock()); refusal != nil {
+		return nil, refusal
+	}
+	err := s.sendCatchUpThrough(ctx, hostIdx, s.getFinalizeClients()[hostIdx], target-1)
+	gate.record(ctx, err, s.clock())
+	if err != nil {
 		return nil, err
 	}
 	s.mu.Lock()
@@ -689,21 +699,6 @@ func (s *Session) chunkedCatchUpForSend(ctx context.Context, hostIdx int, target
 			hostIdx, catchUpChunkSize, target, s.hostSyncNonce[hostIdx])
 	}
 	return diffs, nil
-}
-
-// hostCatchUpLock serializes chunked catch-up to one host.
-func (s *Session) hostCatchUpLock(hostIdx int) *sync.Mutex {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.hostCatchUp == nil {
-		s.hostCatchUp = make(map[int]*sync.Mutex)
-	}
-	mu, ok := s.hostCatchUp[hostIdx]
-	if !ok {
-		mu = &sync.Mutex{}
-		s.hostCatchUp[hostIdx] = mu
-	}
-	return mu
 }
 
 // maxRetainedDiffs caps the diffs a session with a store holds in memory.
@@ -1069,6 +1064,7 @@ type PreparedInference struct {
 	// farBehind marks a host more than one catch-up chunk behind. SendOnly
 	// builds its catch-up with catchUpForSend instead of using catchUp.
 	farBehind bool
+	caughtUp  bool
 	params    InferenceParams
 	isProbe   bool
 }
@@ -1674,20 +1670,35 @@ func (p *PreparedInference) Payload() *host.InferencePayload {
 	}
 }
 
+// CatchUpBeforeSend leaves p carrying at most one chunk of catch-up, teaching
+// a far-behind host the earlier nonces first. SendOnly runs it itself; a caller
+// that times the host from its send runs it before, since the wait is the
+// session's, not the host's. Later calls on the same p send nothing.
+func (s *Session) CatchUpBeforeSend(ctx context.Context, p *PreparedInference) error {
+	if p.caughtUp {
+		return nil
+	}
+	if p.farBehind {
+		catchUp, err := s.catchUpForSend(ctx, p.hostIdx, p.diff.Nonce)
+		if err != nil {
+			return fmt.Errorf("catch up host %d before nonce %d: %w", p.hostIdx, p.diff.Nonce, err)
+		}
+		p.catchUp = catchUp
+	} else {
+		p.catchUp = s.drainOversizedBacklog(ctx, p.hostIdx, s.clients[p.hostIdx], p.catchUp, p.diff.Nonce)
+	}
+	p.farBehind, p.caughtUp = false, true
+	return nil
+}
+
 // SendOnly sends a prepared inference to the host and returns the raw response
 // without processing it. Use ProcessResponse separately to apply the response
 // to session state. This split allows parallel network I/O with ordered processing.
 func (s *Session) SendOnly(ctx context.Context, p *PreparedInference, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
-	catchUp := p.catchUp
-	if p.farBehind {
-		var err error
-		catchUp, err = s.catchUpForSend(ctx, p.hostIdx, p.diff.Nonce)
-		if err != nil {
-			return nil, fmt.Errorf("catch up host %d before nonce %d: %w", p.hostIdx, p.diff.Nonce, err)
-		}
-	} else {
-		catchUp = s.drainOversizedBacklog(ctx, p.hostIdx, s.clients[p.hostIdx], catchUp, p.diff.Nonce)
+	if err := s.CatchUpBeforeSend(ctx, p); err != nil {
+		return nil, err
 	}
+	catchUp := p.catchUp
 	if payload := p.Payload(); payload != nil && !transport.InferenceRequestFits(len(payload.Prompt), catchUp) {
 		return nil, fmt.Errorf("escrow %s nonce %d: %w", s.escrowID, p.diff.Nonce, transport.ErrHostRequestTooLarge)
 	}
