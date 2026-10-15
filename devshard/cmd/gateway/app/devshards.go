@@ -399,6 +399,7 @@ func servingSessions(records devshardLookup, storageDir string, escrowBridge bri
 		}
 		sessionTimeouts := env.LoadE2E().SessionTimeouts
 		session, machine, err := user.NewHTTPSession(user.HTTPSessionConfig{
+			OpenAbsentHostsAsDeadSlots: true,
 			PrivateKeyHex:              keyHex,
 			EscrowID:                   escrowID,
 			Bridge:                     escrowBridge,

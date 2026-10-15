@@ -20,49 +20,41 @@ func (s *Session) syncLaggingHostsLocked() {
 			continue
 		}
 		s.laggingSyncAt[hostIdx] = s.nonce
-		if s.laggingSyncStop == nil {
-			s.laggingSyncStop = make(chan struct{})
+		if s.laggingSyncCtx == nil {
+			s.laggingSyncCtx, s.laggingSyncCancel = context.WithCancel(context.Background())
 		}
 		s.laggingSyncs.Add(1)
-		go s.syncLaggingHost(s.laggingSyncStop, hostIdx)
+		go s.syncLaggingHost(s.laggingSyncCtx, hostIdx)
 	}
 }
 
-func (s *Session) syncLaggingHost(stop <-chan struct{}, hostIdx int) {
+func (s *Session) syncLaggingHost(ctx context.Context, hostIdx int) {
 	defer s.laggingSyncs.Done()
-	gate := s.hostCatchUpGate(hostIdx)
-	if !gate.TryLock() {
+	hostMu := s.hostCatchUpLock(hostIdx)
+	if !hostMu.TryLock() {
 		return
 	}
-	defer gate.Unlock()
-	if gate.refusal(s.clock()) != nil {
+	defer hostMu.Unlock()
+	refusals := s.hostCatchUpRefusal(hostIdx)
+	if refusals.refusal(s.clock()) != nil {
 		return
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go func() {
-		select {
-		case <-stop:
-			cancel()
-		case <-ctx.Done():
-		}
-	}()
 	s.mu.Lock()
-	throughNonce := s.nonce
+	through := s.nonce
 	s.mu.Unlock()
-	err := s.sendCatchUpThrough(ctx, hostIdx, s.getFinalizeClients()[hostIdx], throughNonce)
-	gate.record(ctx, err, s.clock())
+	err := s.sendCatchUpThrough(ctx, hostIdx, s.getFinalizeClients()[hostIdx], through)
+	refusals.record(ctx, err, s.clock())
 	if err != nil {
 		logging.Debug("lagging host sync did not reach the host", "subsystem", "session",
-			"escrow", s.escrowID, "host", hostIdx, "through", throughNonce, "error", err)
+			"escrow", s.escrowID, "host", hostIdx, "through", through, "error", err)
 	}
 }
 
 func (s *Session) stopLaggingSync() {
 	s.mu.Lock()
 	s.laggingSyncClosed = true
-	if s.laggingSyncStop != nil {
-		close(s.laggingSyncStop)
+	if s.laggingSyncCancel != nil {
+		s.laggingSyncCancel()
 	}
 	s.mu.Unlock()
 	s.laggingSyncs.Wait()

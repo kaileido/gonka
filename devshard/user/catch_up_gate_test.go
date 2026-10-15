@@ -36,6 +36,14 @@ func (c *peerBudgetRefusingClient) sent() int {
 	return c.sends
 }
 
+// singleChunkAttempt stops a catch-up from resending a refused chunk in place, so a test counts the runs that reach the host.
+func singleChunkAttempt(t *testing.T) {
+	t.Helper()
+	attempts := catchUpChunkAttempts
+	catchUpChunkAttempts = 1
+	t.Cleanup(func() { catchUpChunkAttempts = attempts })
+}
+
 // Test flow:
 //  1. Compose more than one chunk of diffs and make host 0 refuse every request.
 //  2. Catch host 0 up for a send: it is refused.
@@ -49,6 +57,7 @@ func TestSession_ACatchUpTheHostRefusedWaitsOutItsBackoff(t *testing.T) {
 	session.clients[0] = refusing
 	now := time.Unix(1_800_000_000, 0)
 	session.clock = func() time.Time { return now }
+	singleChunkAttempt(t)
 
 	_, firstErr := session.catchUpForSend(context.Background(), 0, n)
 	sentAfterFirst := refusing.sent()
@@ -78,6 +87,7 @@ func TestSession_ACatchUpThatSucceedsClearsTheRefusal(t *testing.T) {
 	session.clients[0] = refusing
 	now := time.Unix(1_800_000_000, 0)
 	session.clock = func() time.Time { return now }
+	singleChunkAttempt(t)
 
 	_, refusedErr := session.catchUpForSend(context.Background(), 0, n)
 	session.clients[0] = accepting
@@ -86,5 +96,5 @@ func TestSession_ACatchUpThatSucceedsClearsTheRefusal(t *testing.T) {
 
 	require.ErrorIs(t, refusedErr, errPeerBudgetSpent)
 	require.NoError(t, acceptedErr)
-	require.NoError(t, session.hostCatchUpGate(0).refusal(now), "a catch-up the host accepted leaves no refusal behind")
+	require.NoError(t, session.hostCatchUpRefusal(0).refusal(now), "a catch-up the host accepted leaves no refusal behind")
 }

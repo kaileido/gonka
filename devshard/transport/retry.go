@@ -86,6 +86,22 @@ func IsEscrowLookupLimited(statusCode int, devshardError string) bool {
 // IsEscrowLookupLimitedError reports a refusal from a host whose unknown-escrow lookup budget is spent, over HTTP or Connect.
 func IsEscrowLookupLimitedError(err error) bool { return isEscrowLookupLimitedError(err) }
 
+// IsStorageBusy reports a host 503 storage_busy: the host could not persist
+// the request's diffs in time and applied none of them, so the same request
+// may be resent.
+func IsStorageBusy(err error) bool {
+	var status *UpstreamStatusError
+	if errors.As(err, &status) {
+		return status.StatusCode == http.StatusServiceUnavailable &&
+			strings.EqualFold(strings.TrimSpace(status.DevshardError), DevshardErrorStorageBusy)
+	}
+	var ce *connect.Error
+	if errors.As(err, &ce) && ce.Code() == connect.CodeUnavailable {
+		return strings.EqualFold(strings.TrimSpace(ce.Meta().Get(HeaderDevshardError)), DevshardErrorStorageBusy)
+	}
+	return false
+}
+
 func isEscrowLookupLimitedError(err error) bool {
 	var status *UpstreamStatusError
 	if errors.As(err, &status) {
