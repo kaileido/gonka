@@ -119,7 +119,7 @@ func TestPrepareInference_StartInferenceIsMandatory(t *testing.T) {
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
 
-	prepared, err := session.PrepareInference(params)
+	prepared, err := session.PrepareInference(context.Background(), params)
 	require.Error(t, err)
 	require.Nil(t, prepared)
 	require.ErrorContains(t, err, "mandatory start inference")
@@ -370,6 +370,17 @@ func TestUser_PendingTxDedup(t *testing.T) {
 	// Dedup should prevent growth.
 	require.Equal(t, countBefore, len(session.PendingTxs()),
 		"duplicate mempool txs should be deduplicated")
+}
+
+func TestStateSizesIncludesAppliedTxKeys(t *testing.T) {
+	session := &Session{
+		appliedTxKeys: map[string]struct{}{
+			"finish:1":     {},
+			"validation:2": {},
+		},
+	}
+
+	require.Equal(t, 2, session.StateSizes().AppliedTxKeys)
 }
 
 func TestPendingTxDedupKeys_HostProposedIdentity(t *testing.T) {
@@ -691,7 +702,7 @@ func TestProcessResponse_ForgedConfirmDoesNotShadowHonestConfirm(t *testing.T) {
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
-	prepared, err := session.PrepareInference(params)
+	prepared, err := session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	nonce := prepared.diff.Nonce
 	execIdx := int(nonce % uint64(len(session.clients)))
@@ -758,7 +769,7 @@ func TestProcessResponse_AppliedConfirmIsNotRequeued(t *testing.T) {
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
-	prepared, err := session.PrepareInference(params)
+	prepared, err := session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	nonce := prepared.diff.Nonce
 	execIdx := int(nonce % uint64(len(session.clients)))
@@ -808,7 +819,7 @@ func TestProcessResponse_DropsHostTxForUnknownInference(t *testing.T) {
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
-	prepared, err := session.PrepareInference(params)
+	prepared, err := session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	nonce := prepared.diff.Nonce
 
@@ -876,7 +887,7 @@ func TestProcessResponse_DropsFinishNotSignedByExecutor(t *testing.T) {
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
-	prepared, err := session.PrepareInference(params)
+	prepared, err := session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	nonce := prepared.diff.Nonce
 	execIdx := int(nonce % uint64(len(session.group)))
@@ -912,7 +923,7 @@ func TestHandleTimeout_RecoveryDropsInjectedStartAndUnsignedFinish(t *testing.T)
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
-	prepared, err := session.PrepareInference(params)
+	prepared, err := session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	nonce := prepared.diff.Nonce
 	execIdx := int(nonce % uint64(len(session.clients)))
@@ -2182,7 +2193,7 @@ func TestHandleTimeout_RefusedReject_PublishesConfirmStart(t *testing.T) {
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
-	prepared, err := session.PrepareInference(params)
+	prepared, err := session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 
 	payload := &host.InferencePayload{
@@ -2236,7 +2247,7 @@ func TestHandleTimeout_ExecutionTimeoutIgnoresConfirmStartRecovery(t *testing.T)
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
-	prepared, err := session.PrepareInference(params)
+	prepared, err := session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 
 	payload := &host.InferencePayload{
@@ -2290,7 +2301,7 @@ func TestHandleTimeout_ExecutionTimeoutPrefersPendingFinishOverTimeoutVotes(t *t
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
-	prepared, err := session.PrepareInference(params)
+	prepared, err := session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 
 	payload := &host.InferencePayload{
@@ -2363,7 +2374,7 @@ func TestHandleTimeout_UnapplicablePendingFinishStillVotes(t *testing.T) {
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
-	prepared, err := session.PrepareInference(params)
+	prepared, err := session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 
 	payload := &host.InferencePayload{
@@ -2453,7 +2464,7 @@ func TestHandleTimeout_RecoveredReceiptContinuesToExecutionTimeout(t *testing.T)
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
-	prepared, err := session.PrepareInference(params)
+	prepared, err := session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	nonce := prepared.diff.Nonce
 	rec, ok := session.StateMachine().Inference(nonce)
@@ -2490,7 +2501,7 @@ func TestHandleTimeout_PendingFinishClosesBeforeDeadline(t *testing.T) {
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
-	prepared, err := session.PrepareInference(params)
+	prepared, err := session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	nonce := prepared.diff.Nonce
 	rec, ok := session.StateMachine().Inference(nonce)
@@ -2532,7 +2543,7 @@ func TestHandleTimeout_WaitStopsWhenRecordCloses(t *testing.T) {
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
-	prepared, err := session.PrepareInference(params)
+	prepared, err := session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	nonce := prepared.diff.Nonce
 	rec, ok := session.StateMachine().Inference(nonce)
@@ -2589,7 +2600,7 @@ func TestHandleTimeout_RefusedReject_UnrelatedMempool(t *testing.T) {
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
-	prepared, err := session.PrepareInference(params)
+	prepared, err := session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 
 	payload := &host.InferencePayload{

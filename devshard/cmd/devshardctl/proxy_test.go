@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -300,14 +300,9 @@ func TestRaceWriterDefersSuspiciousWinnerUntilFallback(t *testing.T) {
 
 func TestRaceWriterLogsSuspiciousWinnerDeferredOncePerAttempt(t *testing.T) {
 	var logs bytes.Buffer
-	oldOutput := log.Writer()
-	oldFlags := log.Flags()
-	log.SetOutput(&logs)
-	log.SetFlags(0)
-	t.Cleanup(func() {
-		log.SetOutput(oldOutput)
-		log.SetFlags(oldFlags)
-	})
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
 
 	rec := httptest.NewRecorder()
 	ctx := context.Background()
@@ -540,6 +535,7 @@ type verifierClient struct {
 	group    []types.SlotAssignment
 	slotIdx  int
 	voteGate <-chan struct{}
+	failWith error
 }
 
 type delayedResultClient struct {
@@ -562,7 +558,7 @@ func (c *delayedResultClient) Send(ctx context.Context, req host.HostRequest, _ 
 	}
 }
 
-func (c *verifierClient) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff, _ host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+func (c *verifierClient) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, payload *host.InferencePayload, _ []types.Diff, _ host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
 	if c.voteGate != nil {
 		select {
 		case <-c.voteGate:
@@ -570,7 +566,10 @@ func (c *verifierClient) VerifyTimeout(ctx context.Context, inferenceID uint64, 
 			return false, nil, 0, nil, "", ctx.Err()
 		}
 	}
-	if !c.accept {
+	if c.failWith != nil {
+		return false, nil, 0, nil, "", c.failWith
+	}
+	if !c.accept || (reason == types.TimeoutReason_TIMEOUT_REASON_REFUSED && payload == nil) {
 		return false, nil, 0, nil, "", nil
 	}
 	voterSlot := c.group[c.slotIdx].SlotID
@@ -757,6 +756,10 @@ func setupTestProxyWithFeePerNonce(t *testing.T, numHosts int, engines []devshar
 
 	perf := NewPerfTracker(nil)
 	redundancy := NewRedundancy(session, perf, numHosts, "llama")
+	// Stop the race first. Close then cancels the quiet settle, which otherwise
+	// sends a leftover receipt after the test has returned and the client still
+	// asserts through t.
+	t.Cleanup(func() { _ = session.Close() })
 	t.Cleanup(redundancy.Stop)
 
 	p := &Proxy{
@@ -801,6 +804,10 @@ func setupTestProxyWithClients(t *testing.T, clients []user.HostClient) *testPro
 
 	perf := NewPerfTracker(nil)
 	redundancy := NewRedundancy(session, perf, numHosts, "llama")
+	// Stop the race first. Close then cancels the quiet settle, which otherwise
+	// sends a leftover receipt after the test has returned and the client still
+	// asserts through t.
+	t.Cleanup(func() { _ = session.Close() })
 	t.Cleanup(redundancy.Stop)
 
 	p := &Proxy{
@@ -1230,6 +1237,7 @@ func TestRecordWinnerTerminalFailureRecordsOnlyRecordedStall(t *testing.T) {
 		hostIdx:  0,
 		nonce:    7,
 		sendTime: time.Now().Add(-time.Second),
+		done:     make(chan struct{}), // open: stall recording only runs while SendOnly is live
 	}
 	inf.contentChunks.Store(1)
 	inf.lastChunkAt.Store(lastChunkAt.UnixNano())
@@ -1347,6 +1355,7 @@ func TestStalledWinnerQuarantineRequiresParticipantFailureThreshold(t *testing.T
 		hostIdx:  0,
 		nonce:    1,
 		sendTime: time.Now().Add(-time.Second),
+		done:     make(chan struct{}),
 	}
 	first.setReceiptAt(time.Now().Add(-900 * time.Millisecond))
 	first.setFirstTokenAt(time.Now().Add(-800 * time.Millisecond))
@@ -1358,6 +1367,7 @@ func TestStalledWinnerQuarantineRequiresParticipantFailureThreshold(t *testing.T
 		hostIdx:  0,
 		nonce:    2,
 		sendTime: time.Now().Add(-time.Second),
+		done:     make(chan struct{}),
 	}
 	second.setReceiptAt(time.Now().Add(-900 * time.Millisecond))
 	second.setFirstTokenAt(time.Now().Add(-800 * time.Millisecond))
@@ -1616,7 +1626,7 @@ func TestRecordStartedAttemptSamplesDoesNotCountEmptyStreamDuringRelaxedPoC(t *t
 
 func TestEmptyStreamWithoutWinnerSkipsTimeoutVoteOnlyWhenFinished(t *testing.T) {
 	env := setupTestProxyWithClients(t, []user.HostClient{streamContentThenStallClient{}})
-	prepared, err := env.session.PrepareInference(defaultParams())
+	prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 	require.NoError(t, err)
 
 	inf := &inflight{
@@ -1650,7 +1660,7 @@ func TestAFailedRequestReturnsBeforeItsTimeoutVoteAndStillVotes(t *testing.T) {
 	cleanupFinished := raceCleanupFinished(env.proxy.redundancy)
 	params := defaultParams()
 	params.StartedAt = time.Now().Add(-10 * time.Second).Unix()
-	prepared, err := env.session.PrepareInference(params)
+	prepared, err := env.session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 
 	body := []byte(modelNotFoundErrorEvent + "data: [DONE]\n\n")
@@ -1691,7 +1701,11 @@ func TestAFailedRequestReturnsBeforeItsTimeoutVoteAndStillVotes(t *testing.T) {
 
 	releaseVote()
 	requireClosedWithin(t, cleanupFinished, "the background cleanup never finished")
-	require.Equal(t, types.StatusTimedOut, env.sm.SnapshotState().Inferences[prepared.Nonce()].Status, "the open nonce never reached a timeout vote")
+	// Protocol timeout votes sleep/vote off the outer barrier; TimedOut can land
+	// after the outer cleanup Done once the vote gate opens.
+	require.Eventually(t, func() bool {
+		return env.sm.SnapshotState().Inferences[prepared.Nonce()].Status == types.StatusTimedOut
+	}, testWaitLimit, 20*time.Millisecond, "the open nonce never reached a timeout vote")
 }
 
 func TestRunInference_ErrorStreamRetriesInsteadOfWinning(t *testing.T) {
@@ -1812,7 +1826,10 @@ func TestRunInference_AContextLengthRejectedHostStillGetsItsTimeoutVote(t *testi
 	var hostErr *hostApplicationError
 	require.ErrorAs(t, err, &hostErr)
 	requireClosedWithin(t, cleanupFinished, "the background cleanup never finished")
-	require.Equal(t, uint32(1), missesForSlot(t, env, 1), "the host that rejected the prompt still owes its nonce a timeout vote")
+	// Not-yet-due timeout votes sleep off the drain barrier and apply at the
+	// protocol deadline, so Missed can land after the outer cleanup Done.
+	require.Eventually(t, func() bool { return missesForSlot(t, env, 1) >= 1 }, 3*time.Second, 20*time.Millisecond,
+		"the host that rejected the prompt still owes its nonce a timeout vote")
 }
 
 func TestRunInference_CancelStillSettlesStartedAttempt(t *testing.T) {
@@ -2415,6 +2432,7 @@ func TestRunInference_ReceiptTimeoutEscalatesEvenWhenSendTimeRaces(t *testing.T)
 	require.NoError(t, err)
 	perf := NewPerfTracker(nil)
 	redundancy := NewRedundancy(session, perf, numHosts, "llama")
+	t.Cleanup(func() { _ = session.Close() })
 	t.Cleanup(redundancy.Stop)
 
 	var buf bytes.Buffer
@@ -2601,7 +2619,7 @@ func TestWinnerServedWithoutFinishKeepsTheAnswerAndStillVotes(t *testing.T) {
 	env := setupTestProxy(t, 3, nil, true)
 	params := defaultParams()
 	params.StartedAt = time.Now().Add(-10 * time.Second).Unix()
-	prepared, err := env.session.PrepareInference(params)
+	prepared, err := env.session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 
 	inf := &inflight{

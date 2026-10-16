@@ -141,7 +141,7 @@ func (v *Validator) Validate(ctx context.Context, req devshardpkg.ValidateReques
 		return nil, observability.Classify(observability.ReasonOriginalParseErr, observability.WhereRuntimeValidate, fmt.Errorf("parse original response: %w", err))
 	}
 
-	result, err := commonvalidation.ExecuteValidation(
+	result, err := commonvalidation.ExecuteValidationWithPolicy(
 		ctx,
 		inferenceID,
 		promptPayload,
@@ -152,6 +152,7 @@ func (v *Validator) Validate(ctx context.Context, req devshardpkg.ValidateReques
 		req.InputTokens, req.OutputTokens,
 		v.chainParams.LogprobsMode(),
 		v.vocabularySizes.Resolve(ctx, epochID, req.Model),
+		commonvalidation.DefaultShortOutputScoringPolicy.ForModel(req.Model),
 	)
 	if err != nil {
 		return nil, classifyExecuteValidationErr(err)
@@ -375,6 +376,7 @@ type LeaseValidator struct {
 	owner     storage.LeaseOwner
 	leaseTTL  time.Duration
 	acquires  sync.Map // acquireKey -> acquireRec
+	results   validationResultCache
 }
 
 type acquireRec struct {
@@ -432,12 +434,16 @@ func (c *LeaseValidator) Validate(ctx context.Context, req devshardpkg.ValidateR
 	}
 	c.rememberAcquire(req.EscrowID, req.InferenceID, epochID, time.Now())
 
+	if valid, reason, ok := c.results.get(req.EscrowID, req.InferenceID); ok {
+		return &devshardpkg.ValidateResult{Valid: valid, Reason: reason}, nil
+	}
+
 	result, err := c.validator.Validate(ctx, req)
 	if err != nil {
 		c.releaseAndForget(ctx, req.EscrowID, req.InferenceID, epochID)
 		return nil, err
 	}
-
+	c.results.put(req.EscrowID, req.InferenceID, result)
 	return result, nil
 }
 

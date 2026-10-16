@@ -2,6 +2,7 @@ package transport
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"devshard/gossip"
 	"devshard/heightsync"
 	"devshard/host"
+	"devshard/observability"
 	"devshard/signing"
 	"devshard/transport/rpcpb"
 	"devshard/transport/rpcpb/rpcpbconnect"
@@ -181,7 +183,7 @@ func (c *RPCClient) WithoutAdmission() any {
 	return &out
 }
 
-func tokenRequest[T any](c *RPCClient, msg *T) (*connect.Request[T], error) {
+func tokenRequest[T any](ctx context.Context, c *RPCClient, msg *T) (*connect.Request[T], error) {
 	if c.conn == nil || !c.conn.Ready() {
 		return nil, ErrPeerNotReady
 	}
@@ -191,6 +193,10 @@ func tokenRequest[T any](c *RPCClient, msg *T) (*connect.Request[T], error) {
 	}
 	req := connect.NewRequest(msg)
 	SetSessionHeader(req.Header(), tok)
+	// W3C traceparent + X-Request-Id so versiond EchoMiddleware joins the
+	// gateway span. Connect/gRPC carries these as HTTP/2 headers through the
+	// router; without them the host opens a new root trace.
+	observability.InjectOutboundHeaders(ctx, req.Header())
 	return req, nil
 }
 
@@ -395,7 +401,7 @@ func (c *RPCClient) GetSignatures(ctx context.Context, nonce uint64) (map[uint32
 	defer cancel()
 	var out map[uint32][]byte
 	err := c.rpcAttempt(ctx, rpcpbconnect.SessionServiceGetSignaturesProcedure, func() error {
-		req, err := tokenRequest(c, &rpcpb.GetSignaturesRequest{Nonce: nonce})
+		req, err := tokenRequest(ctx, c, &rpcpb.GetSignaturesRequest{Nonce: nonce})
 		if err != nil {
 			return err
 		}
@@ -423,7 +429,7 @@ func (c *RPCClient) GetDiffs(ctx context.Context, from, to uint64) ([]types.Diff
 	defer cancel()
 	var diffs []types.Diff
 	err := c.rpcAttempt(ctx, rpcpbconnect.SessionServiceGetDiffsProcedure, func() error {
-		req, err := tokenRequest(c, &rpcpb.GetDiffsRequest{From: from, To: to})
+		req, err := tokenRequest(ctx, c, &rpcpb.GetDiffsRequest{From: from, To: to})
 		if err != nil {
 			return err
 		}
@@ -464,7 +470,7 @@ func (c *RPCClient) SessionHead(ctx context.Context) (uint64, []byte, error) {
 	var nonce uint64
 	var root []byte
 	err := c.rpcAttempt(ctx, rpcpbconnect.SessionServiceGetStateProcedure, func() error {
-		req, err := tokenRequest(c, &rpcpb.GetStateRequest{})
+		req, err := tokenRequest(ctx, c, &rpcpb.GetStateRequest{})
 		if err != nil {
 			return err
 		}
@@ -490,7 +496,7 @@ func (c *RPCClient) GetMempool(ctx context.Context) ([]*types.DevshardTx, error)
 	defer cancel()
 	var txs []*types.DevshardTx
 	err := c.rpcAttempt(ctx, rpcpbconnect.SessionServiceGetMempoolProcedure, func() error {
-		req, err := tokenRequest(c, &rpcpb.GetMempoolRequest{})
+		req, err := tokenRequest(ctx, c, &rpcpb.GetMempoolRequest{})
 		if err != nil {
 			return err
 		}
@@ -556,7 +562,7 @@ func (c *RPCClient) gossipSigned(ctx context.Context, timeout time.Duration, pro
 		if err != nil {
 			return err
 		}
-		req, err := tokenRequest(c, env)
+		req, err := tokenRequest(ctx, c, env)
 		if err != nil {
 			return err
 		}
@@ -591,7 +597,7 @@ func (c *RPCClient) SeedHeightSync(ctx context.Context) (ok bool, err error) {
 		if err != nil {
 			return err
 		}
-		req, err := tokenRequest(c, env)
+		req, err := tokenRequest(ctx, c, env)
 		if err != nil {
 			return err
 		}
@@ -639,7 +645,7 @@ func (c *RPCClient) HeightSyncRepair(ctx context.Context, req *heightsync.Repair
 		if err != nil {
 			return err
 		}
-		creq, err := tokenRequest(c, env)
+		creq, err := tokenRequest(ctx, c, env)
 		if err != nil {
 			return err
 		}
@@ -672,7 +678,7 @@ func (c *RPCClient) SendVerifyTimeout(ctx context.Context, req VerifyTimeoutRequ
 		if err != nil {
 			return err
 		}
-		creq, err := tokenRequest(c, env)
+		creq, err := tokenRequest(ctx, c, env)
 		if err != nil {
 			return err
 		}
@@ -705,7 +711,7 @@ func (c *RPCClient) SendVerifyErrorMiss(ctx context.Context, req VerifyErrorMiss
 		if err != nil {
 			return err
 		}
-		creq, err := tokenRequest(c, env)
+		creq, err := tokenRequest(ctx, c, env)
 		if err != nil {
 			return err
 		}
@@ -753,7 +759,7 @@ func (c *RPCClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, pa
 		if err != nil {
 			return err
 		}
-		creq, err := tokenRequest(c, env)
+		creq, err := tokenRequest(ctx, c, env)
 		if err != nil {
 			return err
 		}
@@ -931,6 +937,12 @@ func (c *RPCClient) GetPayload(ctx context.Context, req *rpcpb.GetPayloadRequest
 	readyCtx, cancelReady := context.WithTimeout(ctx, chatReadyTimeout)
 	defer cancelReady()
 	if err := c.WaitReady(readyCtx); err != nil {
+		// The handshake budget expired while the caller is still running:
+		// the executor never became ready. A closed local session returns
+		// before that budget and stays a plain ErrPeerNotReady.
+		if readyCtx.Err() != nil && ctx.Err() == nil {
+			return nil, fmt.Errorf("get payload: %w", ErrPeerPayloadUnanswered)
+		}
 		return nil, fmt.Errorf("get payload: %w", err)
 	}
 	client, err := c.payloadClient(maxBytes)
@@ -941,8 +953,11 @@ func (c *RPCClient) GetPayload(ctx context.Context, req *rpcpb.GetPayloadRequest
 	defer cancel()
 	var out *rpcpb.GetPayloadResponse
 	err = c.rpcAttempt(ctx, rpcpbconnect.PayloadServiceGetPayloadProcedure, func() error {
-		creq, err := tokenRequest(c, req)
+		creq, err := tokenRequest(ctx, c, req)
 		if err != nil {
+			if errors.Is(err, ErrPeerNotReady) {
+				return ErrPeerPayloadUnanswered
+			}
 			return err
 		}
 		resp, err := client.GetPayload(ctx, creq)

@@ -12,7 +12,6 @@ import (
 	"github.com/gtank/ristretto255"
 	"google.golang.org/protobuf/proto"
 
-	"common/completionapi"
 	"devshard/heightsync"
 	"devshard/logging"
 	"devshard/signing"
@@ -51,6 +50,9 @@ func tokenCost(a, b, price uint64) (uint64, error) {
 	}
 	return cost, nil
 }
+
+// MinReservationTokens is the smallest max_tokens a MsgStartInference may reserve.
+const MinReservationTokens = 1
 
 func ReservedCost(inputLength, maxTokens, tokenPrice uint64) (uint64, error) {
 	return tokenCost(inputLength, maxTokens, tokenPrice)
@@ -366,8 +368,56 @@ func (sm *StateMachine) ValidateDiff(diff types.Diff) (*ValidatedDiff, error) {
 	return &ValidatedDiff{Root: root, WarmAfter: warmAfter, nonce: diff.Nonce, journal: j, obs: obs, marks: marks}, nil
 }
 
+// ValidateDiffs is ValidateDiff for a contiguous run. Each diff is
+// trial-applied on top of the previous one's post-state, and the whole run is
+// undone before return, so the live state is unchanged. It returns a handle
+// for every diff of the valid prefix, in order, and the error that ended it.
+// The handles must be committed in order with CommitValidated.
+func (sm *StateMachine) ValidateDiffs(diffs []types.Diff) ([]*ValidatedDiff, error) {
+	var sigErr error
+	for i, diff := range diffs {
+		if err := sm.verifyDiffUserSig(diff); err != nil {
+			diffs, sigErr = diffs[:i], err
+			break
+		}
+	}
+
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	out := make([]*ValidatedDiff, 0, len(diffs))
+	defer func() {
+		for i := len(out) - 1; i >= 0; i-- {
+			sm.undoJournalLocked(out[i].journal)
+		}
+	}()
+	for _, diff := range diffs {
+		var obs []deferredObsWrite
+		var marks []heightsync.AttributableMark
+		sm.obsDeferred = &obs
+		sm.marksDeferred = &marks
+		root, j, err := sm.applyCoreJournaled(diff.Nonce, diff.Txs, diff.PostStateRoot, "host")
+		sm.obsDeferred = nil
+		sm.marksDeferred = nil
+		if err != nil {
+			return out, err
+		}
+		warmAfter := copyStringMap(sm.state.WarmKeys)
+		sm.detachJournalLocked(j)
+		sm.installJournalLocked(j)
+		out = append(out, &ValidatedDiff{Root: root, WarmAfter: warmAfter, nonce: diff.Nonce, journal: j, obs: obs, marks: marks})
+	}
+	return out, sigErr
+}
+
 func (sm *StateMachine) verifyDiffUserSig(diff types.Diff) error {
 	return VerifyDiffUserSig(sm.verifier, sm.userAddress, sm.state.EscrowID, diff)
+}
+
+// VerifyDiffUserSig checks that the escrow creator signed diff. It takes no
+// lock: the verifier, creator and escrow id never change.
+func (sm *StateMachine) VerifyDiffUserSig(diff types.Diff) error {
+	return sm.verifyDiffUserSig(diff)
 }
 
 // ApplyLocal applies txs without signature verification. Used by the user
@@ -1119,8 +1169,8 @@ func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference) error 
 
 	// A sub-floor reservation is refused by the executor's payload check, so the inference would sit
 	// pending until seal. Rejecting here keeps it out of state and off the balance.
-	if !sm.replayingPersisted && msg.MaxTokens < completionapi.MinTokensFloor {
-		return fmt.Errorf("%w: max_tokens %d, floor %d", types.ErrMaxTokensBelowFloor, msg.MaxTokens, completionapi.MinTokensFloor)
+	if !sm.replayingPersisted && msg.MaxTokens < MinReservationTokens {
+		return fmt.Errorf("%w: max_tokens %d, floor %d", types.ErrMaxTokensBelowFloor, msg.MaxTokens, MinReservationTokens)
 	}
 
 	// Duplicate inference ID guard.
@@ -1372,20 +1422,15 @@ func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
 		return fmt.Errorf("%w: expected %s, got %s", types.ErrEscrowIDMismatch, sm.state.EscrowID, msg.EscrowId)
 	}
 
-	// Mutation: set bitmap, count vote weight.
-	// TODO: only the validator's emitting slot is set here, while
-	// applyValidationVote sets every slot owned by the voter address.
-	// Consumers (collectValidationJobs and addressHasValidated) both use
-	// "any slot of this address" semantics so
-	// the asymmetry is benign, but the unified bitmap would be more
-	// consistent. Changing it shifts state-machine output, so it requires a
-	// coordinated upgrade.
-	rec.ValidatedBy.Set(msg.ValidatorSlot)
+	validatorAddr := sm.slotToAddress[msg.ValidatorSlot]
+	weight := sm.addressToSlotCount[validatorAddr]
 
-	// Count vote weight for Finished state (tallies accumulate before any challenge).
-	if rec.Status == types.StatusFinished {
-		validatorAddr := sm.slotToAddress[msg.ValidatorSlot]
-		weight := sm.addressToSlotCount[validatorAddr]
+	switch rec.Status {
+	case types.StatusFinished:
+		// Phase A: only the emitting slot is set here (applyValidationVote
+		// sets every slot of the address). Consumers use "any slot of this
+		// address" so the asymmetry is benign.
+		rec.ValidatedBy.Set(msg.ValidatorSlot)
 		if msg.Valid {
 			rec.VotesValid += weight
 		} else {
@@ -1400,9 +1445,60 @@ func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
 				"validator_slot", msg.ValidatorSlot,
 			)
 		}
+	case types.StatusChallenged:
+		// A concurrent Phase-A MsgValidation that lands after the challenge
+		// opened must still count toward VoteThreshold. Recording ValidatedBy
+		// without weight permanently burns a Phase-B voter and can leave the
+		// inference stuck at Challenged when threshold is 1.
+		for _, slot := range sm.addressToSlots[validatorAddr] {
+			rec.ValidatedBy.Set(slot)
+		}
+		if msg.Valid {
+			rec.VotesValid += weight
+		} else {
+			rec.VotesInvalid += weight
+		}
+		sm.resolveChallengeTalliesLocked(msg.InferenceId, rec)
+	default:
+		// Already resolved: record participation only.
+		rec.ValidatedBy.Set(msg.ValidatorSlot)
 	}
 
 	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
+}
+
+// resolveChallengeTalliesLocked applies VoteThreshold to a Challenged record
+// after VotesValid / VotesInvalid changed. Caller holds sm.mu.
+func (sm *StateMachine) resolveChallengeTalliesLocked(inferenceID uint64, rec *types.InferenceRecord) {
+	if rec == nil || rec.Status != types.StatusChallenged {
+		return
+	}
+	threshold := sm.state.Config.VoteThreshold
+	if rec.VotesInvalid > threshold {
+		rec.Status = types.StatusInvalidated
+		hs := sm.hostStatsForWriteLocked(rec.ExecutorSlot)
+		hs.Invalid++
+		if hs.Cost < rec.ActualCost {
+			hs.Cost = 0
+		} else {
+			hs.Cost -= rec.ActualCost
+		}
+		sm.state.Balance += rec.ActualCost
+		sm.persistLiveInferenceObsBestEffortLocked(inferenceID, rec)
+		logging.Debug("inference challenged -> invalidated", "subsystem", "state",
+			"inference_id", inferenceID,
+			"votes_valid", rec.VotesValid,
+			"votes_invalid", rec.VotesInvalid,
+		)
+	} else if rec.VotesValid > threshold {
+		rec.Status = types.StatusValidated
+		sm.persistLiveInferenceObsBestEffortLocked(inferenceID, rec)
+		logging.Debug("inference challenged -> validated", "subsystem", "state",
+			"inference_id", inferenceID,
+			"votes_valid", rec.VotesValid,
+			"votes_invalid", rec.VotesInvalid,
+		)
+	}
 }
 
 // addressHasValidated checks if the address owning slotID has any slot bit set in ValidatedBy.
@@ -1466,38 +1562,7 @@ func (sm *StateMachine) applyValidationVote(msg *types.MsgValidationVote) error 
 	} else {
 		rec.VotesInvalid += weight
 	}
-
-	// VoteThreshold is frozen in state.Config at session creation (see VoteThreshold()).
-	threshold := sm.state.Config.VoteThreshold
-	if rec.VotesInvalid > threshold {
-		rec.Status = types.StatusInvalidated
-		// Refund cost.
-		hs := sm.hostStatsForWriteLocked(rec.ExecutorSlot)
-		hs.Invalid++
-		if hs.Cost < rec.ActualCost {
-			hs.Cost = 0
-		} else {
-			hs.Cost -= rec.ActualCost
-		}
-		sm.state.Balance += rec.ActualCost
-		logging.Debug("inference challenged -> invalidated", "subsystem", "state",
-			"inference_id", msg.InferenceId,
-			"votes_valid", rec.VotesValid,
-			"votes_invalid", rec.VotesInvalid,
-		)
-	} else if rec.VotesValid > threshold {
-		rec.Status = types.StatusValidated
-		logging.Debug("inference challenged -> validated", "subsystem", "state",
-			"inference_id", msg.InferenceId,
-			"votes_valid", rec.VotesValid,
-			"votes_invalid", rec.VotesInvalid,
-		)
-	}
-
-	if rec.Status == types.StatusValidated || rec.Status == types.StatusInvalidated {
-		// Same as challenge path: obs is observability-only, never consensus.
-		sm.persistLiveInferenceObsBestEffortLocked(msg.InferenceId, rec)
-	}
+	sm.resolveChallengeTalliesLocked(msg.InferenceId, rec)
 
 	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
 }
@@ -1863,22 +1928,27 @@ func (sm *StateMachine) HostSignerAllowedAddr(expected, recovered string) bool {
 	if expected == "" || recovered == "" {
 		return false
 	}
+	if sm.HostSignerBoundAddr(expected, recovered) {
+		return true
+	}
+	return sm.CheckWarmKey(recovered, expected)
+}
+
+func (sm *StateMachine) HostSignerBoundAddr(expected, recovered string) bool {
+	if expected == "" || recovered == "" {
+		return false
+	}
 	if recovered == expected {
 		return true
 	}
 	sm.mu.RLock()
-	cached := false
+	defer sm.mu.RUnlock()
 	for _, slot := range sm.addressToSlots[expected] {
 		if sm.hostSignerCachedLocked(slot, recovered) {
-			cached = true
-			break
+			return true
 		}
 	}
-	sm.mu.RUnlock()
-	if cached {
-		return true
-	}
-	return sm.CheckWarmKey(recovered, expected)
+	return false
 }
 
 // ResolveWarmKey checks if recovered is an authorized warm key for the given slot.

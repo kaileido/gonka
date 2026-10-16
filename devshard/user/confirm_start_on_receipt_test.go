@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"devshard/host"
+	"devshard/internal/statetest"
 	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/transport"
@@ -65,7 +66,7 @@ func TestTheExecutorReceiptIsQueuedWhileTheStreamIsStillOpen(t *testing.T) {
 	holding := &holdingClient{receiptSent: make(chan struct{}), release: make(chan struct{})}
 	session.clients[1] = holding
 
-	prepared, err := session.PrepareInference(InferenceParams{
+	prepared, err := session.PrepareInference(context.Background(), InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	})
@@ -87,6 +88,47 @@ func TestTheExecutorReceiptIsQueuedWhileTheStreamIsStillOpen(t *testing.T) {
 	<-sent
 }
 
+type countingRecoverer struct {
+	signing.Verifier
+	calls atomic.Int32
+}
+
+func (v *countingRecoverer) RecoverAddress(message, sig []byte) (string, error) {
+	v.calls.Add(1)
+	return v.Verifier.RecoverAddress(message, sig)
+}
+
+func TestTheSameReceiptSeenAgainIsNotVerifiedAgain(t *testing.T) {
+	session, hosts, user := setupSession(t, 3, 100000, 10)
+	recoverer := &countingRecoverer{Verifier: signing.NewSecp256k1Verifier()}
+	sm := statetest.MustStateMachine(t, "escrow-1", testutil.DefaultConfig(3), session.group, 100000, user.Address(), recoverer)
+	session, err := NewSession(sm, user, "escrow-1", session.group, session.clients, signing.NewSecp256k1Verifier())
+	require.NoError(t, err)
+
+	nonce := prepareNonce(t, session)
+	confirmedAt := time.Now().Unix()
+	receipt := &host.HostResponse{
+		Nonce:       nonce,
+		Receipt:     signedExecutorReceipt(t, session, hosts, nonce, confirmedAt),
+		ConfirmedAt: confirmedAt,
+	}
+	session.confirmStartOnReceipt(nonce, receipt)
+	require.Equal(t, int32(1), recoverer.calls.Load(), "the first copy is the one that is verified")
+
+	final := *receipt
+	final.Mempool = []*types.DevshardTx{{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+		InferenceId: nonce, ExecutorSig: receipt.Receipt, ConfirmedAt: confirmedAt,
+	}}}}
+	rec, ok := session.sm.GetInference(nonce)
+	require.True(t, ok)
+	recoverer.calls.Store(0)
+	require.NoError(t, session.ProcessResponse(int(rec.ExecutorSlot), &final, nonce))
+
+	require.Zero(t, recoverer.calls.Load(),
+		"the final response and the host's mempool carry the queued confirm again; it is already verified")
+	require.Equal(t, []uint64{nonce}, pendingConfirmStarts(session))
+}
+
 func TestAResponseWithoutAReceiptQueuesNothing(t *testing.T) {
 	session, _, _ := setupSession(t, 3, 100000, 10)
 
@@ -101,7 +143,7 @@ func TestTheReceiptDecidesTheTimeoutReasonAsSoonAsItArrives(t *testing.T) {
 	holding := &holdingClient{receiptSent: make(chan struct{}), release: make(chan struct{})}
 	session.clients[1] = holding
 
-	prepared, err := session.PrepareInference(InferenceParams{
+	prepared, err := session.PrepareInference(context.Background(), InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	})
@@ -125,7 +167,7 @@ func TestTheReceiptDecidesTheTimeoutReasonAsSoonAsItArrives(t *testing.T) {
 
 func TestAResponseWithoutAConfirmedAtLeavesTheReasonAlone(t *testing.T) {
 	session, hosts, _ := setupSession(t, 3, 100000, 10)
-	prepared, err := session.PrepareInference(InferenceParams{
+	prepared, err := session.PrepareInference(context.Background(), InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	})
@@ -142,7 +184,7 @@ func TestAResponseWithoutAConfirmedAtLeavesTheReasonAlone(t *testing.T) {
 
 func TestALaterResponseWithoutAStampDoesNotEraseTheConfirmation(t *testing.T) {
 	session, hosts, _ := setupSession(t, 3, 100000, 10)
-	prepared, err := session.PrepareInference(InferenceParams{
+	prepared, err := session.PrepareInference(context.Background(), InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	})
@@ -263,7 +305,7 @@ func TestHandleTimeoutDoesNotChallengeARefusalAfterTheReceipt(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			session, hosts, _ := setupSession(t, 3, 100000, 10)
-			prepared, err := session.PrepareInference(InferenceParams{
+			prepared, err := session.PrepareInference(context.Background(), InferenceParams{
 				Model: "llama", Prompt: testutil.TestPrompt,
 				InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: time.Now().Add(-time.Hour).Unix(),
 			})
@@ -302,7 +344,7 @@ func TestHandleTimeoutDoesNotChallengeARefusalAfterTheReceipt(t *testing.T) {
 func TestHandleTimeoutStillChallengesAPendingInference(t *testing.T) {
 	session, _, _ := setupSession(t, 3, 100000, 10)
 	startedAt := time.Now().Add(-time.Hour)
-	prepared, err := session.PrepareInference(InferenceParams{
+	prepared, err := session.PrepareInference(context.Background(), InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: startedAt.Unix(),
 	})
@@ -384,7 +426,7 @@ func TestAReceiptForAnotherNonceLeavesTheRefusalWait(t *testing.T) {
 
 func TestHandleTimeoutCancelDuringTheRefusalWaitDoesNotChallenge(t *testing.T) {
 	session, _, _ := setupSession(t, 3, 100000, 10)
-	prepared, err := session.PrepareInference(InferenceParams{
+	prepared, err := session.PrepareInference(context.Background(), InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: time.Now().Unix(),
 	})
@@ -627,7 +669,7 @@ func TestOneRefusingHostDoesNotStopTheOthersFromSyncing(t *testing.T) {
 func TestRewindMakesTheNextCatchUpCarryTheWholeHistory(t *testing.T) {
 	session, _, _ := setupSession(t, 3, 100000, 10)
 	for range 6 {
-		_, err := session.PrepareInference(InferenceParams{
+		_, err := session.PrepareInference(context.Background(), InferenceParams{
 			Model: "llama", Prompt: testutil.TestPrompt,
 			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 		})

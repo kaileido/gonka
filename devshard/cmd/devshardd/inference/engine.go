@@ -59,11 +59,13 @@ type Engine struct {
 	chainParams                 ChainParamsProvider
 	phase                       *chain.Phase
 	logprobsOptimizationEnabled bool
+	vocabularySizes             VocabularyResolver
 }
 
 // NewEngine creates an Engine backed by a NodeManager gRPC client and optional
 // passive ML-node cache for dapi-unreachable fallback. capacity may be nil,
 // in which case fallback is unbounded (matches old-dapi/never-observed behavior).
+// vocabularySizes bounds stop_token_ids; nil refuses any.
 func NewEngine(
 	mlClient *mlnodeclient.Client,
 	mgr *mlnodeclient.Manager,
@@ -72,6 +74,7 @@ func NewEngine(
 	chainParams ChainParamsProvider,
 	phase *chain.Phase,
 	logprobsOptimizationEnabled bool,
+	vocabularySizes VocabularyResolver,
 ) *Engine {
 	reader, _ := payloadStore.(PayloadReader)
 	return &Engine{
@@ -85,6 +88,7 @@ func NewEngine(
 		chainParams:                 chainParams,
 		phase:                       phase,
 		logprobsOptimizationEnabled: logprobsOptimizationEnabled,
+		vocabularySizes:             vocabularySizes,
 	}
 }
 
@@ -102,12 +106,21 @@ func (e *Engine) Execute(ctx context.Context, req devshard.ExecuteRequest) (*dev
 	return executeWithRecovery(ctx, req, e.payloadRead, e.phase.EpochID(), func(ctx context.Context) (*devshard.ExecuteResult, error) {
 		result, err := executeInference(ctx, req, e.payloadStore, e.phase.EpochID(), func(ctx context.Context, model string, body []byte) (*http.Response, error) {
 			return e.executeMLRequest(ctx, model, req.EscrowID, body)
-		}, e.chainParams, e.logprobsOptimizationEnabled)
+		}, e.chainParams, e.logprobsOptimizationEnabled, func() int {
+			return e.vocabularySize(ctx, req.Model)
+		})
 		if err == nil && result != nil && !result.PartialResponse {
 			e.earnValidationCredit(ctx, req.Model)
 		}
 		return result, err
 	})
+}
+
+func (e *Engine) vocabularySize(ctx context.Context, model string) int {
+	if e.vocabularySizes == nil {
+		return 0
+	}
+	return e.vocabularySizes.Resolve(ctx, e.phase.EpochID(), model)
 }
 
 func executeWithRecovery(
@@ -136,14 +149,17 @@ func executeWithRecovery(
 }
 
 func (e *Engine) executeMLRequest(ctx context.Context, model, escrowID string, body []byte) (*http.Response, error) {
-	resp, err := e.doWithLockedNode(ctx, observability.PathExecute, model, escrowID, func(endpoint string) (*http.Response, error) {
+	resp, err := e.doWithLockedNode(ctx, observability.PathExecute, model, escrowID, func(endpoint string) (_ *http.Response, err error) {
+		callCtx, op := observability.Request.StartMLNodeCall(ctx, model, endpoint)
+		defer op.FinishErr(&err)
+
 		url := endpoint + "/v1/chat/completions"
-		httpReq, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+		httpReq, reqErr := http.NewRequestWithContext(callCtx, http.MethodPost, url, bytes.NewReader(body))
 		if reqErr != nil {
 			return nil, observability.Classify(observability.ReasonApplicationErr, observability.WhereEngineMLNodeCall, reqErr)
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
-		observability.InjectRequestContext(ctx, httpReq.Header)
+		observability.InjectRequestContext(callCtx, httpReq.Header)
 		observability.AttachRequestID(httpReq)
 		return e.httpClient.Do(httpReq)
 	})
@@ -184,9 +200,7 @@ func (e *Engine) doWithLockedNode(
 			lastReason = observability.ReasonTimeout
 			return nil, observability.Classify(lastReason, observability.WhereEngineMLNodeCall, ctx.Err())
 		}
-		acqCtx, cancel := context.WithTimeout(ctx, acquireTimeout)
-		acq, err := e.mlClient.Acquire(acqCtx, model, excluded, escrowID)
-		cancel()
+		acq, err := e.acquireNode(ctx, model, excluded, escrowID)
 
 		if err != nil {
 			if ctx.Err() != nil {
@@ -240,7 +254,7 @@ func (e *Engine) doWithLockedNode(
 			// 4xx surfaced to caller without rotation.
 		}
 
-		if releaseErr := e.mlClient.Release(ctx, acq.LockId, outcome); releaseErr != nil {
+		if releaseErr := e.releaseNode(ctx, acq, outcome); releaseErr != nil {
 			observability.IncMLNodeAttempt(path, observability.ReasonReleaseErr, acq.NodeId)
 			if lastErr == nil {
 				lastReason = observability.ReasonReleaseErr
@@ -266,6 +280,38 @@ func (e *Engine) doWithLockedNode(
 		lastReason = observability.ReasonTransportErr
 	}
 	return nil, observability.Classify(lastReason, observability.WhereEngineMLNodeCall, lastErr)
+}
+
+// acquireNode wraps the NodeManager Acquire call in a span so the dapi hop
+// (and its server span) hangs off the request trace.
+func (e *Engine) acquireNode(
+	ctx context.Context,
+	model string,
+	excluded []string,
+	escrowID string,
+) (_ *mlnodegen.AcquireMLNodeResponse, err error) {
+	spanCtx, op := observability.Request.StartMLNodeAcquire(ctx, model, len(excluded))
+	defer op.FinishErr(&err)
+
+	acqCtx, cancel := context.WithTimeout(spanCtx, acquireTimeout)
+	defer cancel()
+	acq, err := e.mlClient.Acquire(acqCtx, model, excluded, escrowID)
+	if err != nil {
+		return nil, err
+	}
+	observability.Request.SetMLNode(op, acq.NodeId, acq.Endpoint, acq.LockId)
+	return acq, nil
+}
+
+// releaseNode wraps the NodeManager Release call in a span.
+func (e *Engine) releaseNode(
+	ctx context.Context,
+	acq *mlnodegen.AcquireMLNodeResponse,
+	outcome mlnodegen.ReleaseOutcome,
+) (err error) {
+	spanCtx, op := observability.Request.StartMLNodeRelease(ctx, acq.NodeId, acq.LockId, outcome.String())
+	defer op.FinishErr(&err)
+	return e.mlClient.Release(spanCtx, acq.LockId, outcome)
 }
 
 // doWithFallbackNodes serves inference from the passive cache when dapi is

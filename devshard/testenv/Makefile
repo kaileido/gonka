@@ -11,7 +11,7 @@ PROXY_OVERLAY := $(COMPOSE_BASE) -f docker-compose.proxy.yml
 help: ## Show this help.
 	@awk 'BEGIN{FS=":.*##"; printf "Usage:\n"} /^[a-zA-Z0-9_.%-]+:.*##/ {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-.PHONY: gen-compose build-devshardd build-devshardd-local test-compose clean-keyring
+.PHONY: gen-compose build-devshardd build-devshardd-local test-compose clean-keyring loadtest
 gen-compose: ## Render config, keyrings, docker-compose.yml, and .env from config.yaml.
 	go run ./cmd/gencompose -config config/config.yaml
 
@@ -33,6 +33,15 @@ build-devshardd-local: ## Build host devshardd for --print-* checks (no Docker).
 	cd .. && go build -tags '$(TESTENV_BUILD_TAGS)' -ldflags "-X main.Version=v2 -X main.BinaryVersion=0.2.13-v2-r2 -X devshard/types.buildStateRootProtocolVersion=v2" -o ../build/devshardd ./cmd/devshardd/
 	@echo "Built ../../build/devshardd for this host ($(shell uname -s)/$(shell uname -m))"
 	@echo "For Docker stack use: make build-devshardd (requires Docker daemon)"
+
+ifeq ($(strip $(SCENARIO)),)
+loadtest: ## Run a scenario in an isolated Docker testenv (SCENARIO=name).
+	@echo "SCENARIO is required, for example: make loadtest SCENARIO=normal-load"
+	@false
+else
+loadtest: build-devshardd ## Run a scenario in an isolated Docker testenv (SCENARIO=name).
+	go run ./cmd/loadtest -scenario loadtest/scenarios/$(SCENARIO).yaml
+endif
 
 test-compose: ## gencompose + docker compose config validation.
 	go test ./citest/... -count=1
@@ -76,24 +85,27 @@ dev-logs: ## Follow dev overlay logs.
 .PHONY: citest-images citest-stack citest-baseline-smoke citest-stack-build list-citest-targets
 .PHONY: citest-validation-lease-race citest-escrow-longpoll citest-timeout-evidence
 .PHONY: citest-versiond-rolling-update citest-versiond-host-evacuation citest-adversarial citest-payload-withholding
-.PHONY: citest-observability citest-grpc-transport citest-force-upstream-streaming citest-height-sync citest-height-sync-dapi-compat citest-host-ping citest-retired-session-http citest-peerrpc-chat citest-peerrpc-ha-session citest-proxy-h2-idle citest-peerrpc-overlay citest-peerrpc-parity citest-peerrpc-limits citest-mixed-fleet citest-peerrpc-legacy-compat test-gateway-smoke
+.PHONY: citest-observability citest-dapi-correlation citest-ml-nodes citest-grpc-transport citest-force-upstream-streaming citest-height-sync citest-height-sync-dapi-compat citest-host-ping citest-retired-session-http citest-peerrpc-chat citest-peerrpc-ha-session citest-proxy-h2-idle citest-peerrpc-overlay citest-peerrpc-parity citest-peerrpc-limits citest-mixed-fleet citest-peerrpc-cross-version-compat test-gateway-smoke
 .PHONY: build-baseline-infra fetch-limits-pin build-limits-pin
 
 # citest-images and citest-stack-build are build/helper rules, not standalone
 # suites. citest-baseline-smoke, citest-mixed-fleet,
-# citest-peerrpc-legacy-compat, and
-# citest-height-sync-dapi-compat are manual only (pinned images). All four
-# stay out of the auto-discovered CI matrix.
+# citest-peerrpc-cross-version-compat, and
+# citest-height-sync-dapi-compat are manual only (pinned images).
+# citest-dapi-correlation is a focused subset of citest-observability.
+# All of those stay out of the auto-discovered CI matrix.
 list-citest-targets: ## Print runnable citest suite targets (one per line) for the CI matrix.
 	@grep -hoE '^citest-[A-Za-z0-9_-]+:' $(firstword $(MAKEFILE_LIST)) \
 		| sed 's/://' \
-		| grep -vxE 'citest-images|citest-stack-build|citest-baseline-smoke|citest-mixed-fleet|citest-peerrpc-legacy-compat|citest-height-sync-dapi-compat' \
+		| grep -vxE 'citest-images|citest-stack-build|citest-baseline-smoke|citest-mixed-fleet|citest-peerrpc-cross-version-compat|citest-height-sync-dapi-compat|citest-dapi-correlation' \
 		| sort -u
 .PHONY: obs-up obs-down
 # versiond-0 produces devshard-versiond:latest shared by all versiond-* hosts.
 # Pin previous participant images with TESTENV_VERSIOND_IMAGE +
 # TESTENV_VERSIOND_ROUTER_IMAGE (see docs/grpc-transport-phase6-plan.md).
-CITEST_BUILD_SERVICES := mock-chain mock-dapi mock-openai devshardctl
+# gencompose names the pool mock-openai-0 … mock-openai-{N-1}. Every member
+# shares image devshard-mock-openai:latest, so building the first service is enough.
+CITEST_BUILD_SERVICES := mock-chain mock-dapi mock-openai-0 devshardctl
 CITEST_BUILD_INFRA := versiond-router versiond-0
 # Rolling-update and warm-cutover stay in their own targets. Versiond.* used to
 # pull them into this suite as well.
@@ -205,9 +217,17 @@ citest-grpc-transport: citest-images ## Phase 12b G1–G4 gRPC-only gateway cite
 	$(CITEST_RPC_RUN) -run 'TestG1_|TestG2_|TestG3_' -count=1 -v -timeout 30m
 	cd .. && go test ./cmd/devshardctl/ -run TestG4_NoRESTChainClientsInGatewayProduction -count=1 -v
 
-citest-observability: citest-images ## Phase 10 O1 (isolated overlay; host histogram scrape).
+citest-observability: citest-images ## O1 smoke plus trace, disposition, payload, and shadow-host correlation.
 	$(MAKE) build-devshardd
-	$(CITEST_RPC_RUN) -run TestO1_ObservabilitySmoke -count=1 -v -timeout 30m
+	$(CITEST_RPC_RUN) -run 'TestO1_ObservabilitySmoke|TestTraceLogCorrelation|TestDispositionTrace|TestDispositionLabelValues|TestJaegerPromtailRegression|TestPayloadCapture|TestShadowHostMultiAttemptSameTrace' -count=1 -v -timeout 90m
+
+citest-dapi-correlation: citest-images ## Gateway/host/mock-dapi trace + log correlation, incl. multi-host attempts.
+	$(MAKE) build-devshardd
+	$(CITEST_RPC_RUN) -run '^(TestTraceLogCorrelationGatewayHostDapi|TestShadowHostMultiAttemptSameTrace)$$' -count=1 -v -timeout 45m
+
+citest-ml-nodes: citest-images ## Multi mock-openai pool with per-node fault targeting.
+	$(MAKE) build-devshardd
+	$(CITEST_RPC_RUN) -run 'TestMLNodePool_' -count=1 -v -timeout 45m
 
 citest-height-sync: citest-images ## Height-sync container e2e against mock-dapi chainoracle (no heightsyncd).
 	$(MAKE) build-devshardd
@@ -277,14 +297,14 @@ citest-mixed-fleet: ## §8.2 mixed fleet, RPC on, HTTP/1.1, no proxy.
 # Manual compatibility gate: it needs both baseline images and a baseline child
 # binary built from the pinned source ref. The tests intentionally use the
 # current native-gRPC configuration without an HTTP/1.1 fallback.
-citest-peerrpc-legacy-compat: ## Native gRPC with mixed versiond and a legacy child.
+citest-peerrpc-cross-version-compat: ## Cross-version native gRPC compatibility and regression matrix.
 	$(MAKE) build-devshardd
 	$(MAKE) build-baseline-infra
 	env -u TESTENV_VERSIOND_IMAGE -u TESTENV_VERSIOND_ROUTER_IMAGE $(MAKE) citest-images
 	env -u TESTENV_VERSIOND_IMAGE -u TESTENV_VERSIOND_ROUTER_IMAGE \
 		TESTENV_GRPC_LEGACY_COMPAT=1 \
 		TESTENV_MIXED_CHILD_BINARY=$(CURDIR)/baselines/devshardd-0.2.15-v5 \
-		$(CITEST_RPC_RUN) -run '^TestPeerRPCMixedChildCapabilitiesNativeGRPC$$' -count=1 -v -timeout 30m
+		$(CITEST_RPC_RUN) -run '^TestPeerRPC(VersiondCompatibilityMatrix|RouterCompatibilityMatrix|RollingDeployCompatibility)$$' -count=1 -v -timeout 90m
 
 # Local-only: 0.2.15-v5 (mock /block/*) vs 0.2.15 (omit /block/*). Real images
 # ghcr.io/product-science/api:0.2.15-v5 and :0.2.15 cannot replace mock-dapi

@@ -166,7 +166,7 @@ func TestRecoverSession_ReplaysADiffWrittenBeforeTheMaxTokensFloor(t *testing.T)
 
 	subFloor := []*types.DevshardTx{{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens - 1, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 0, StartedAt: 1000,
 	}}}}
 
 	writerSM := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
@@ -683,7 +683,7 @@ func TestRecoverSession_HeartbeatPartialAckDurableLossReportsSyncVector(t *testi
 	session.dispatchHeartbeatSpan(ctx, span[:1])
 	require.Len(t, heightAcksInTxs(session.PendingTxs()), 1)
 	session.mu.Lock()
-	ackDiff, _, err := session.composeDiffLocked(nil)
+	ackDiff, _, err := session.composeDiffLocked(context.Background(), nil)
 	session.mu.Unlock()
 	require.NoError(t, err)
 	require.Len(t, heightAcksInDiffs([]types.Diff{ackDiff}), 1,
@@ -793,7 +793,7 @@ func TestRecoverSession_HeartbeatAckFlushPersistedBeforeHostCatchup(t *testing.T
 	session.dispatchHeartbeatSpan(ctx, span)
 	require.Len(t, heightAcksInTxs(session.PendingTxs()), 3)
 	session.mu.Lock()
-	ackDiff, ackHostIdx, err := session.composeDiffLocked(nil)
+	ackDiff, ackHostIdx, err := session.composeDiffLocked(context.Background(), nil)
 	session.mu.Unlock()
 	require.NoError(t, err)
 	require.Equal(t, base+4, ackDiff.Nonce)
@@ -1165,7 +1165,7 @@ func TestRecoverSession_LateAckAfterTurnPruneComposesAndApplies(t *testing.T) {
 	require.Len(t, heightAcksInTxs(recovered.PendingTxs()), 1)
 
 	recovered.mu.Lock()
-	lateAckDiff, _, err := recovered.composeDiffLocked(nil)
+	lateAckDiff, _, err := recovered.composeDiffLocked(context.Background(), nil)
 	recovered.mu.Unlock()
 	require.NoError(t, err)
 	require.Equal(t, finalNonce+1, lateAckDiff.Nonce)
@@ -1868,7 +1868,7 @@ func TestRecoverSession_SnapshotOnly_ReseedsTrimmedPrefixKeys(t *testing.T) {
 	session.dispatchHeartbeatSpan(ctx, span)
 	require.Len(t, heightAcksInTxs(session.PendingTxs()), 3)
 	session.mu.Lock()
-	ackDiff, _, err := session.composeDiffLocked(nil)
+	ackDiff, _, err := session.composeDiffLocked(context.Background(), nil)
 	for i := range hosts {
 		session.hostSyncNonce[i] = ackDiff.Nonce
 	}
@@ -2838,7 +2838,7 @@ func TestRecoverSession_ReplaysADiffWrittenBeforeTheMinTokensFloor(t *testing.T)
 			PromptHash:  testutil.TestPromptHash[:],
 			Model:       "llama",
 			InputLength: 100,
-			MaxTokens:   1,
+			MaxTokens:   0,
 			StartedAt:   1000,
 		},
 	}}}

@@ -100,7 +100,7 @@ func (c *RPCClient) sendChatOnce(ctx context.Context, req host.HostRequest, stre
 	}
 	defer c.conn.releaseChatStream()
 
-	creq, err := tokenRequest(c, env)
+	creq, err := tokenRequest(ctx, c, env)
 	if err != nil {
 		c.conn.refundPeerBudget(rpcpbconnect.SessionServiceChatProcedure)
 		return nil, err
@@ -214,4 +214,12 @@ func (r *chatFrameReader) Read(p []byte) (int, error) {
 	n := copy(p, r.buf)
 	r.buf = r.buf[n:]
 	return n, nil
+}
+
+// ChatBudgetWait reports how long a chat to this host would wait for the peer budget the host advertised; zero when it would go at once, chat does not use this connection, or the host advertised less than the network default.
+func (c *RPCClient) ChatBudgetWait() time.Duration {
+	if c == nil || c.conn == nil || !c.Uses(EndpointChat) {
+		return 0
+	}
+	return c.conn.budget.wait(time.Now(), rpcpbconnect.SessionServiceChatProcedure)
 }
