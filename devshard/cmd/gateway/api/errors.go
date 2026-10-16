@@ -17,6 +17,7 @@ import (
 	"devshard/cmd/gateway/escrow"
 	"devshard/cmd/gateway/filters"
 	"devshard/cmd/gateway/internal/logkey"
+	"devshard/cmd/gateway/internal/strictjson"
 	"devshard/cmd/gateway/limits"
 	"devshard/cmd/gateway/registry"
 	"devshard/cmd/gateway/scheduler"
@@ -321,7 +322,7 @@ func (rec *failureRecorder) Flush() {
 // A body truncated at the cap no longer parses, so the raw text is the fallback, not an empty field.
 func (rec *failureRecorder) reason() string {
 	var envelope errorEnvelope
-	if err := json.Unmarshal(rec.body, &envelope); err == nil && envelope.Error.Message != "" {
+	if err := strictjson.Unmarshal(rec.body, &envelope); err == nil && envelope.Error.Message != "" {
 		return envelope.Error.Message
 	}
 	return strings.TrimSpace(string(rec.body))

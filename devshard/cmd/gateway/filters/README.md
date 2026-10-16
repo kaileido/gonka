@@ -83,6 +83,8 @@ The package uses two: `encoding/json` from the standard library, and `github.com
 | `stripInternalFields`, `decodeStreamedEvent`, `completionAsChunks` | standard library | goccy parses a number token even into a `json.RawMessage` and errors past the float64 range. That fails the strip open — a body carrying `1e999` would keep every internal field — and fails the chunk conversion on a `created` out of range. |
 | `Document.Marshal`, `DecodeUpstreamError`, `jsonMarshaledSize` | goccy | Neither the error text nor the range behaviour is load-bearing here, and `Marshal` sorts map keys, so the normalised body is deterministic. |
 
+Every goccy decode of bytes a host or a client sent goes through `internal/strictjson`, which hands goccy only what `encoding/json.Valid` accepts. On some malformed input goccy reads past its buffer and panics, intermittently and more often under concurrency; the attempt classifier decodes every event of every attempt, so one malformed line from a host would otherwise be able to take the gateway down.
+
 Every decode that matters uses `UseNumber`, so a number survives as its literal rather than as a float64.
 
 Encoding goes through `encodeCompact`, which uses an `Encoder` rather than `Marshal` for one reason: only the encoder can call `SetEscapeHTML(false)`, and the default would inflate every `<`, `>` and `&` the model generated to six bytes. The newline `Encode` appends is trimmed off, since it is not part of the value. `growingText.MarshalJSON` goes through it for the same reason. `jsonMarshaledSize` measures with a counting writer instead of allocating the output, subtracting the one byte that newline adds.
@@ -322,6 +324,8 @@ A lower bound is enough for the race: it only asks whether the request could fit
 ### Rewriting an event
 
 `rewriteEvent` takes every decision on the decoded payload, never on the event's raw bytes. A host controls those bytes: it can spell a key with a `\u` escape, or split one object across two data lines, and either defeats a byte-wise check while the client's own decoder reads the object whole.
+
+Most events need no decision at all: a host strips the logprob family before sending when the client asked for none, so a plain content chunk carries nothing to remove. `carriesNothingToRewrite` proves that without decoding, for a client that asked for no logprobs and an event on one data line. It walks the payload's keys at every depth, unescapes a key that carries a `\` escape before comparing it, compares without regard to case, and only then checks that the whole payload is one valid object. Any key in `clientStrippedFields`, `message`, or `usage` when the client did not ask for it sends the event through the full decode. So does anything that fails the check. A spelling the check might misread costs a decode, never a leak, and `FuzzFastPathAgreesWithTheFullRewrite` holds it to forwarding only what the full rewrite would forward byte for byte.
 
 A payload that opens as an object and does not parse is dropped rather than forwarded — a host sending something no client can read would otherwise carry along whatever it hides. A payload that is not object-shaped passes through untouched.
 

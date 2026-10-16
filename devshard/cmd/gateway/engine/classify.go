@@ -7,6 +7,7 @@ import (
 	json "github.com/goccy/go-json"
 
 	"devshard/cmd/gateway/filters"
+	"devshard/cmd/gateway/internal/strictjson"
 )
 
 // finishReasonStop is the upstream token that lets generated tokens stand in for content.
@@ -101,13 +102,13 @@ type looseEvent struct {
 func (loose looseEvent) tighten() streamedEvent {
 	event := streamedEvent{Choices: make([]streamedChoice, 0, len(loose.Choices))}
 	var usage streamedUsage
-	if len(loose.Usage) > 0 && json.Unmarshal(loose.Usage, &usage) == nil {
+	if len(loose.Usage) > 0 && strictjson.Unmarshal(loose.Usage, &usage) == nil {
 		event.Usage = &usage
 	}
 	for _, choice := range loose.Choices {
 		tightened := streamedChoice{FinishReason: choice.FinishReason, Delta: choice.Delta, Message: choice.Message}
 		if len(choice.Logprobs) > 0 {
-			_ = json.Unmarshal(choice.Logprobs, &tightened.Logprobs)
+			_ = strictjson.Unmarshal(choice.Logprobs, &tightened.Logprobs)
 		}
 		event.Choices = append(event.Choices, tightened)
 	}
@@ -117,19 +118,19 @@ func (loose looseEvent) tighten() streamedEvent {
 // decodeEvent reads an event, falling back to the shapes that tolerate what a host got wrong: barewords for a non-finite number, then raw parts for a field typed against the schema.
 func decodeEvent(payload []byte) (streamedEvent, bool) {
 	var event streamedEvent
-	if json.Unmarshal(payload, &event) == nil {
+	if strictjson.Unmarshal(payload, &event) == nil {
 		return event, true
 	}
 	// A host writes NaN/Infinity as barewords; without this its content and usage read as absent.
 	if normalized, replaced := filters.ReplaceNonFiniteNumbers(payload); replaced {
 		payload = normalized
 		event = streamedEvent{}
-		if json.Unmarshal(payload, &event) == nil {
+		if strictjson.Unmarshal(payload, &event) == nil {
 			return event, true
 		}
 	}
 	var loose looseEvent
-	if json.Unmarshal(payload, &loose) != nil {
+	if strictjson.Unmarshal(payload, &loose) != nil {
 		return streamedEvent{}, false
 	}
 	return loose.tighten(), true

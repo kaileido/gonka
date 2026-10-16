@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	json "github.com/goccy/go-json"
+
+	"devshard/cmd/gateway/internal/strictjson"
 )
 
 // UpstreamError is the OpenAI-compatible error shape extracted from a response body or SSE event.
@@ -159,12 +161,12 @@ func (scan *responseScan) noteChoices(event scannedEvent) {
 func decodeScannedEvent(payload []byte, judgeAnswer bool) (scannedEvent, bool) {
 	if judgeAnswer {
 		var event scannedEvent
-		if err := json.Unmarshal(payload, &event); err == nil {
+		if err := strictjson.Unmarshal(payload, &event); err == nil {
 			return event, true
 		}
 	}
 	var failure scannedError
-	if err := json.Unmarshal(payload, &failure); err != nil {
+	if err := strictjson.Unmarshal(payload, &failure); err != nil {
 		return scannedEvent{}, false
 	}
 	return scannedEvent{scannedError: failure, choicesUnreadable: judgeAnswer}, true
@@ -172,11 +174,32 @@ func decodeScannedEvent(payload []byte, judgeAnswer bool) (scannedEvent, bool) {
 
 // DecodeUpstreamError accepts every error shape a host in this fleet answers with. See README.md, "Cacheability".
 func DecodeUpstreamError(payload []byte) (UpstreamError, bool) {
+	if !mayCarryUpstreamError(payload) {
+		return UpstreamError{}, false
+	}
 	event, ok := decodeScannedEvent(payload, false)
 	if !ok {
 		return UpstreamError{}, false
 	}
 	return event.upstreamError()
+}
+
+func mayCarryUpstreamError(payload []byte) bool {
+	return anyKey(payload, func(name []byte, valueAt int) bool {
+		if bytes.EqualFold(name, []byte("error")) {
+			return true
+		}
+		return bytes.EqualFold(name, []byte("object")) && !plainStringOtherThan(payload[valueAt:], "error")
+	})
+}
+
+func plainStringOtherThan(value []byte, avoided string) bool {
+	value = bytes.TrimLeft(value, " \t\r\n")
+	if len(value) == 0 || value[0] != '"' {
+		return false
+	}
+	end, escaped := jsonStringEnd(value, 0)
+	return !escaped && end > 0 && string(value[1:end]) != avoided
 }
 
 func (event scannedError) upstreamError() (UpstreamError, bool) {
@@ -197,7 +220,7 @@ func (event scannedError) namedError() (UpstreamError, bool) {
 	}
 	if raw[0] == '"' {
 		var message string
-		if err := json.Unmarshal(raw, &message); err != nil || strings.TrimSpace(message) == "" {
+		if err := strictjson.Unmarshal(raw, &message); err != nil || strings.TrimSpace(message) == "" {
 			return UpstreamError{}, false
 		}
 		return UpstreamError{Type: event.ErrorType, Code: codeString(event.Code), Message: message}, true
@@ -207,7 +230,7 @@ func (event scannedError) namedError() (UpstreamError, bool) {
 		Code    any    `json:"code"`
 		Message string `json:"message"`
 	}
-	if err := json.Unmarshal(raw, &named); err != nil {
+	if err := strictjson.Unmarshal(raw, &named); err != nil {
 		return UpstreamError{}, false
 	}
 	if named.Type == "" {

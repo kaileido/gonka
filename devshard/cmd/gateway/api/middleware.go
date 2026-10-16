@@ -10,10 +10,9 @@ import (
 	"strings"
 	"time"
 
-	json "github.com/goccy/go-json"
-
 	"devshard/cmd/gateway/config"
 	"devshard/cmd/gateway/filters"
+	"devshard/cmd/gateway/internal/strictjson"
 )
 
 const (
@@ -212,7 +211,7 @@ func decodeAdminBody(w http.ResponseWriter, r *http.Request, target any) error {
 	if len(strings.TrimSpace(string(body))) == 0 {
 		return nil
 	}
-	return json.Unmarshal(body, target)
+	return strictjson.Unmarshal(body, target)
 }
 
 func allowMethods(w http.ResponseWriter, r *http.Request, methods ...string) bool {

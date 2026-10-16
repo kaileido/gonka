@@ -18,6 +18,7 @@ import (
 
 	"devshard/cmd/gateway/config"
 	"devshard/cmd/gateway/filters"
+	"devshard/cmd/gateway/internal/strictjson"
 )
 
 const (
@@ -202,7 +203,7 @@ func chatRequestHints(body []byte) (model string, stream bool) {
 		Model  string `json:"model"`
 		Stream bool   `json:"stream"`
 	}
-	if err := json.Unmarshal(body, &request); err != nil {
+	if err := strictjson.Unmarshal(body, &request); err != nil {
 		return "", false
 	}
 	return request.Model, request.Stream

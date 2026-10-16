@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
+	stdjson "encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -865,7 +866,7 @@ func (c *HTTPClient) handleSSELine(
 		return
 	}
 	var envelope map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(data), &envelope); err != nil {
+	if !stdjson.Valid([]byte(data)) || json.Unmarshal([]byte(data), &envelope) != nil {
 		// Not JSON -- forward as-is.
 		forward("data")
 		return

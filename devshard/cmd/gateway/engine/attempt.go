@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"sync"
@@ -20,6 +21,8 @@ var (
 
 	// ErrLocalRootUnavailable is the gateway's own store failing to give a post state root; the host did nothing wrong.
 	ErrLocalRootUnavailable = errors.New("local post state root unavailable")
+
+	errSendPanicked = errors.New("attempt send panicked")
 )
 
 // dispatcher is the engine's only route to a host; an adapter over devshard/user.Session satisfies it. See race.md, "Deadlines".
@@ -168,7 +171,7 @@ func runAttempt(ctx context.Context, spec AttemptSpec) {
 	err := catchUpErr
 	if catchUpErr == nil {
 		writer := &attemptWriter{spec: spec, state: state, nonce: nonce}
-		response, err = spec.Dispatch.Send(ctx, spec.Nonce, writer, func() {
+		response, err = sendRecovering(ctx, spec, writer, func() {
 			if !state.receiptTime.IsZero() {
 				return
 			}
@@ -193,6 +196,15 @@ func runAttempt(ctx context.Context, spec AttemptSpec) {
 		Outcome:   outcome,
 		Lifecycle: state.lifecycle,
 	})
+}
+
+func sendRecovering(ctx context.Context, spec AttemptSpec, writer io.Writer, onReceipt func()) (response Response, err error) {
+	defer func() {
+		if panicked := recover(); panicked != nil {
+			response, err = nil, fmt.Errorf("%w: %v", errSendPanicked, panicked)
+		}
+	}()
+	return spec.Dispatch.Send(ctx, spec.Nonce, writer, onReceipt)
 }
 
 func holdFinishForClaim(response Response, outcome *AttemptOutcome) {
