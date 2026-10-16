@@ -3,6 +3,7 @@ package api
 import (
 	"cmp"
 	"encoding/base64"
+	stdjson "encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -124,7 +125,7 @@ func (c *requestCapture) record(kind string, r *http.Request, requestID, model s
 		Escrow:     r.PathValue("id"),
 		Stream:     stream,
 	}
-	if json.Valid(body) {
+	if stdjson.Valid(body) {
 		record.Body = json.RawMessage(body)
 	} else {
 		record.BodyBase64 = base64.StdEncoding.EncodeToString(body)

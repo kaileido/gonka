@@ -10,14 +10,17 @@ import (
 	"time"
 
 	"common/httpguard"
-	json "github.com/goccy/go-json"
 	"golang.org/x/sync/errgroup"
+
+	"devshard/cmd/gateway/internal/strictjson"
 )
 
 const (
 	// Together these keep one pass inside the freshness window. See README.md, "What the chain observer provides".
 	versionsPollConcurrency = 16
 	versionsFetchTimeout    = 2 * time.Second
+
+	versionsResponseMaxBytes = 1 << 20
 )
 
 type mlnodeVersionEntry struct {
@@ -131,8 +134,12 @@ func (c *VersionsCache) fetchOne(ctx context.Context, base string) map[string]bo
 		io.Copy(io.Discard, resp.Body)
 		return nil
 	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, versionsResponseMaxBytes))
+	if err != nil {
+		return nil
+	}
 	var parsed versionsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+	if err := strictjson.Unmarshal(body, &parsed); err != nil {
 		return nil
 	}
 	nodes := make(map[string]bool, len(parsed.MLNodes))

@@ -199,7 +199,6 @@ func (h sessionHandle) ChatBudgets() map[string]ChatBudget {
 	return budgets
 }
 
-// slots and participants are taken once: the group is fixed for the life of a session, and asking the session takes the lock a nonce commit holds.
 type nonceStream struct {
 	session      EscrowSession
 	model        string

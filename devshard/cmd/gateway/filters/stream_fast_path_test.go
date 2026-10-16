@@ -27,6 +27,8 @@ func TestCarriesNothingToRewriteDeclinesWhatTheRewriteChanges(t *testing.T) {
 		{name: "a key spelled with escapes", payload: `{"choices":[{"\u006cogprobs":{}}]}`, want: false},
 		{name: "a usage key spelled with escapes", payload: `{"choices":[],"\u0075sage":{}}`, want: false},
 		{name: "a vertical tab after the object", payload: "{}\v", want: false},
+		{name: "an unterminated escaped key", payload: "{\"\\0\x05\\", want: false},
+		{name: "a lone opening quote", payload: "{\"", want: false},
 		{name: "a key in another case", payload: `{"choices":[{"LogProbs":{}}]}`, want: false},
 		{name: "a usage the client did not ask for", payload: `{"choices":[],"usage":{"total_tokens":3}}`, want: false},
 		{name: "a complete message", payload: `{"choices":[{"message":{"content":"hi"}}]}`, want: false},
@@ -55,6 +57,7 @@ func FuzzFastPathAgreesWithTheFullRewrite(f *testing.F) {
 	f.Add([]byte(`{"choices":[],"usage":{"total_tokens":3}}`), true)
 	f.Add([]byte(`{"choices":[{"message":{"content":"hi"}}]}`), false)
 	f.Add([]byte(`{"a":{"Token_IDS":[1]},"b":"\\"}`), false)
+	f.Add([]byte("{}\v"), true)
 	f.Fuzz(func(t *testing.T, payload []byte, keepUsage bool) {
 		if bytes.ContainsAny(payload, "\r\n") || !carriesNothingToRewrite(payload, keepUsage) {
 			return
@@ -96,6 +99,8 @@ func TestMayCarryUpstreamErrorDeclinesOnlyPlainChunks(t *testing.T) {
 		{name: "an error key spelled with escapes", payload: `{"\u0065rror":"boom"}`, want: true},
 		{name: "an object value spelled with escapes", payload: `{"object":"\u0065rror"}`, want: true},
 		{name: "an object value that is not a string", payload: `{"object":1}`, want: true},
+		{name: "an object key with a value cut off", payload: `0"oBjeCt":"`, want: true},
+		{name: "an unterminated escaped key", payload: "{\"\\0\x05\\", want: false},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -108,13 +113,16 @@ func TestMayCarryUpstreamErrorDeclinesOnlyPlainChunks(t *testing.T) {
 
 // Test flow:
 //  1. Generate payloads and ask the error pre-check about each.
-//  2. Decode every payload it skips the way DecodeUpstreamError did before the pre-check.
+//  2. Decode every payload it skips with the full decode.
 //  3. Assert that decode finds no error either: the pre-check only ever skips a decode that would have answered no error.
 func FuzzErrorPreCheckAgreesWithTheDecode(f *testing.F) {
 	f.Add([]byte(plainChunkPayload))
 	f.Add([]byte(`{"error":{"message":"boom"}}`))
 	f.Add([]byte(`{"object":"\u0065rror","message":"x"}`))
 	f.Add([]byte(`{"object":"error","object":"chat.completion.chunk"}`))
+	f.Add([]byte("{\"\\0\x05\\"))
+	f.Add([]byte("{\"\\00\\"))
+	f.Add([]byte(`0"oBjeCt":"`))
 	f.Fuzz(func(t *testing.T, payload []byte) {
 		if mayCarryUpstreamError(payload) {
 			return

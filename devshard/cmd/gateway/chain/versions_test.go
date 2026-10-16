@@ -272,3 +272,25 @@ func TestTheVersionsPollDoesNotDialAMinerOnAPrivateAddress(t *testing.T) {
 		t.Fatalf("hits on the private miner = %d, want 0", got)
 	}
 }
+
+// Test flow:
+//  1. Start versions stubs that answer a body past the size limit, and a body malformed in the shape that makes goccy read past its buffer.
+//  2. Poll a cache against each.
+//  3. Assert the node reads as not validation-capable and the poll returns: a miner's reply cannot grow the gateway's memory without bound or crash its poller.
+func TestVersionsCache_AnOversizedOrMalformedReply_FailsClosed(t *testing.T) {
+	oversized := `{"mlnodes":[{"node_id":"node-1","poc_validation_inference":true}],"padding":"` + strings.Repeat("x", versionsResponseMaxBytes) + `"}`
+	malformed := `{"mlnodes":1,"` + "\\0\x05\\"
+	for name, body := range map[string]string{"oversized": oversized, "malformed": malformed} {
+		t.Run(name, func(t *testing.T) {
+			server := newVersionsStub(t, http.StatusOK, body)
+			cache := NewVersionsCache(server.Client(), time.Minute, newFakeClock(time.Unix(0, 0)).Now)
+			cache.SetCandidates(map[string]string{"miner-1": server.URL})
+
+			cache.Poll(context.Background())
+
+			if cache.IsNodeValidationCapable("miner-1", "node-1") {
+				t.Fatalf("a %s reply should fail closed", name)
+			}
+		})
+	}
+}

@@ -644,6 +644,9 @@ func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest, stream io.W
 		return nil, err
 	}
 	var respJSON InferenceResponse
+	if !stdjson.Valid(respBody) {
+		return nil, errors.New("unmarshal response: invalid JSON")
+	}
 	if err := json.Unmarshal(respBody, &respJSON); err != nil {
 		return nil, fmt.Errorf("unmarshal response: %w", err)
 	}

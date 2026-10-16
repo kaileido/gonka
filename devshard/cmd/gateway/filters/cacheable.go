@@ -185,7 +185,7 @@ func DecodeUpstreamError(payload []byte) (UpstreamError, bool) {
 }
 
 func mayCarryUpstreamError(payload []byte) bool {
-	return anyKey(payload, func(name []byte, valueAt int) bool {
+	return anyKeyMatches(payload, func(name []byte, valueAt int) bool {
 		if bytes.EqualFold(name, []byte("error")) {
 			return true
 		}
@@ -193,13 +193,17 @@ func mayCarryUpstreamError(payload []byte) bool {
 	})
 }
 
-func plainStringOtherThan(value []byte, avoided string) bool {
-	value = bytes.TrimLeft(value, " \t\r\n")
+func plainStringOtherThan(value []byte, excluded string) bool {
+	value = bytes.TrimLeft(value, jsonWhitespace)
 	if len(value) == 0 || value[0] != '"' {
 		return false
 	}
-	end, escaped := jsonStringEnd(value, 0)
-	return !escaped && end > 0 && string(value[1:end]) != avoided
+	closing := stringLiteralEnd(value[1:])
+	if closing == 0 {
+		return false
+	}
+	literal := value[1:closing]
+	return value[closing] == '"' && bytes.IndexByte(literal, '\\') < 0 && string(literal) != excluded
 }
 
 func (event scannedError) upstreamError() (UpstreamError, bool) {

@@ -44,8 +44,8 @@ func TestUnmarshalRefusesMalformedBytesWithoutPanicking(t *testing.T) {
 
 // Test flow:
 //  1. Generate payloads and decode each with Unmarshal.
-//  2. Recover any panic.
-//  3. Assert none happened: no byte sequence a host or client sends can crash the decode.
+//  2. Let the fuzz engine fail the run on any panic.
+//  3. Assert by that failure's absence that no byte sequence a host or client sends can crash the decode.
 func FuzzUnmarshalNeverPanics(f *testing.F) {
 	f.Add([]byte(`{"error":{"message":"boom"},"object":"error"}`))
 	f.Add([]byte(`{"error":1,"` + "\\0\x05\\"))

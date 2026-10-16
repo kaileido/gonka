@@ -14,6 +14,8 @@ const (
 
 	// chunkObject tells a streaming client to read choices[].delta instead of choices[].message.
 	chunkObject = "chat.completion.chunk"
+
+	jsonWhitespace = " \t\r\n"
 )
 
 var (
@@ -155,11 +157,11 @@ func rewriteDecodedEvent(event []byte, dataLines int, payload []byte, intent Log
 var rewriteTriggers = append(slices.Clone(clientStrippedFields), "message")
 
 func carriesNothingToRewrite(payload []byte, keepUsage bool) bool {
-	payload = bytes.Trim(payload, " \t\r\n")
+	payload = bytes.Trim(payload, jsonWhitespace)
 	if len(payload) == 0 || payload[0] != '{' {
 		return false
 	}
-	triggered := anyKey(payload, func(name []byte, _ int) bool {
+	triggered := anyKeyMatches(payload, func(name []byte, _ int) bool {
 		if !keepUsage && bytes.EqualFold(name, []byte("usage")) {
 			return true
 		}
@@ -168,55 +170,40 @@ func carriesNothingToRewrite(payload []byte, keepUsage bool) bool {
 	return !triggered && stdjson.Valid(payload)
 }
 
-func anyKey(payload []byte, visit func(name []byte, valueAt int) bool) bool {
+func anyKeyMatches(payload []byte, matches func(name []byte, valueAt int) bool) bool {
 	for index := 0; index < len(payload); index++ {
 		if payload[index] != '"' {
 			continue
 		}
-		end, escaped := jsonStringEnd(payload, index)
-		if colon, isKey := colonAfter(payload, end); isKey {
-			name := payload[index+1 : end]
-			if escaped {
+		rest := payload[index+1:]
+		if len(rest) == 0 {
+			return false
+		}
+		closing := index + stringLiteralEnd(rest)
+		if colon, isKey := colonAfter(payload, closing); isKey {
+			name := payload[index+1 : closing]
+			if bytes.IndexByte(name, '\\') >= 0 {
 				var unescaped string
-				if stdjson.Unmarshal(payload[index:end+1], &unescaped) != nil {
+				if stdjson.Unmarshal(payload[index:closing+1], &unescaped) != nil {
 					return true
 				}
 				name = []byte(unescaped)
 			}
-			if visit(name, colon+1) {
+			if matches(name, colon+1) {
 				return true
 			}
 		}
-		index = end
+		index = closing
 	}
 	return false
 }
 
-func jsonStringEnd(payload []byte, open int) (closing int, escaped bool) {
-	for index := open + 1; index < len(payload); index++ {
-		switch payload[index] {
-		case '\\':
-			escaped = true
-			index++
-		case '"':
-			return index, escaped
-		}
-	}
-	return len(payload) - 1, escaped
-}
-
 func colonAfter(payload []byte, closing int) (int, bool) {
-	for index := closing + 1; index < len(payload); index++ {
-		switch payload[index] {
-		case ' ', '\t', '\r', '\n':
-			continue
-		case ':':
-			return index, true
-		default:
-			return 0, false
-		}
+	rest := bytes.TrimLeft(payload[closing+1:], jsonWhitespace)
+	if len(rest) == 0 || rest[0] != ':' {
+		return 0, false
 	}
-	return 0, false
+	return len(payload) - len(rest), true
 }
 
 // chunkHousekeepingFields are what the final usage event carries besides its usage.

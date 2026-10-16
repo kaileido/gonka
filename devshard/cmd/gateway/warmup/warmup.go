@@ -191,7 +191,7 @@ func dispatchProbe(ctx context.Context, session registry.EscrowSession, params u
 
 	// Taken as it arrives: a host that receipts and then hangs never returns the reply to read it from.
 	var acknowledged atomic.Bool
-	response, sendErr := session.UserSession().SendOnly(sendCtx, prepared, nil, func() { acknowledged.Store(true) })
+	response, sendErr := registry.SendRecovering(sendCtx, session.UserSession(), prepared, nil, func() { acknowledged.Store(true) })
 	if sendErr != nil {
 		return nonce, acknowledged.Load(), sendErr
 	}

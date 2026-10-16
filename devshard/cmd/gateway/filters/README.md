@@ -83,7 +83,7 @@ The package uses two: `encoding/json` from the standard library, and `github.com
 | `stripInternalFields`, `decodeStreamedEvent`, `completionAsChunks` | standard library | goccy parses a number token even into a `json.RawMessage` and errors past the float64 range. That fails the strip open — a body carrying `1e999` would keep every internal field — and fails the chunk conversion on a `created` out of range. |
 | `Document.Marshal`, `DecodeUpstreamError`, `jsonMarshaledSize` | goccy | Neither the error text nor the range behaviour is load-bearing here, and `Marshal` sorts map keys, so the normalised body is deterministic. |
 
-Every goccy decode of bytes a host or a client sent goes through `internal/strictjson`, which hands goccy only what `encoding/json.Valid` accepts. On some malformed input goccy reads past its buffer and panics, intermittently and more often under concurrency; the attempt classifier decodes every event of every attempt, so one malformed line from a host would otherwise be able to take the gateway down.
+Every goccy decode of bytes a host or a client sent goes through `internal/strictjson`, which hands goccy only what `encoding/json.Valid` accepts; what an operator configures, such as the admin overrides and the rotation models, is decoded directly. `transport` cannot import it, so its two decodes of a chat reply, the SSE envelope (`HTTPClient.handleSSELine`) and the JSON body (`HTTPClient.Send`), run `encoding/json.Valid` themselves; both are reached only from a chat send, which host binaries never make: they reach `HTTPClient` through peer and executor clients with no `Send`. On some malformed input goccy reads past its buffer and panics, intermittently and more often under concurrency; the attempt classifier decodes every event of every attempt, so one malformed line from a host would otherwise be able to take the gateway down.
 
 Every decode that matters uses `UseNumber`, so a number survives as its literal rather than as a float64.
 
@@ -289,6 +289,8 @@ The gateway appends its own `[DONE]` when a host sends none (`api/stream.go`, `t
 A recorded host stream that finishes still earns its entry: `TestEveryRecordedStreamIsClassified` names the verdict for every fixture in `testdata/sse`, so a new one fails the suite until somebody says which side of the gate it belongs on.
 
 Reading the choices is what the answer costs: the walk is about 1.6 times the price of asking for the error alone (`BenchmarkIsCacheableResponse`). It scales with the body, so a 1.3 MB reply pays about a millisecond of it on the store — against the seconds that same reply spends being written to the client. Only the store pays: the read path asks the failure alone. The events-side alternative, counting inside the rewriter and the fold as the events go past, costs a tenth of that, but it answers from writer state rather than from the bytes actually stored, and it cannot see a body that was never framed as events at all.
+
+`DecodeUpstreamError` skips the decode for a payload that cannot carry an error, which is almost every event of a stream: the classifier asks it of each one. `mayCarryUpstreamError` walks the keys the way the rewrite's fast path does, unescaping and ignoring case. A key `error`, or an `object` key whose value is not a plain unescaped string other than `error`, sends the payload to the decode; anything it cannot read does too. `FuzzErrorPreCheckAgreesWithTheDecode` holds it to skipping only payloads the decode would answer with no error.
 
 ### Capability errors
 

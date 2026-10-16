@@ -8,7 +8,6 @@ import (
 	"devshard/cmd/gateway/filters"
 )
 
-// malformedHostPayloads end on an unterminated, escaped key after a complete field, the shape that makes a lenient decoder read past its buffer.
 func malformedHostPayloads() [][]byte {
 	tail := "\\0\x05\\"
 	return [][]byte{
@@ -23,7 +22,7 @@ func malformedHostPayloads() [][]byte {
 //  1. Decode payloads a host could send, each malformed in the shape that trips a lenient decoder, from several goroutines at once as concurrent attempts do.
 //  2. Run them through the attempt classifier's event decode and its error decode, many times over.
 //  3. Assert no decode panicked: a host's bytes must never be able to bring the gateway down.
-func TestAHostsMalformedEventNeverPanicsTheClassifier(t *testing.T) {
+func TestDecodeEvent_AMalformedHostEventNeverPanics(t *testing.T) {
 	var panics atomic.Int64
 	var workers sync.WaitGroup
 	for range 8 {

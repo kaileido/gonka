@@ -85,7 +85,7 @@ func (t escrowTarget) Send(ctx context.Context, nonce scheduler.Prepared, stream
 		return nil, err
 	}
 	// stream is handed on unwrapped: the transport type-asserts http.Flusher on it to flush each SSE line.
-	reply, err := t.session.SendOnly(ctx, prepared, stream, onReceipt)
+	reply, err := registry.SendRecovering(ctx, t.session, prepared, stream, onReceipt)
 	if reply != nil {
 		t.session.PinPendingFinish(prepared.Nonce())
 		// Applies for a reply that arrived beside an error too, and keeps both: a failed send must not hide a diverged state. See rules.md.

@@ -41,7 +41,7 @@ func TrimSSEDone(events []byte) []byte {
 	if cut < 0 {
 		return events
 	}
-	return bytes.TrimRight(events[:cut], " \t\r\n")
+	return bytes.TrimRight(events[:cut], jsonWhitespace)
 }
 
 // HasSSEDone is line-anchored, so a "[DONE]" inside a content delta is not read as the terminator.

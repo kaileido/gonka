@@ -390,6 +390,8 @@ How each escrow reaches its hosts is in two series: `devshard_gateway_escrow_ses
 | hosts the gateway distrusts | `GET /v1/admin/suspicious-hosts` |
 | why one host is or is not taking work | `GET /v1/admin/hosts` |
 
+`GET /v1/debug/heightsync` reads each session's published height-sync view, not the session itself, so the read never waits on an escrow's lock (`registry/session.go`, `HeightSyncView`). A nonce commit and an applied response only mark that view stale and leave its snapshot, which takes the session lock again, to the view's trailing flush (`user.Session.publishHeightSyncViewOffPath`): the view lags the session by about its publish interval.
+
 An escrow row in `GET /v1/admin/state` and `GET /v1/admin/devshards` carries, besides the gateway's own labels (`rotation_role`, `rotation_epoch`, `active`, `settlement_pending`), the chain facts the gateway resolved for it: `chain_epoch`, the epoch the chain stamped on the escrow, whose settle deadline the deadline rule reads (`0` while unresolved); `amount`, the escrow's funded amount (`0` while unresolved); and `gone_from_chain`, true once the chain no longer holds the escrow, which takes it out of service and out of the unsettled count. A `GET /v1/admin/devshards` row whose session is resident (published or still draining) also carries `runtime` with the session's current `nonce`; a row with no resident session has none, which is how a reader tells a live escrow from a stored one (`api/admin_devshards.go`).
 
 ### What a host answer carries

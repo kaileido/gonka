@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -111,6 +112,7 @@ type recordingSession struct {
 	sendErr    error
 	applyErr   error
 	catchUpErr error
+	sendPanics bool
 }
 
 func (s *recordingSession) CatchUpBeforeSend(_ context.Context, prepared *user.PreparedInference) error {
@@ -121,6 +123,9 @@ func (s *recordingSession) CatchUpBeforeSend(_ context.Context, prepared *user.P
 
 func (s *recordingSession) SendOnly(_ context.Context, prepared *user.PreparedInference, stream io.Writer, onReceipt func()) (*host.HostResponse, error) {
 	s.calls = append(s.calls, "SendOnly")
+	if s.sendPanics {
+		panic("index out of range in a decoder")
+	}
 	s.sent, s.stream = prepared, stream
 	if onReceipt != nil {
 		onReceipt()
@@ -396,6 +401,30 @@ func TestSendKeepsTheUpstreamErrorInspectable(t *testing.T) {
 	var found *transport.UpstreamStatusError
 	if !errors.As(err, &found) || found != upstream {
 		t.Errorf("errors.As(%v) did not recover the upstream status the engine classifies on", err)
+	}
+}
+
+// Test flow:
+//  1. Give the target a session whose send panics, as a decoder reading a host's malformed bytes can.
+//  2. Send a prepared nonce through it.
+//  3. Assert the send returns an error carrying the panic, and nothing after it ran: the panic is caught where only the host's bytes are read, before the reply is applied under the session lock.
+func TestSendTurnsAPanickingSendIntoAFailedSendAndAppliesNothing(t *testing.T) {
+	t.Parallel()
+	session, _ := newLiveSession(t)
+	prepared := prepareNonce(t, session)
+	recorded := &recordingSession{sendPanics: true}
+	target := escrowTarget{session: recorded}
+
+	response, err := target.Send(context.Background(), prepared, io.Discard, nil)
+
+	if !errors.Is(err, registry.ErrSendPanicked) || !strings.Contains(err.Error(), "index out of range in a decoder") {
+		t.Fatalf("error = %v, want the send's panic", err)
+	}
+	if response != nil {
+		t.Fatalf("response = %v, want none", response)
+	}
+	if !slices.Equal(recorded.calls, []string{"SendOnly"}) {
+		t.Fatalf("calls = %v, want only SendOnly: nothing after a panicking send may run", recorded.calls)
 	}
 }
 

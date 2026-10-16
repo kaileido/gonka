@@ -74,7 +74,6 @@ type fakeDispatcher struct {
 	err      error
 	calls    int
 	catchUp  func() error
-	panics   bool
 }
 
 func (d *fakeDispatcher) CatchUp(context.Context, scheduler.Prepared) error {
@@ -86,9 +85,6 @@ func (d *fakeDispatcher) CatchUp(context.Context, scheduler.Prepared) error {
 
 func (d *fakeDispatcher) Send(ctx context.Context, nonce scheduler.Prepared, stream io.Writer, onReceipt func()) (Response, error) {
 	d.calls++
-	if d.panics {
-		panic("index out of range in a decoder")
-	}
 	if d.receipt {
 		onReceipt()
 	}
@@ -566,23 +562,6 @@ func TestRunAttempt_TheHostsClockStartsAfterTheSessionsCatchUp(t *testing.T) {
 	}
 	if sent := doneEvent(t, events).Outcome.SendTime; !sent.After(caughtUpAt) {
 		t.Fatalf("outcome send time = %v, want after the catch-up at %v", sent, caughtUpAt)
-	}
-}
-
-// Test flow:
-//  1. Configure a dispatcher whose send panics, as a decoder reading a host's malformed bytes once did.
-//  2. Run the attempt.
-//  3. Assert the attempt still ends, reported done as a failed send: a panic in one attempt must cost that attempt, not the gateway process.
-func TestRunAttempt_APanickingSendEndsTheAttemptAsAFailure(t *testing.T) {
-	t.Parallel()
-
-	fixture := newAttemptFixture(&fakeDispatcher{panics: true}, &fakeClassifier{})
-
-	runAttempt(context.Background(), fixture.spec)
-	outcome := doneEvent(t, fixture.drain()).Outcome
-
-	if outcome.Terminal != TerminalDialFailure {
-		t.Fatalf("terminal = %v, want %v", outcome.Terminal, TerminalDialFailure)
 	}
 }
 
