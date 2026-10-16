@@ -16,6 +16,7 @@ func benchAttempts(count int) []EscalationAttempt {
 	attempts := make([]EscalationAttempt, 0, count)
 	for i := range count {
 		attempts = append(attempts, EscalationAttempt{
+			LaunchTime:      start,
 			SendTime:        start,
 			ReceiptTime:     start.Add(200 * time.Millisecond),
 			FirstContentP75: time.Duration(i+1) * time.Second,

@@ -14,10 +14,10 @@ import (
 
 func notFinite(value float64) bool { return math.IsNaN(value) || math.IsInf(value, 0) }
 
-// MaxContextTokens is the longest context a model may be priced at. See capacity.md, "The participant limiter: IOCW".
-const MaxContextTokens = 100_000_000
-
 const (
+	// MaxContextTokens is the longest context a model may be priced at. See capacity.md, "The participant limiter: IOCW".
+	MaxContextTokens = 100_000_000
+
 	maxWindowRequests        = 1_000_000
 	maxConcurrentRequests    = 10_000_000
 	maxAdmissionQueuePerSlot = 10_000

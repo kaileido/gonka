@@ -21,6 +21,7 @@ type dispatchObserver interface {
 	BurnBudgetExhausted(escrowID string)
 	EscrowRetired(escrowID string)
 	NonceAssigned(escrowID string, nonce uint64, requestID string)
+	NonceQueued(escrowID string, waited time.Duration)
 	ExcludedHostServed(escrowID, participant string)
 	ForcedSend(escrowID, participant string, burnsInARow int64)
 }
@@ -275,9 +276,10 @@ func (d *dispatcher) recordBudgetTrip() {
 	}
 }
 
-func (d *dispatcher) recordAssigned(nonce uint64, requestID string) {
+func (d *dispatcher) recordAssigned(nonce uint64, requestID string, enqueued time.Time) {
 	if d.observer != nil {
 		d.observer.NonceAssigned(d.escrowID, nonce, requestID)
+		d.observer.NonceQueued(d.escrowID, d.now().Sub(enqueued))
 	}
 }
 

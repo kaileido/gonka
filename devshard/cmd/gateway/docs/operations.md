@@ -298,7 +298,7 @@ Admin lines carry the action and its subject, **never the request body** — an 
 
 ## Metrics
 
-`/metrics`, Prometheus: 77 gateway families beside the Go runtime and process collectors. The nonce ledger adds none; it is served by its own JSON API (see [accounting.md](./accounting.md)). Grouped by the question they answer:
+`/metrics`, Prometheus: 79 gateway families beside the Go runtime and process collectors. The nonce ledger adds none; it is served by its own JSON API (see [accounting.md](./accounting.md)). Grouped by the question they answer:
 
 | Question | Series |
 | --- | --- |
@@ -314,10 +314,29 @@ Admin lines carry the action and its subject, **never the request body** — an 
 | is memory bounded | `devshard_gateway_buffered_response_bytes`, `devshard_gateway_cache_bytes`, `devshard_gateway_capture_bytes_held` |
 | are the request records keeping up | `devshard_gateway_accounting_rows_written_total`, `devshard_gateway_accounting_rows_lost_total`, `devshard_gateway_accounting_retention_sweeps_failed_total` |
 | is the journal keeping up | `devshard_gateway_journal_money_refused_total`, `devshard_gateway_journal_progress_dropped_total`, `devshard_gateway_journal_late_events_total` |
+| where does a request wait inside the gateway | `devshard_gateway_escrow_queue_wait_seconds`, `devshard_gateway_session_step_seconds{step}` (below) |
 
 A race the client left counts as `devshard_gateway_requests_total{reason="client_cancelled"}` unless the escrow itself failed first, which outranks a departure as `reason="escrow_missing"` or `reason="balance_exhausted"`; the faults of its hosts stay on `devshard_gateway_attempt_failures_total{reason}` instead.
 
 `devshard_gateway_chain_snapshot_healthy` is the one to alert on first: with a stale snapshot every score, weight and preserved-set decision below it is being made on old data.
+
+### Where the gateway spends a request's time
+
+An escrow hands out nonces one at a time, so its throughput is the inverse of the time one nonce holds its session. Two histograms take that time apart without a profiler, in production and in a load run alike.
+
+`devshard_gateway_escrow_queue_wait_seconds` is how long a request waited in an escrow's dispatch queue before it was handed a nonce (`scheduler/dispatcher.go`, `recordAssigned`). A queue that keeps filling shows here first, before it refuses with `escrow dispatch queue full`.
+
+`devshard_gateway_session_step_seconds{step}` times the session itself (`user/step_timer.go`):
+
+| step | what it times |
+| --- | --- |
+| `lock_wait_prepare`, `lock_held_prepare` | waiting for and holding the session lock while a nonce is composed |
+| `lock_wait_process`, `lock_held_process` | the same while a host's response is applied |
+| `store_append_diff` | persisting the nonce's diff, retries included, under the session lock |
+| `store_add_signature` | persisting one host signature, off the session lock |
+| `host_catch_up` | a send waiting for its host to be caught up |
+
+`lock_held_prepare` bounds the escrow's rate: a mean of 80 ms is at most about twelve nonces a second. When it is high, `store_append_diff` says whether the store is the cause. `step` takes only these values, so the family stays at seven series.
 
 ### Cardinality rules
 
@@ -371,7 +390,7 @@ How each escrow reaches its hosts is in two series: `devshard_gateway_escrow_ses
 | hosts the gateway distrusts | `GET /v1/admin/suspicious-hosts` |
 | why one host is or is not taking work | `GET /v1/admin/hosts` |
 
-An escrow row in `GET /v1/admin/state` and `GET /v1/admin/devshards` carries, besides the gateway's own labels (`rotation_role`, `rotation_epoch`, `active`, `settlement_pending`), the chain facts the gateway resolved for it: `chain_epoch`, the epoch the chain stamped on the escrow, whose settle deadline the deadline rule reads (`0` while unresolved); `amount`, the escrow's funded amount (`0` while unresolved); and `gone_from_chain`, true once the chain no longer holds the escrow, which takes it out of service and out of the unsettled count.
+An escrow row in `GET /v1/admin/state` and `GET /v1/admin/devshards` carries, besides the gateway's own labels (`rotation_role`, `rotation_epoch`, `active`, `settlement_pending`), the chain facts the gateway resolved for it: `chain_epoch`, the epoch the chain stamped on the escrow, whose settle deadline the deadline rule reads (`0` while unresolved); `amount`, the escrow's funded amount (`0` while unresolved); and `gone_from_chain`, true once the chain no longer holds the escrow, which takes it out of service and out of the unsettled count. A `GET /v1/admin/devshards` row whose session is resident (published or still draining) also carries `runtime` with the session's current `nonce`; a row with no resident session has none, which is how a reader tells a live escrow from a stored one (`api/admin_devshards.go`).
 
 ### What a host answer carries
 

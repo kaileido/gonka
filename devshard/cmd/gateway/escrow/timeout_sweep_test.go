@@ -56,7 +56,7 @@ func TestSweepPassesTheConfiguredBudgetAndGrace(t *testing.T) {
 	manager := managerWithSweeper(t, sweeper, &cfg)
 
 	manager.sweepTimeouts(context.Background())
-	manager.sweepWork.Wait()
+	manager.offTickWork.Wait()
 
 	require.Equal(t, 1, sweeper.callCount())
 	require.Equal(t, 90*time.Second, sweeper.grace)
@@ -74,7 +74,7 @@ func TestSweepIsOffWithoutABudget(t *testing.T) {
 	manager := managerWithSweeper(t, sweeper, &cfg)
 
 	manager.sweepTimeouts(context.Background())
-	manager.sweepWork.Wait()
+	manager.offTickWork.Wait()
 
 	require.Zero(t, sweeper.callCount())
 }
@@ -95,7 +95,7 @@ func TestASecondTickDoesNotStartASecondSweep(t *testing.T) {
 	require.Eventually(t, func() bool { return sweeper.callCount() == 1 }, time.Second, time.Millisecond)
 	manager.sweepTimeouts(context.Background())
 	close(release)
-	manager.sweepWork.Wait()
+	manager.offTickWork.Wait()
 
 	require.Equal(t, 1, sweeper.callCount())
 }

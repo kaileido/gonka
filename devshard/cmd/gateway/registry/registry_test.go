@@ -58,8 +58,8 @@ type fakeSession struct {
 	flushErr      error
 	flushCalls    atomic.Int64
 	closeErr      error
-	chainMaxNonce atomic.Uint32
 	closeCalls    atomic.Int64
+	chainMaxNonce atomic.Uint32
 	onFlush       func()
 	prepare       func(user.ParamsForHost) (*user.PreparedInference, error)
 
@@ -177,6 +177,10 @@ func (f *fakeSession) HeightSyncView() heightsync.OperatorView { return f.height
 
 func (f *fakeSession) WaitRouterCatalog(context.Context) error   { return nil }
 func (f *fakeSession) WaitHeightSeedReady(context.Context) error { return nil }
+
+func (f *fakeSession) SetChainMaxNonce(maxNonce uint32)                { f.chainMaxNonce.Store(maxNonce) }
+func (f *fakeSession) ArmQuietSettle()                                 {}
+func (f *fakeSession) AllInferences() map[uint64]types.InferenceRecord { return nil }
 
 func (f *fakeSession) setPhase(phase types.SessionPhase) { f.phase.Store(int32(phase)) }
 
@@ -1273,7 +1277,3 @@ func TestTheDrainingViewShrinksWhenAnEscrowFinishes(t *testing.T) {
 		t.Fatalf("draining view holds %d entries after both drained, want none", len(*view))
 	}
 }
-
-func (f *fakeSession) SetChainMaxNonce(maxNonce uint32)                { f.chainMaxNonce.Store(maxNonce) }
-func (f *fakeSession) ArmQuietSettle()                                 {}
-func (f *fakeSession) AllInferences() map[uint64]types.InferenceRecord { return nil }

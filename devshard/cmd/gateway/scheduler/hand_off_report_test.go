@@ -1,8 +1,10 @@
 package scheduler
 
 import (
+	"slices"
 	"sync"
 	"testing"
+	"time"
 )
 
 // Test flow:
@@ -28,6 +30,22 @@ func TestAHandedOffNonceIsReportedWithItsRequest(t *testing.T) {
 	}
 	if assigned[0].requestID != queued.profile.RequestID {
 		t.Fatalf("reported request %q, want %q", assigned[0].requestID, queued.profile.RequestID)
+	}
+}
+
+// Test flow:
+//  1. Submit a request that entered the queue a moment before the dispatcher's clock.
+//  2. Await its reply.
+//  3. Assert the hand-off reported exactly that wait: the time a request spends in an escrow's queue is what the queue-wait histogram reads.
+func TestAHandedOffNonceReportsHowLongItsRequestQueued(t *testing.T) {
+	test := newHarness(t, harnessConfig{})
+	const queuedFor = 250 * time.Millisecond
+
+	queued := test.submit(t, test.clock.Now().Add(-queuedFor))
+	awaitReply(t, queued)
+
+	if waits := test.observer.waits(); !slices.Equal(waits, []time.Duration{queuedFor}) {
+		t.Fatalf("reported waits %v, want [%v]", waits, queuedFor)
 	}
 }
 

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -116,5 +117,23 @@ func TestChatIsRejectedDuringPoCAndServedUnderRelaxedMode(t *testing.T) {
 	}
 	if got := relaxed.inference.runs.Load(); got != 1 {
 		t.Fatalf("relaxed mode races: got %d, want 1", got)
+	}
+}
+
+// Test flow:
+//  1. Start a harness whose chain snapshot is in PoC generation.
+//  2. GET /v1/status.
+//  3. Assert the status names that epoch phase: an operator, and the load harness's phase check, read the chain's phase from the gateway the way they read it from devshardctl.
+func TestStatusReportsTheChainsEpochPhase(t *testing.T) {
+	live := newHarness(t)
+	live.snapshots.snapshot = chain.PhaseSnapshot{RequestsBlocked: true, BlockReason: chain.BlockReasonPoC, EpochPhase: chain.EpochPhasePoCGenerate}
+
+	recorder := live.request(t, http.MethodGet, "/v1/status", "", nil)
+
+	var status struct {
+		ChainPhase string `json:"chain_phase"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &status); err != nil || status.ChainPhase != string(chain.EpochPhasePoCGenerate) {
+		t.Fatalf("status = %s (%v), want chain_phase %q", recorder.Body.String(), err, chain.EpochPhasePoCGenerate)
 	}
 }

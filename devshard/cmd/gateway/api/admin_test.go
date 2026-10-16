@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"devshard/cmd/gateway/chain"
 	"devshard/cmd/gateway/escrow"
 	"devshard/cmd/gateway/internal/logcapture"
+	"devshard/cmd/gateway/registry"
 	"devshard/cmd/gateway/store"
 )
 
@@ -238,6 +240,38 @@ func TestAnAdminListReflectsTheStore(t *testing.T) {
 	}
 	if got := recorder.Body.String(); !strings.Contains(got, `"id":"42"`) {
 		t.Fatalf("body: %s", got)
+	}
+}
+
+// Test flow:
+//  1. Seed the control store with a devshard whose session is resident and one whose session is not.
+//  2. GET the admin devshards list.
+//  3. Assert the resident one carries its runtime with the session's nonce and the other carries none: an operator and the load harness tell a live escrow from a stored row by it.
+func TestAnAdminListMarksTheEscrowsWithAResidentSession(t *testing.T) {
+	live := newHarness(t)
+	session, machine := newLiveSession(t)
+	live.escrows.sessions[liveEscrowID] = registry.NewSessionHandle(session, machine)
+	live.control.devshards = []store.DevshardRecord{{EscrowID: liveEscrowID, Model: "qwen", Active: true}, {EscrowID: "42", Model: "qwen"}}
+
+	recorder := live.request(t, http.MethodGet, "/v1/admin/devshards", "", adminHeaders())
+
+	var listed struct {
+		Devshards []struct {
+			ID      string `json:"id"`
+			Runtime *struct {
+				Nonce uint64 `json:"nonce"`
+			} `json:"runtime"`
+		} `json:"devshards"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &listed); err != nil || len(listed.Devshards) != 2 {
+		t.Fatalf("list = %s (%v), want two devshards", recorder.Body.String(), err)
+	}
+	resident, stored := listed.Devshards[0], listed.Devshards[1]
+	if resident.Runtime == nil || resident.Runtime.Nonce != session.Nonce() {
+		t.Fatalf("resident devshard runtime = %+v, want the session's nonce %d", resident.Runtime, session.Nonce())
+	}
+	if stored.Runtime != nil {
+		t.Fatalf("stored-only devshard runtime = %+v, want none", stored.Runtime)
 	}
 }
 

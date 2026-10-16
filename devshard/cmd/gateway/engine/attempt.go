@@ -14,13 +14,15 @@ import (
 
 const maxUpstreamBodyLogged = 256
 
-// ErrStateRootDivergence lets the race branch on a diverging post state root without reading error text.
-var ErrStateRootDivergence = errors.New("post state root divergence")
+var (
+	// ErrStateRootDivergence lets the race branch on a diverging post state root without reading error text.
+	ErrStateRootDivergence = errors.New("post state root divergence")
 
-// ErrLocalRootUnavailable is the gateway's own store failing to give a post state root; the host did nothing wrong.
-var ErrLocalRootUnavailable = errors.New("local post state root unavailable")
+	// ErrLocalRootUnavailable is the gateway's own store failing to give a post state root; the host did nothing wrong.
+	ErrLocalRootUnavailable = errors.New("local post state root unavailable")
+)
 
-// dispatcher is the engine's only route to a host; an adapter over devshard/user.Session satisfies it. CatchUp is the session's own wait before a send, so the host's clock starts after it. See race.md, "Deadlines".
+// dispatcher is the engine's only route to a host; an adapter over devshard/user.Session satisfies it. See race.md, "Deadlines".
 type dispatcher interface {
 	CatchUp(ctx context.Context, nonce scheduler.Prepared) error
 	Send(ctx context.Context, nonce scheduler.Prepared, stream io.Writer, onReceipt func()) (Response, error)

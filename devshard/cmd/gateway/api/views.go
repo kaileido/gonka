@@ -107,6 +107,7 @@ type statusResponse struct {
 	Version         string            `json:"version"`
 	RequestsBlocked bool              `json:"requests_blocked"`
 	BlockReason     chain.BlockReason `json:"block_reason,omitempty"`
+	ChainPhase      chain.EpochPhase  `json:"chain_phase,omitempty"`
 	Models          []string          `json:"models"`
 	Devshards       []devshardStatus  `json:"devshards"`
 	Limiter         limiterStatus     `json:"limiter"`
@@ -115,18 +116,23 @@ type statusResponse struct {
 
 // The two views below keep the storage rows out of the response: a column rename would change the API.
 type devshardView struct {
-	EscrowID          string `json:"id"`
-	PrivateKeyEnv     string `json:"private_key_env"`
-	Model             string `json:"model"`
-	Active            bool   `json:"active"`
-	RotationRole      string `json:"rotation_role"`
-	RotationEpoch     int64  `json:"rotation_epoch"`
-	ChainEpoch        uint64 `json:"chain_epoch"`
-	Amount            uint64 `json:"amount"`
-	GoneFromChain     bool   `json:"gone_from_chain"`
-	SettlementPending bool   `json:"settlement_pending"`
-	SettleTxHash      string `json:"settle_tx_hash,omitempty"`
-	RoutePrefix       string `json:"route_prefix,omitempty"`
+	EscrowID          string               `json:"id"`
+	PrivateKeyEnv     string               `json:"private_key_env"`
+	Model             string               `json:"model"`
+	Active            bool                 `json:"active"`
+	RotationRole      string               `json:"rotation_role"`
+	RotationEpoch     int64                `json:"rotation_epoch"`
+	ChainEpoch        uint64               `json:"chain_epoch"`
+	Amount            uint64               `json:"amount"`
+	GoneFromChain     bool                 `json:"gone_from_chain"`
+	SettlementPending bool                 `json:"settlement_pending"`
+	SettleTxHash      string               `json:"settle_tx_hash,omitempty"`
+	RoutePrefix       string               `json:"route_prefix,omitempty"`
+	Runtime           *devshardRuntimeView `json:"runtime,omitempty"`
+}
+
+type devshardRuntimeView struct {
+	Nonce uint64 `json:"nonce"`
 }
 
 type rotationView struct {
@@ -237,6 +243,7 @@ func (s *Server) status(escrows []scheduler.Escrow) statusResponse {
 		Version:         s.version,
 		RequestsBlocked: refusal != nil,
 		BlockReason:     statusBlockReason(snapshot, refusal),
+		ChainPhase:      snapshot.EpochPhase,
 		Models:          models,
 		Devshards:       devshards,
 		Limiter: limiterStatus{

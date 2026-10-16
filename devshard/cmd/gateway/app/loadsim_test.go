@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -32,6 +33,7 @@ import (
 	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/state"
+	"devshard/storage"
 	"devshard/stub"
 	"devshard/transport"
 	"devshard/user"
@@ -117,6 +119,35 @@ func (e delayedEngine) Execute(ctx context.Context, request devshardpkg.ExecuteR
 type inProcessFleet struct {
 	sessions map[string]registry.EscrowSession
 	machines []*state.StateMachine
+
+	stepsMu sync.Mutex
+	steps   map[string]stepTotal
+}
+
+type stepTotal struct {
+	count   int
+	elapsed time.Duration
+	longest time.Duration
+}
+
+func (f *inProcessFleet) recordStep(step string, elapsed time.Duration) {
+	f.stepsMu.Lock()
+	defer f.stepsMu.Unlock()
+	total := f.steps[step]
+	total.count++
+	total.elapsed += elapsed
+	total.longest = max(total.longest, elapsed)
+	f.steps[step] = total
+}
+
+func (f *inProcessFleet) reportSteps(t *testing.T) {
+	f.stepsMu.Lock()
+	defer f.stepsMu.Unlock()
+	for _, step := range slices.Sorted(maps.Keys(f.steps)) {
+		total := f.steps[step]
+		t.Logf("step %s: %d times, mean %s, longest %s, %s in all",
+			step, total.count, (total.elapsed / time.Duration(max(total.count, 1))).Round(time.Microsecond), total.longest.Round(time.Microsecond), total.elapsed.Round(time.Millisecond))
+	}
 }
 
 // meanLiveInferences is the unsealed window a state root is recomputed over, averaged across the fleet's escrows.
@@ -131,7 +162,8 @@ func (f *inProcessFleet) meanLiveInferences() int {
 // newInProcessFleet builds every session up front, on the test's goroutine, where a failed build may stop the test.
 func newInProcessFleet(t *testing.T, settings loadSimulationSettings, escrowIDs []string) *inProcessFleet {
 	t.Helper()
-	fleet := &inProcessFleet{sessions: make(map[string]registry.EscrowSession, len(escrowIDs))}
+	fleet := &inProcessFleet{sessions: make(map[string]registry.EscrowSession, len(escrowIDs)), steps: map[string]stepTotal{}}
+	storageRoot := t.TempDir()
 	for _, escrowID := range escrowIDs {
 		signers := make([]*signing.Secp256k1Signer, settings.groupSize)
 		for index := range signers {
@@ -151,8 +183,22 @@ func newInProcessFleet(t *testing.T, settings loadSimulationSettings, escrowIDs 
 			}
 			clients[index] = &user.InProcessClient{Host: hostNode}
 		}
-		machine := statetest.MustStateMachine(t, escrowID, configuration, group, 1<<50, creator.Address(), verifier)
-		session, err := user.NewSession(machine, creator, escrowID, group, clients, verifier)
+		sessionStore, err := storage.NewSQLite(filepath.Join(storageRoot, escrowID))
+		if err != nil {
+			t.Fatalf("opening the store of %s: %v", escrowID, err)
+		}
+		if err := sessionStore.CreateSession(storage.CreateSessionParams{
+			EscrowID: escrowID, Version: testutil.RuntimeTestVersion, CreatorAddr: creator.Address(),
+			Config: configuration, Group: group, InitialBalance: 1 << 50,
+		}); err != nil {
+			t.Fatalf("creating the stored session of %s: %v", escrowID, err)
+		}
+		machine, err := state.NewStateMachine(escrowID, configuration, group, 1<<50, creator.Address(), verifier, sessionStore)
+		if err != nil {
+			t.Fatalf("building the state machine of %s: %v", escrowID, err)
+		}
+		session, err := user.NewSession(machine, creator, escrowID, group, clients, verifier,
+			user.WithStorage(sessionStore), user.WithStepTimer(fleet.recordStep))
 		if err != nil {
 			t.Fatalf("opening the session of %s: %v", escrowID, err)
 		}
@@ -387,7 +433,7 @@ func TestLoadSimulation(t *testing.T) {
 		}
 	}
 	fleet := newInProcessFleet(t, settings, escrowIDs)
-	sources := func(config.Chain, config.HeightSync, string, *transport.PeerRPCAdoption) (chainSources, error) {
+	sources := func(config.Chain, config.HeightSync, string, *transport.PeerRPCAdoption, user.StepTimer) (chainSources, error) {
 		return chainSources{
 			Serving:   fleet.serving,
 			ReadOnly:  readOnlySessions(gatewayStore, storageDir),
@@ -485,6 +531,7 @@ func TestLoadSimulation(t *testing.T) {
 	t.Logf("allocated %.1f MB (%.1f KB per answered request), %d gc cycles, %d goroutines at the end",
 		float64(after.allocatedBytes-before.allocatedBytes)/1e6, perRequest(float64(after.allocatedBytes-before.allocatedBytes))/1e3,
 		after.gcCycles-before.gcCycles, after.goroutines)
+	fleet.reportSteps(t)
 	t.Logf("profiles in %s: go tool pprof -top -nodecount=40 %s", profileDir, filepath.Join(profileDir, "cpu.pprof"))
 	if answered == 0 {
 		t.Fatal("no request was answered 200: the simulation measured nothing")

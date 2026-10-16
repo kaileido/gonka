@@ -63,7 +63,7 @@ type Manager struct {
 	narrator       lifecycleNarrator
 	sweeping       atomic.Bool
 	settling       atomic.Bool
-	sweepWork      sync.WaitGroup
+	offTickWork    sync.WaitGroup
 	planner        fundingPlanner
 
 	lifecycleMu sync.Mutex

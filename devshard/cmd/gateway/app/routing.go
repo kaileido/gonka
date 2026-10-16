@@ -27,6 +27,7 @@ type routingDeps struct {
 	Config       *config.Holder
 	Depletion    *depletionNotice
 	Dispatches   *metrics.DispatchRecorder
+	Steps        *metrics.StepRecorder
 	Served       *metrics.ServedBindingRecorder
 	PeerRPC      *transport.PeerRPCAdoption
 	Ledger       *nonces.Recorder
@@ -64,7 +65,7 @@ func newRouting(deps routingDeps) (*registry.Registry, *scheduler.Scheduler, *wa
 		Perf:              deps.Hosts,
 		Snapshots:         deps.Snapshots,
 		Config:            deps.Config,
-		Observer:          tracedDispatches{recorder: deps.Dispatches, events: deps.Journal, ledger: deps.Ledger},
+		Observer:          tracedDispatches{recorder: deps.Dispatches, steps: deps.Steps, events: deps.Journal, ledger: deps.Ledger},
 		Now:               deps.Now,
 		OnEscrowExhausted: escrows.Exhausted,
 		OnReserveTaken:    escrows.ReserveTaken,

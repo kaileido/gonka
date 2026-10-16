@@ -103,6 +103,7 @@ type liveAttempt struct {
 	suspicious  bool
 	cancel      context.CancelFunc
 
+	launchTime   time.Time
 	sendTime     time.Time
 	receiptTime  time.Time
 	firstToken   time.Time

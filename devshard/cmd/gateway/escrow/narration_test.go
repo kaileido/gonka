@@ -420,7 +420,7 @@ func TestASweepThatFoundVotesOwedIsNarrated(t *testing.T) {
 	m := mustManager(t, deps)
 
 	m.sweepTimeouts(context.Background())
-	m.sweepWork.Wait()
+	m.offTickWork.Wait()
 
 	require.Equal(t, []string{"swept due 1 applied 1 failed 0"}, narrator.recorded())
 }

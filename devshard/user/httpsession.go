@@ -27,16 +27,13 @@ import (
 
 // HTTPSessionConfig holds the parameters needed to create an HTTP-backed user session.
 type HTTPSessionConfig struct {
-	// OpenAbsentHostsAsDeadSlots opens the session when a group member is absent from the chain, its slot failing every
-	// call with ErrHostAbsentFromChain, instead of failing the open with bridge.ErrParticipantNotFound.
-	OpenAbsentHostsAsDeadSlots bool
-	PrivateKeyHex              string
-	EscrowID                   string
-	Bridge                     bridge.MainnetBridge
-	StoragePath                string                          // SQLite path for session persistence; default ~/.cache/gonka/devshard-<escrowID>
-	StreamCallback             func(nonce uint64, line string) // optional: receives raw SSE data lines during inference
-	RoutePrefix                string                          // HTTP path prefix used to reach hosts; default devshard.DefaultRoutePrefix()
-	RequestAdmission           transport.RequestAdmissionController
+	PrivateKeyHex    string
+	EscrowID         string
+	Bridge           bridge.MainnetBridge
+	StoragePath      string                          // SQLite path for session persistence; default ~/.cache/gonka/devshard-<escrowID>
+	StreamCallback   func(nonce uint64, line string) // optional: receives raw SSE data lines during inference
+	RoutePrefix      string                          // HTTP path prefix used to reach hosts; default devshard.DefaultRoutePrefix()
+	RequestAdmission transport.RequestAdmissionController
 	// RequireHeightSeed fails closed on chat/warmup until half the roster
 	// returns a host-signed Anchor. Default false in this library; the
 	// gateway sets it from DEVSHARD_REQUIRE_HEIGHT_SEED (default true).
@@ -45,6 +42,10 @@ type HTTPSessionConfig struct {
 	// false in this library so tests can call MaybeHeartbeat. The gateway
 	// sets it unless DEVSHARD_HEIGHTSYNC_HEARTBEAT is true/1/on.
 	DisableHeightSyncHeartbeat bool
+	// OpenAbsentHostsAsDeadSlots opens the session when a group member is absent from the chain, its slot failing every
+	// call with ErrHostAbsentFromChain, instead of failing the open with bridge.ErrParticipantNotFound.
+	OpenAbsentHostsAsDeadSlots bool
+	StepTimer                  StepTimer
 	// QuietSettleDelay overrides DefaultQuietSettleDelay for leftover
 	// receipt/Finish compose. Zero keeps the session default (5m). The
 	// gateway sets this from DEVSHARD_QUIET_SETTLE_DELAY (testenv: 5s).
@@ -307,6 +308,7 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 		session.SetParticipantKeys(participantKeys)
 		session.SetRequireHeightSeed(cfg.RequireHeightSeed)
 		session.SetDisableHeightSyncHeartbeat(cfg.DisableHeightSyncHeartbeat)
+		session.SetStepTimer(cfg.StepTimer)
 		if cfg.QuietSettleDelay > 0 {
 			session.SetQuietSettleDelay(cfg.QuietSettleDelay)
 		}
@@ -448,6 +450,9 @@ func httpSessionOpts(cfg HTTPSessionConfig, extra ...SessionOption) []SessionOpt
 	}
 	if cfg.QuietSettleDelay > 0 {
 		extra = append(extra, WithQuietSettleDelay(cfg.QuietSettleDelay))
+	}
+	if cfg.StepTimer != nil {
+		extra = append(extra, WithStepTimer(cfg.StepTimer))
 	}
 	return extra
 }

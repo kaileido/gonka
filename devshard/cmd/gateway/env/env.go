@@ -119,20 +119,18 @@ type Values struct {
 	ContentionProfiles *bool
 }
 
-// PoCModeOff and PoCModeRelaxed are the accepted DEVSHARD_POC_REQUEST_MODE values.
 const (
+	// PoCModeOff and PoCModeRelaxed are the accepted DEVSHARD_POC_REQUEST_MODE values.
 	PoCModeOff     = "off"
 	PoCModeRelaxed = "relaxed"
-)
 
-// LogFormatJSON and LogFormatText are the formats DEVSHARD_LOG_FORMAT selects; empty means LogFormatJSON.
-const (
+	// LogFormatJSON and LogFormatText are the formats DEVSHARD_LOG_FORMAT selects; empty means LogFormatJSON.
 	LogFormatJSON = "json"
 	LogFormatText = "text"
-)
 
-// AllowPrivateAddressesVariable is named in the log line that reports the dial guard switched off.
-const AllowPrivateAddressesVariable = "DEVSHARD_ALLOW_PRIVATE_ADDRESSES"
+	// AllowPrivateAddressesVariable is named in the log line that reports the dial guard switched off.
+	AllowPrivateAddressesVariable = "DEVSHARD_ALLOW_PRIVATE_ADDRESSES"
+)
 
 // ErrPrivateKeyMissing marks a devshard whose signing key the environment does not hold.
 var ErrPrivateKeyMissing = errors.New("private key missing")

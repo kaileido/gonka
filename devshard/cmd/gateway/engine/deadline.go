@@ -97,8 +97,8 @@ func (p deadlinePlan) hardTimeout() time.Time {
 			if attempt.Crowned && !attempt.Completed.IsZero() && p.Policy.LoserGrace > 0 {
 				consider(attempt.Completed.Add(p.Policy.LoserGrace))
 			}
-		case !attempt.SendTime.IsZero():
-			consider(attempt.SendTime.Add(p.Policy.hardTimeout()))
+		case !attempt.LaunchTime.IsZero():
+			consider(attempt.LaunchTime.Add(p.Policy.hardTimeout()))
 		}
 	}
 	return earliest
@@ -282,7 +282,7 @@ func (c *raceCoordinator) cancelAll() {
 		if attempt.done {
 			continue
 		}
-		if !attempt.sendTime.IsZero() && !now.Before(attempt.sendTime.Add(c.deps.Policy.hardTimeout())) {
+		if !attempt.launchTime.IsZero() && !now.Before(attempt.launchTime.Add(c.deps.Policy.hardTimeout())) {
 			attempt.backstopped = true
 		}
 		attempt.cancel()
@@ -300,6 +300,7 @@ func (c *raceCoordinator) plan() deadlinePlan {
 			Stalled:       attempt.stalled,
 			NonceFinished: attempt.nonceFinished,
 			EmptyStream:   attempt.outcome != nil && attempt.outcome.Terminal == TerminalEmptyStream,
+			LaunchTime:    attempt.launchTime,
 			SendTime:      attempt.sendTime,
 			ReceiptTime:   attempt.receiptTime,
 			FirstToken:    attempt.firstToken,

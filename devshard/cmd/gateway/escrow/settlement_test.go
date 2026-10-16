@@ -14,6 +14,10 @@ import (
 	"devshard/signing"
 )
 
+func (m *Manager) settlePending(ctx context.Context, snapshot chain.PhaseSnapshot, devshards []store.DevshardRecord) error {
+	return m.settleParked(ctx, m.parkedToSettle(snapshot, devshards))
+}
+
 // callLog records call names in the order they happen, shared across fakes.
 type callLog struct {
 	mu    sync.Mutex

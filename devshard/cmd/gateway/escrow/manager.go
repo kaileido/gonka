@@ -115,17 +115,15 @@ func (m *Manager) Stop() {
 	if done != nil {
 		<-done
 	}
-	m.sweepWork.Wait()
+	m.offTickWork.Wait()
 }
 
-// settleOffTick runs off the tick for the sweep's reason: one finalize can outlast the tick interval, and the
-// retirements and funding of every other escrow must not wait on it. One pass at a time, so a slow one is not doubled.
 func (m *Manager) settleOffTick(ctx context.Context, snapshot chain.PhaseSnapshot, devshards []store.DevshardRecord) {
 	parked := m.parkedToSettle(snapshot, devshards)
 	if len(parked) == 0 || !m.settling.CompareAndSwap(false, true) {
 		return
 	}
-	m.sweepWork.Go(func() {
+	m.offTickWork.Go(func() {
 		defer m.settling.Store(false)
 		if err := m.settleParked(ctx, parked); err != nil && m.narrator != nil {
 			m.narrator.EscrowTickFailed(err)
@@ -144,7 +142,7 @@ func (m *Manager) sweepTimeouts(ctx context.Context) {
 	if !m.sweeping.CompareAndSwap(false, true) {
 		return
 	}
-	m.sweepWork.Go(func() {
+	m.offTickWork.Go(func() {
 		defer m.sweeping.Store(false)
 		grace := time.Duration(settings.GraceSeconds) * time.Second
 		due, applied, failed := m.timeoutSweeper.SweepExecutionTimeouts(ctx, grace, budget)
@@ -161,7 +159,7 @@ func (m *Manager) sweepTimeouts(ctx context.Context) {
 // tick is one whole tick, the work it starts off the tick included, so a caller reads what the tick did.
 func (m *Manager) tick(ctx context.Context) error {
 	err := m.tickWith(ctx, true)
-	m.sweepWork.Wait()
+	m.offTickWork.Wait()
 	return err
 }
 

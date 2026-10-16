@@ -99,18 +99,19 @@ func (p *stubPicker) blockHost(escrowID, participant string) {
 
 // hostScript is one nonce's scripted host: arrive/release hold an attempt before it sends, streaming/resume hold it mid-stream, and flush flushes each chunk as it is written.
 type hostScript struct {
-	arrive    chan<- uint64
-	release   <-chan struct{}
-	streaming chan<- uint64
-	resume    <-chan struct{}
-	receipt   bool
-	chunks    []string
-	flush     bool
-	hold      bool
-	deaf      <-chan struct{}
-	confirmed bool
-	finished  bool
-	err       error
+	arrive      chan<- uint64
+	release     <-chan struct{}
+	streaming   chan<- uint64
+	resume      <-chan struct{}
+	receipt     bool
+	chunks      []string
+	flush       bool
+	hold        bool
+	deaf        <-chan struct{}
+	confirmed   bool
+	finished    bool
+	err         error
+	catchUpHeld bool
 }
 
 type scriptedTarget struct {
@@ -127,7 +128,13 @@ func (t *scriptedTarget) script(nonce uint64) *hostScript {
 	return t.scripts[nonce]
 }
 
-func (t *scriptedTarget) CatchUp(context.Context, scheduler.Prepared) error { return nil }
+func (t *scriptedTarget) CatchUp(ctx context.Context, nonce scheduler.Prepared) error {
+	if script := t.script(nonce.Nonce()); script != nil && script.catchUpHeld {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	return nil
+}
 
 func (t *scriptedTarget) Send(ctx context.Context, nonce scheduler.Prepared, stream io.Writer, onReceipt func()) (Response, error) {
 	script := t.script(nonce.Nonce())
@@ -803,6 +810,31 @@ func TestRunRaceReportsOneOutcomeOnHardTimeoutWithPendingAttempts(t *testing.T) 
 }
 
 // Test flow:
+//  1. Start a race whose only host is still being caught up by the session, a catch-up that never ends.
+//  2. Run the race with a clock that passes the hard timeout.
+//  3. Assert the race ends on the hard timeout: the backstop runs from the attempt's launch, so a session wait that outlives it cannot hold the client past it.
+func TestRunRaceHardTimeoutCoversTheSessionsCatchUp(t *testing.T) {
+	fixture := newRaceFixture(settledPolicy(), 1)
+	fixture.host(60, 0, "host-0", &hostScript{catchUpHeld: true})
+	fixture.clock.step = 30 * time.Minute
+
+	ran := make(chan error, 1)
+	go func() {
+		_, err := fixture.run(context.Background())
+		ran <- err
+	}()
+	select {
+	case <-ran:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the race still waits on the session's catch-up past the hard timeout")
+	}
+	reported := <-fixture.reported
+	if len(reported.Attempts) != 1 || reported.Attempts[0].Terminal != TerminalHardTimeout {
+		t.Fatalf("attempts = %+v, want one ended by the hard timeout", reported.Attempts)
+	}
+}
+
+// Test flow:
 //  1. Start a race with no host queued behind the picker.
 //  2. Run the race.
 //  3. Assert the error wraps `scheduler.ErrNoAvailableHost`.
@@ -1235,11 +1267,12 @@ func TestPoCFactsAreDistinct(t *testing.T) {
 }
 
 func pendingAttempt(sendTime time.Time) EscalationAttempt {
-	return EscalationAttempt{SendTime: sendTime}
+	return EscalationAttempt{LaunchTime: sendTime, SendTime: sendTime}
 }
 
 func streamingAttempt(sendTime, lastChunk time.Time) EscalationAttempt {
 	return EscalationAttempt{
+		LaunchTime:   sendTime,
 		SendTime:     sendTime,
 		ReceiptTime:  sendTime,
 		FirstToken:   sendTime,
@@ -1439,6 +1472,12 @@ func TestNextDeadlinePrecedence(t *testing.T) {
 			name: "nothing armed before dispatch", receipt: time.Second, stall: time.Second, budget: 4,
 			attempts:    []EscalationAttempt{{}},
 			wantTrigger: triggerNone,
+		},
+		{
+			name: "the hard timeout runs from launch while the session catches the host up", receipt: time.Second, stall: time.Second, budget: 4,
+			attempts:    []EscalationAttempt{{LaunchTime: base}},
+			wantAt:      base.Add(hard),
+			wantTrigger: triggerHardTimeout,
 		},
 	}
 

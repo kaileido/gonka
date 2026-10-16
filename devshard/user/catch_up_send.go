@@ -45,17 +45,8 @@ func (s *Session) catchUpForSend(ctx context.Context, hostIdx int, target uint64
 		return diffs, nil
 	}
 
-	if refusal := s.hostCatchUpRefusal(hostIdx).refusal(s.clock()); refusal != nil {
-		return nil, refusal
-	}
-	run := s.startHostCatchUp(hostIdx, target-1)
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-run.done:
-		if run.err != nil {
-			return nil, run.err
-		}
+	if err := s.awaitHostCatchUp(ctx, hostIdx, target-1); err != nil {
+		return nil, err
 	}
 
 	s.mu.Lock()
@@ -66,6 +57,20 @@ func (s *Session) catchUpForSend(ctx context.Context, hostIdx int, target uint64
 			hostIdx, catchUpChunkSize, target, s.hostSyncNonce[hostIdx])
 	}
 	return diffs, nil
+}
+
+func (s *Session) awaitHostCatchUp(ctx context.Context, hostIdx int, through uint64) error {
+	if refusal := s.hostCatchUpRefusal(hostIdx).standing(s.clock()); refusal != nil {
+		return refusal
+	}
+	defer s.timeStep(StepHostCatchUp, time.Now())
+	run := s.startHostCatchUp(hostIdx, through)
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-run.done:
+		return run.err
+	}
 }
 
 // hostCatchUpRun is one background catch-up of a host. err is set before done

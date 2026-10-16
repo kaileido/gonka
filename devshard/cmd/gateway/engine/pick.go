@@ -144,6 +144,7 @@ func (c *raceCoordinator) launch(assignment scheduler.Assignment, role, startRea
 		participant: assignment.Host,
 		suspicious:  c.denied(assignment.Host),
 		cancel:      cancel,
+		launchTime:  c.deps.Now(),
 		inInference: !pocGenerating(c.deps.Snapshots.Snapshot(), c.deps.Modes),
 		// Read once: plan() runs on every event, and the quantile cannot move mid-attempt.
 		observedFirst: c.observedFirstContent(assignment.Host),

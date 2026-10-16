@@ -34,7 +34,7 @@ import (
 
 // chainBackedSessions owns the chain connection because it is the only provider that needs one.
 func chainBackedSessions(records devshardLookup, storageDir string) sessionSources {
-	return func(endpoints config.Chain, heightSettings config.HeightSync, routePrefix string, adoption *transport.PeerRPCAdoption) (chainSources, error) {
+	return func(endpoints config.Chain, heightSettings config.HeightSync, routePrefix string, adoption *transport.PeerRPCAdoption, steps user.StepTimer) (chainSources, error) {
 		// This client carries the CometBFT RPC query fallback. See ../README.md, "Escrow sessions and the chain connection".
 		chainClient, err := commonchain.NewWithQueryFallback(endpoints.GRPCEndpoint, endpoints.RPCEndpoint)
 		if err != nil {
@@ -55,7 +55,7 @@ func chainBackedSessions(records devshardLookup, storageDir string) sessionSourc
 			return chainSources{}, errors.Join(err, follower.Close())
 		}
 		return chainSources{
-			Serving:    servingSessions(records, storageDir, bridge.NewGRPCBridge(chainClient), heightSettings, follower, governance, routePrefix, adoption),
+			Serving:    servingSessions(records, storageDir, bridge.NewGRPCBridge(chainClient), heightSettings, follower, governance, routePrefix, adoption, steps),
 			ReadOnly:   readOnlySessions(records, storageDir),
 			Reader:     grpcChain,
 			Transport:  grpcChain,
@@ -290,7 +290,7 @@ func creationEpochOf(chainClient escrowEpochLookup, records devshardLister) nonc
 }
 
 // sessionSources is a parameter so the transport an escrow is served over is chosen once, at compose.
-type sessionSources func(endpoints config.Chain, heightSettings config.HeightSync, routePrefix string, adoption *transport.PeerRPCAdoption) (chainSources, error)
+type sessionSources func(endpoints config.Chain, heightSettings config.HeightSync, routePrefix string, adoption *transport.PeerRPCAdoption, steps user.StepTimer) (chainSources, error)
 
 // chainSources is what one dial yields; Reader and Transport are interfaces so a test dials nothing.
 type chainSources struct {
@@ -391,7 +391,7 @@ func sessionInputs(ctx context.Context, records devshardLookup, storageDir, escr
 }
 
 // The bridge is one object for the process. See ../README.md, "Escrow sessions and the chain connection".
-func servingSessions(records devshardLookup, storageDir string, escrowBridge bridge.MainnetBridge, heightSettings config.HeightSync, follower *heights.Oracle, governance *runtimeParams, routePrefix string, adoption *transport.PeerRPCAdoption) registry.SessionFactory {
+func servingSessions(records devshardLookup, storageDir string, escrowBridge bridge.MainnetBridge, heightSettings config.HeightSync, follower *heights.Oracle, governance *runtimeParams, routePrefix string, adoption *transport.PeerRPCAdoption, steps user.StepTimer) registry.SessionFactory {
 	return func(ctx context.Context, escrowID string) (registry.EscrowSession, error) {
 		record, keyHex, storagePath, err := sessionInputs(ctx, records, storageDir, escrowID)
 		if err != nil {
@@ -412,6 +412,7 @@ func servingSessions(records devshardLookup, storageDir string, escrowBridge bri
 			ExtraClientConfig:          peerRPCClientConfig(heights.BuildCourier(heightSettings, follower), adoption),
 			Heartbeat:                  governance.Heartbeat(),
 			QuietSettleDelay:           time.Duration(heightSettings.QuietSettleDelayMS) * time.Millisecond,
+			StepTimer:                  steps,
 		})
 		if err != nil {
 			return nil, err

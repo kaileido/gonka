@@ -95,15 +95,17 @@ type nonceOutcome struct {
 	finished    bool
 }
 
+var (
+	// ErrNonceFinishedWhileWaiting reports a nonce the host completed during the wait for the chain's
+	// deadline. It is not a failure: the work exists, and no timeout is owed.
+	ErrNonceFinishedWhileWaiting = errors.New("nonce finished while waiting for the timeout deadline")
+
+	// ErrTimeoutNotApplied reports a timeout the group would not carry. Callers separate a settled vote
+	// from an unsettled one by unwrapping, so this has to arrive wrapped or it reads as success.
+	ErrTimeoutNotApplied = errors.New("timeout was not applied")
+)
+
 // TimeoutResult reports what happened during timeout handling.
-// ErrNonceFinishedWhileWaiting reports a nonce the host completed during the wait for the chain's
-// deadline. It is not a failure: the work exists, and no timeout is owed.
-var ErrNonceFinishedWhileWaiting = errors.New("nonce finished while waiting for the timeout deadline")
-
-// ErrTimeoutNotApplied reports a timeout the group would not carry. Callers separate a settled vote
-// from an unsettled one by unwrapping, so this has to arrive wrapped or it reads as success.
-var ErrTimeoutNotApplied = errors.New("timeout was not applied")
-
 type TimeoutResult struct {
 	Reason        string   // "execution", "refused", "error", or "" if deadline not reached
 	Outcome       string   // how handling ended: skipped, vote_collection_failed, insufficient_votes, diff_send_failed, applied
@@ -313,6 +315,8 @@ type Session struct {
 	verifierQueue    *verifierHostQueue         // per-verifier RPC limiter for timeout votes
 	diffObserver     func(types.Diff)
 
+	signatureWriter *signatureWriter
+	stepTimer       atomic.Pointer[StepTimer]
 	// sigsTrimmedThrough is the highest nonce whose signatures may be missing
 	// from s.signatures. signaturesAtLocked reads those nonces from the store.
 	sigsTrimmedThrough uint64
@@ -322,7 +326,7 @@ type Session struct {
 	// read without s.mu (the session picker's chooser runs under s.mu).
 	catchingUp []atomic.Int32
 	// catchUpRefusals remembers each host's last catch-up refusal while its backoff runs.
-	catchUpRefusals map[int]*catchUpGate
+	catchUpRefusals map[int]*catchUpRefusal
 
 	chainMaxNonce          atomic.Uint32
 	composingFinalizeRound bool
@@ -895,9 +899,24 @@ func (s *Session) rememberSignatureSignerLocked(nonce uint64, slot uint32, cache
 	s.signatureSigners[nonce][slot] = cached
 }
 
+// persistSignatureLocked hands a signature already held in memory to the session's writer, which stores it off the
+// lock. Caller must hold s.mu.
+func (s *Session) persistSignatureLocked(nonce uint64, slot uint32, signature []byte) {
+	if s.store == nil {
+		return
+	}
+	if s.signatureWriter == nil {
+		s.signatureWriter = newSignatureWriter(s.store, s.escrowID, s.timeStep)
+	}
+	s.signatureWriter.add(nonce, slot, signature)
+}
+
 func (s *Session) signaturesAtLocked(nonce uint64) map[uint32][]byte {
 	held := s.signatures[nonce]
 	if s.store != nil && nonce != 0 && nonce <= s.sigsTrimmedThrough {
+		if s.signatureWriter != nil {
+			s.signatureWriter.flush()
+		}
 		stored, err := s.store.GetSignatures(s.escrowID, nonce)
 		if err != nil {
 			logging.Warn("read trimmed signatures from store", "subsystem", "session",
@@ -1121,12 +1140,7 @@ func (s *Session) processResponseWithSyncCap(hostIdx int, resp *host.HostRespons
 		for _, slot := range s.addrToSlots[expectedAddr] {
 			s.recordSignatureLocked(resp.Nonce, slot, resp.StateSig)
 			s.rememberSignatureSignerLocked(resp.Nonce, slot, cached)
-			if s.store != nil {
-				if sigErr := s.store.AddSignature(s.escrowID, resp.Nonce, slot, resp.StateSig); sigErr != nil {
-					logging.Warn("failed to persist signature",
-						"escrow_id", s.escrowID, "nonce", resp.Nonce, "slot", slot, "error", sigErr)
-				}
-			}
+			s.persistSignatureLocked(resp.Nonce, slot, resp.StateSig)
 		}
 	}
 
@@ -1176,8 +1190,12 @@ func (s *Session) processResponseWithSyncCap(hostIdx int, resp *host.HostRespons
 
 // ProcessResponse updates session state from a host response. Thread-safe.
 func (s *Session) ProcessResponse(hostIdx int, resp *host.HostResponse, inferenceNonce uint64) error {
+	waitStarted := time.Now()
 	s.mu.Lock()
+	s.timeStep(StepLockWaitProcess, waitStarted)
+	heldFrom := time.Now()
 	err := s.processResponse(hostIdx, resp, inferenceNonce)
+	s.timeStep(StepLockHeldProcess, heldFrom)
 	s.mu.Unlock()
 	s.publishHeightSyncView()
 	return err
@@ -1388,11 +1406,6 @@ func (s *Session) SetChainMaxNonce(maxNonce uint32) {
 	s.chainMaxNonce.Store(maxNonce)
 }
 
-// NonceCapReached reports that the session can compose no more active work, timeout votes included, until finalization.
-func (s *Session) NonceCapReached() bool {
-	return s.nonceCapReached()
-}
-
 func (s *Session) nonceCapReached() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1557,6 +1570,7 @@ func (s *Session) persistDiffRetryLocked(ctx context.Context, rec types.DiffReco
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	defer s.timeStep(StepStoreAppendDiff, time.Now())
 	return storage.AppendDiffWithRetry(context.WithoutCancel(ctx), s.store, s.escrowID, rec)
 }
 
@@ -1687,8 +1701,12 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 	if chooser == nil {
 		return nil, fmt.Errorf("PrepareInferenceFn: chooser is nil")
 	}
+	waitStarted := time.Now()
 	s.mu.Lock()
+	s.timeStep(StepLockWaitPrepare, waitStarted)
+	heldFrom := time.Now()
 	defer func() {
+		s.timeStep(StepLockHeldPrepare, heldFrom)
 		s.mu.Unlock()
 		s.publishHeightSyncView()
 	}()
@@ -1820,9 +1838,9 @@ func (s *Session) CatchUpBeforeSend(ctx context.Context, p *PreparedInference) e
 		if err != nil {
 			return fmt.Errorf("catch up host %d before nonce %d: %w", p.hostIdx, p.diff.Nonce, err)
 		}
-		p.catchUp = s.drainOversizedBacklog(ctx, p.hostIdx, s.getFinalizeClients()[p.hostIdx], catchUp, p.diff.Nonce)
+		p.catchUp = catchUp
 	} else {
-		p.catchUp = s.drainOversizedBacklog(ctx, p.hostIdx, s.clients[p.hostIdx], p.catchUp, p.diff.Nonce)
+		p.catchUp = s.drainOversizedBacklog(ctx, p.hostIdx, p.catchUp, p.diff.Nonce)
 	}
 	p.farBehind, p.caughtUp = false, true
 	return nil
@@ -2064,18 +2082,15 @@ func (s *Session) sendDiffRound(ctx context.Context, extraTxs []*types.DevshardT
 // replay state incrementally and the proxy bail out early if any chunk fails.
 const catchUpChunkSize = 200
 
-// catchUpChunkWireBytes caps what one chunk may cost on the wire, whatever its diff count. A chunk past
-// what a host accepts is refused whole, and the sync cursor it would have moved stays where it was, so
-// the next attempt builds the same backlog again.
-const catchUpChunkWireBytes = transport.MaxHostRequestBytes - 64<<10
+const (
+	catchUpChunkWireBytes    = transport.MaxHostRequestBytes - 64<<10
+	inlineCatchUpMeasureFrom = 16
+)
 
 // inlineCatchUpMaxBytes caps what one inference request may carry as catch-up. Past it the backlog is
 // sent by the chunked path first, so the request that follows carries only its own diff. Well under the
 // 10 MB a proxy in front of a host will refuse. See issue #1660.
-const inlineCatchUpMaxBytes = 4 << 20
-
-// inlineCatchUpMeasureFrom is the backlog length worth measuring: below it the bytes cannot approach the cap.
-const inlineCatchUpMeasureFrom = 16
+var inlineCatchUpMaxBytes = 4 << 20
 
 // catchUpChunkTimeout is the per-chunk timeout for sendCatchUp. Each chunk
 // of 200 diffs gets its own deadline so large catch-ups (thousands of diffs)
@@ -2088,7 +2103,7 @@ const catchUpChunkTimeout = 60 * time.Second
 //
 // This costs the request the drain: a host far behind delays its own next inference by however long the
 // chunks take, up to catchUpChunkTimeout each. Chosen over sending one body a proxy will refuse.
-func (s *Session) drainOversizedBacklog(ctx context.Context, hostIdx int, client HostClient, catchUp []types.Diff, targetNonce uint64) []types.Diff {
+func (s *Session) drainOversizedBacklog(ctx context.Context, hostIdx int, catchUp []types.Diff, targetNonce uint64) []types.Diff {
 	backlog := catchUp
 	if len(backlog) > 0 && backlog[len(backlog)-1].Nonce == targetNonce {
 		backlog = backlog[:len(backlog)-1]
@@ -2100,7 +2115,7 @@ func (s *Session) drainOversizedBacklog(ctx context.Context, hostIdx int, client
 	logging.Warn("catch-up too large to ride the inference, draining it first", "subsystem", "session",
 		"escrow", s.escrowID, "host", hostIdx, "nonce", targetNonce,
 		"backlog_diffs", len(backlog))
-	if err := s.sendCatchUpThrough(ctx, hostIdx, client, targetNonce-1); err != nil {
+	if err := s.awaitHostCatchUp(ctx, hostIdx, targetNonce-1); err != nil {
 		logging.Warn("draining the catch-up failed; the request carries it after all", "subsystem", "session",
 			"escrow", s.escrowID, "host", hostIdx, "error", err)
 		return catchUp
@@ -3195,12 +3210,7 @@ func (s *Session) fetchSignature(ctx context.Context, hostIdx int, nonce uint64,
 		for _, slot := range s.addrToSlots[expectedAddr] {
 			s.recordSignatureLocked(nonce, slot, sigs[slotID])
 			s.rememberSignatureSignerLocked(nonce, slot, cached)
-			if s.store != nil {
-				if sigErr := s.store.AddSignature(s.escrowID, nonce, slot, sigs[slotID]); sigErr != nil {
-					logging.Warn("failed to persist fetched signature",
-						"escrow_id", s.escrowID, "nonce", nonce, "slot", slot, "error", sigErr)
-				}
-			}
+			s.persistSignatureLocked(nonce, slot, sigs[slotID])
 		}
 		logging.Info("fetched existing signature", "subsystem", "finalize", "escrow", s.escrowID,
 			"nonce", nonce, "host", hostIdx, "address", expectedAddr)
@@ -4380,6 +4390,12 @@ func (s *Session) Close() error {
 	s.stopLaggingSync()
 	s.stopSendCatchUps()
 	closeHostClients(s.clients)
+	s.mu.Lock()
+	writer := s.signatureWriter
+	s.mu.Unlock()
+	if writer != nil {
+		writer.flush()
+	}
 	if s.store != nil {
 		return s.store.Close()
 	}

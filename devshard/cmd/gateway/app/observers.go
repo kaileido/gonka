@@ -2,6 +2,7 @@ package app
 
 import (
 	"sync"
+	"time"
 
 	"devshard/cmd/gateway/chain"
 	"devshard/cmd/gateway/engine"
@@ -14,6 +15,7 @@ import (
 // tracedDispatches counts dispatch events and hands the ones worth a line or a ledger fact to the journal. See ../README.md, "Two readers of one fact".
 type tracedDispatches struct {
 	recorder *metrics.DispatchRecorder
+	steps    *metrics.StepRecorder
 	events   *journal.Journal
 	ledger   *nonces.Recorder
 }
@@ -32,6 +34,12 @@ func (t tracedDispatches) BurnBudgetExhausted(escrowID string) {
 
 func (t tracedDispatches) NonceAssigned(escrowID string, nonce uint64, requestID string) {
 	t.ledger.NonceAssigned(escrowID, nonce, requestID)
+}
+
+func (t tracedDispatches) NonceQueued(_ string, waited time.Duration) {
+	if t.steps != nil {
+		t.steps.QueueWaited(waited)
+	}
 }
 
 // ExcludedHostServed has no counter: the line is the only record that a request's exclusion lapsed.

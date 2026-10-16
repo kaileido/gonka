@@ -30,11 +30,6 @@ var (
 // pendingSettleBudget bounds how many parked escrows one tick settles. See escrows.md, "Settlement and retirement".
 const pendingSettleBudget = 4
 
-// settlePending drains escrows parked by retire or by depletion, earliest deadline first; a busy or failing escrow simply stays parked.
-func (m *Manager) settlePending(ctx context.Context, snapshot chain.PhaseSnapshot, devshards []store.DevshardRecord) error {
-	return m.settleParked(ctx, m.parkedToSettle(snapshot, devshards))
-}
-
 // parkedToSettle is the settlement order: the nearest deadline first, then the escrow id.
 func (m *Manager) parkedToSettle(snapshot chain.PhaseSnapshot, devshards []store.DevshardRecord) []pendingSettle {
 	policy := newSettlementPolicy(m.config.Load().Rotation)

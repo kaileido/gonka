@@ -33,7 +33,6 @@ func (s *Scheduler) Pick(ctx context.Context, profile RequestProfile) (Assignmen
 	return Assignment{}, err
 }
 
-// escrowGaveUp names the two answers that mean "this escrow, right now": a busy group, and an escrow retired while the request waited in its queue, which an unpinned request never chose and spent no nonce on.
 func escrowGaveUp(err error) (avoidReason, bool) {
 	switch {
 	case errors.Is(err, ErrHostsBusy):

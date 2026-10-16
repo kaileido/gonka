@@ -879,3 +879,29 @@ func TestSeed_CourierWorksWithWarmLogOracle(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, uint64(55), h, "stamp must come from the host seed, not the local follower")
 }
+
+type answeringSeeder struct{}
+
+func (answeringSeeder) SeedHeightSync(context.Context) (bool, error) { return true, nil }
+
+type stalledSeeder struct{ returned atomic.Bool }
+
+func (seeder *stalledSeeder) SeedHeightSync(ctx context.Context) (bool, error) {
+	<-ctx.Done()
+	seeder.returned.Store(true)
+	return false, ctx.Err()
+}
+
+// Test flow:
+//  1. Fan a seed out to one host that anchors at once and one that answers only when its call is cancelled.
+//  2. Stop at the first anchor.
+//  3. Assert the stalled call had returned by then and its cancellation is not reported: no seed call outlives the fan-out, so a session close cannot tear down a client one is still using.
+func TestFanHeightSeedUntil_LeavesNoCallRunning(t *testing.T) {
+	stalled := &stalledSeeder{}
+	targets := []seedTarget{{slot: 0, seeder: answeringSeeder{}}, {slot: 1, seeder: stalled}}
+
+	out := fanHeightSeedUntil(context.Background(), targets, func(seeded int) bool { return seeded >= 1 })
+
+	require.True(t, stalled.returned.Load(), "the stalled seed call is still running after the fan-out returned")
+	require.Equal(t, []seedOutcome{{slot: 0, ok: true}}, out, "a call stopped by the fan-out reports nothing")
+}

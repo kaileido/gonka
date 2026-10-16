@@ -15,7 +15,7 @@ Which escrows exist right now, what each serves, and who its hosts are.
 ## Boundaries
 
 - **A retired escrow does not disappear.** Its nonces still owe votes, and the session that can post them outlives its routability.
-- **The in-flight hold is taken with the nonce commit and refused once retired**, so an escrow cannot start work it will not be able to settle.
+- **The in-flight hold is taken with the nonce commit and refused once retired**, so an escrow cannot start work it will not be able to settle. The race of a nonce already committed still takes one on a draining escrow, since that work is owed either way.
 
 ## The published set and its readers
 
@@ -25,7 +25,7 @@ Which escrows exist right now, what each serves, and who its hosts are.
 
 `Snapshot` returns every published escrow in id order plus the retired ones still draining. It takes no registry lock — only one O(1) read of each escrow's session phase, under that session's own read lock — and `publishDrainingLocked` republishes the draining view under the registry lock precisely so a scrape cannot wait on a retirement.
 
-`RoutableSession` is the read-only handle the status routes read. It takes no in-flight count and is not the dispatch path: a race resolves its escrow through `Acquire`, which returns the session and its release together, so a handle cannot be held without the hold. `holdFor` is the scheduler's view of the same count, taken in the step that commits a nonce; it is bound to the entry rather than to its id, and re-checks that the published entry is still that entry, so a hold cannot land on a replacement published under the same id.
+`RoutableSession` is the read-only handle the status routes read. It takes no in-flight count and is not the dispatch path: a race resolves its escrow through `AcquireCommitted`, which returns the session and its release together, published or draining, so a handle cannot be held without the hold. Warmup resolves through `Acquire`, which sees only the published entry. `holdFor` is the scheduler's view of the same count, taken in the step that commits a nonce; it is bound to the entry rather than to its id, and re-checks that the published entry is still that entry, so a hold cannot land on a replacement published under the same id.
 
 `SettlementSession` resolves the handle this process still holds, published or draining — asymmetric with routing's published-only lookup. See `rules.md`, "4. Routing and settlement read the escrow set asymmetrically". `HoldSettlement` resolves the same handle with a settlement hold taken, and is what finalizing, building a settlement, inspecting and the admin finalize and signature-collection routes run under. A draining escrow closes only when neither requests nor settlement holds remain, so a forced settlement, which runs on an escrow that still has requests, is not cut off by the last request finishing mid-collection. A settlement hold is counted apart from requests: it never makes the escrow busy, never enters `ActiveUsers` and never moves routing, so a status read stays a read. Once the close is claimed, `HoldSettlement` refuses, and a caller that needs the escrow rehydrates it from storage instead.
 

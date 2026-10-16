@@ -310,7 +310,7 @@ func TestASlowSettlementDoesNotHoldTheTick(t *testing.T) {
 		t.Fatal("the tick waited on a settlement: a slow finalize holds retirement and funding for every other escrow")
 	}
 	close(release)
-	m.sweepWork.Wait()
+	m.offTickWork.Wait()
 
 	testStore.mu.Lock()
 	_, survived := testStore.devshards[record.EscrowID]

@@ -25,7 +25,13 @@ func (s *Server) handleAdminDevshards(w http.ResponseWriter, r *http.Request) {
 		if writeControlFailure(w, err) {
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"devshards": devshardViews(records)})
+		views := devshardViews(records)
+		for index := range views {
+			if session, resident := s.escrows.SettlementSession(views[index].EscrowID); resident {
+				views[index].Runtime = &devshardRuntimeView{Nonce: session.Nonce()}
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"devshards": views})
 		return
 	}
 	var request AddDevshardRequest

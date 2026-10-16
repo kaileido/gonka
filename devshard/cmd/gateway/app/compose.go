@@ -158,7 +158,8 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 
 	telemetry := metrics.New()
 	adoption := transport.NewPeerRPCAdoption(metrics.NewPeerRPCRecorder(telemetry))
-	sources, err := openSessions(configuration.Chain, configuration.HeightSync, routePrefix, adoption)
+	steps := metrics.NewStepRecorder(telemetry)
+	sources, err := openSessions(configuration.Chain, configuration.HeightSync, routePrefix, adoption, steps.SessionStep)
 	if err != nil {
 		return nil, err
 	}
@@ -251,6 +252,7 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 		Config:       configHolder,
 		Depletion:    depletion,
 		Dispatches:   metrics.NewDispatchRecorder(telemetry),
+		Steps:        steps,
 		Served:       metrics.NewServedBindingRecorder(telemetry),
 		PeerRPC:      adoption,
 		Ledger:       recorder,

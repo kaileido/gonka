@@ -94,6 +94,7 @@ type EscalationAttempt struct {
 	Stalled         bool
 	NonceFinished   bool
 	EmptyStream     bool
+	LaunchTime      time.Time
 	SendTime        time.Time
 	ReceiptTime     time.Time
 	FirstToken      time.Time

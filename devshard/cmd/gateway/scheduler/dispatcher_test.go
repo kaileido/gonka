@@ -159,6 +159,7 @@ type recordingObserver struct {
 	excluded       []string
 	forced         []forcedSend
 	assigned       []assignedNonce
+	queueWaits     []time.Duration
 }
 
 type assignedNonce struct {
@@ -232,6 +233,18 @@ func (o *recordingObserver) assignments() []assignedNonce {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	return append([]assignedNonce(nil), o.assigned...)
+}
+
+func (o *recordingObserver) NonceQueued(_ string, waited time.Duration) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.queueWaits = append(o.queueWaits, waited)
+}
+
+func (o *recordingObserver) waits() []time.Duration {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append([]time.Duration(nil), o.queueWaits...)
 }
 
 func (o *recordingObserver) NonceAssigned(_ string, nonce uint64, requestID string) {

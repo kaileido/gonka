@@ -96,5 +96,50 @@ func TestSession_ACatchUpThatSucceedsClearsTheRefusal(t *testing.T) {
 
 	require.ErrorIs(t, refusedErr, errPeerBudgetSpent)
 	require.NoError(t, acceptedErr)
-	require.NoError(t, session.hostCatchUpRefusal(0).refusal(now), "a catch-up the host accepted leaves no refusal behind")
+	require.NoError(t, session.hostCatchUpRefusal(0).standing(now), "a catch-up the host accepted leaves no refusal behind")
+}
+
+func drainEveryBacklog(t *testing.T) {
+	t.Helper()
+	limit := inlineCatchUpMaxBytes
+	inlineCatchUpMaxBytes = 1
+	t.Cleanup(func() { inlineCatchUpMaxBytes = limit })
+}
+
+// Test flow:
+//  1. Compose a backlog that fits one request but is sent ahead of it, and make every host refuse.
+//  2. Prepare an inference and catch its host up: the host refuses.
+//  3. Prepare a second inference to the same host and catch it up inside the refusal's backoff.
+//  4. Assert the second catch-up did not contact the host: sending an oversized backlog ahead of a request is a catch-up like any other, so it waits out the host's refusal.
+func TestSession_AnOversizedBacklogWaitsOutTheHostsRefusal(t *testing.T) {
+	session := setupStoredSession(t, storage.NewMemory())
+	composeEmptyDiffs(t, session, inlineCatchUpMeasureFrom+4)
+	refusing := make([]*peerBudgetRefusingClient, len(session.clients))
+	for index, client := range session.clients {
+		refusing[index] = &peerBudgetRefusingClient{InProcessClient: client.(*InProcessClient)}
+		session.clients[index] = refusing[index]
+	}
+	now := time.Unix(1_800_000_000, 0)
+	session.clock = func() time.Time { return now }
+	singleChunkAttempt(t)
+	drainEveryBacklog(t)
+	prepare := func() *PreparedInference {
+		prepared, err := session.PrepareInferenceFn(func(HostBinding) (InferenceParams, bool, context.Context, error) {
+			return signatureTestParams(), false, nil, nil
+		})
+		require.NoError(t, err)
+		return prepared
+	}
+
+	first := prepare()
+	require.NoError(t, session.CatchUpBeforeSend(context.Background(), first))
+	host := refusing[first.HostIdx()]
+	sentAfterFirst := host.sent()
+	composeEmptyDiffs(t, session, len(session.group)-1)
+	second := prepare()
+	require.Equal(t, first.HostIdx(), second.HostIdx(), "precondition: both nonces bind to the same host")
+	require.NoError(t, session.CatchUpBeforeSend(context.Background(), second))
+
+	require.Equal(t, 1, sentAfterFirst, "the first catch-up asks the host once and stops at its refusal")
+	require.Equal(t, sentAfterFirst, host.sent(), "a catch-up inside the backoff does not contact the host")
 }
