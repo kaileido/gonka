@@ -61,6 +61,7 @@ func (s *pointReadSession) SnapshotState() types.EscrowState {
 }
 
 func (s *pointReadSession) Nonce() uint64             { return 12 }
+func (s *pointReadSession) PublishedNonce() uint64    { return 12 }
 func (s *pointReadSession) Phase() types.SessionPhase { return types.PhaseActive }
 func (s *pointReadSession) Balance() uint64           { return s.balance }
 func (s *pointReadSession) ProtocolVersion() string   { return s.version }

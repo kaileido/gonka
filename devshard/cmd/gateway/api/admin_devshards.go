@@ -28,7 +28,7 @@ func (s *Server) handleAdminDevshards(w http.ResponseWriter, r *http.Request) {
 		views := devshardViews(records)
 		for index := range views {
 			if session, resident := s.escrows.SettlementSession(views[index].EscrowID); resident {
-				views[index].Runtime = &devshardRuntimeView{Nonce: session.Nonce()}
+				views[index].Runtime = &devshardRuntimeView{Nonce: session.PublishedNonce()}
 			}
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"devshards": views})

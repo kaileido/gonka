@@ -1235,6 +1235,7 @@ func (weightlessSession) SendPendingDiff(context.Context) error { return nil }
 func (s weightlessSession) ParticipantKeys() []string        { return s.participants }
 func (s weightlessSession) HostParticipantKeyList() []string { return s.participants }
 func (s weightlessSession) Nonce() uint64                    { return 1 }
+func (s weightlessSession) PublishedNonce() uint64           { return 1 }
 func (s weightlessSession) Phase() types.SessionPhase        { return types.PhaseActive }
 func (s weightlessSession) Signatures() map[uint64]map[uint32][]byte {
 	return map[uint64]map[uint32][]byte{}

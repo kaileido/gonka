@@ -317,6 +317,7 @@ type Session struct {
 
 	signatureWriter *signatureWriter
 	stepTimer       atomic.Pointer[StepTimer]
+	publishedNonce  atomic.Uint64
 	// sigsTrimmedThrough is the highest nonce whose signatures may be missing
 	// from s.signatures. signaturesAtLocked reads those nonces from the store.
 	sigsTrimmedThrough uint64
@@ -1197,7 +1198,7 @@ func (s *Session) ProcessResponse(hostIdx int, resp *host.HostResponse, inferenc
 	err := s.processResponse(hostIdx, resp, inferenceNonce)
 	s.timeStep(StepLockHeldProcess, heldFrom)
 	s.mu.Unlock()
-	s.publishHeightSyncView()
+	s.publishHeightSyncViewOffPath()
 	return err
 }
 
@@ -1317,7 +1318,7 @@ func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*type
 			return types.Diff{}, 0, fmt.Errorf("commit diff nonce %d: state advanced concurrently", nonce)
 		}
 		s.diffs = append(s.diffs, diff)
-		s.nonce = nonce
+		s.setNonceLocked(nonce)
 		s.dropDiffPrefixLocked()
 		s.retainPendingLocked(held, vd.Applied)
 		s.maybeSaveSnapshotLocked()
@@ -1336,7 +1337,7 @@ func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*type
 		return types.Diff{}, 0, err
 	}
 	s.diffs = append(s.diffs, diff)
-	s.nonce = nonce
+	s.setNonceLocked(nonce)
 	s.dropDiffPrefixLocked()
 	s.retainPendingLocked(held, applied)
 	s.observeTurnLocked(diff)
@@ -1708,7 +1709,7 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 	defer func() {
 		s.timeStep(StepLockHeldPrepare, heldFrom)
 		s.mu.Unlock()
-		s.publishHeightSyncView()
+		s.publishHeightSyncViewOffPath()
 	}()
 
 	nonce := s.nonce + 1
@@ -2888,6 +2889,14 @@ func (s *Session) Nonce() uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.nonce
+}
+
+// PublishedNonce is the latest nonce read without the session lock, for a reader that routes or reports rather than composes.
+func (s *Session) PublishedNonce() uint64 { return s.publishedNonce.Load() }
+
+func (s *Session) setNonceLocked(nonce uint64) {
+	s.nonce = nonce
+	s.publishedNonce.Store(nonce)
 }
 
 // Balance reads the escrow balance without the deep copy SnapshotState makes.

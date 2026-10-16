@@ -51,3 +51,25 @@ func TestSession_AStepTimerSeesTheLockAndTheStore(t *testing.T) {
 		require.Positive(t, seen[step], "step %s was never timed; timed: %v", step, seen)
 	}
 }
+
+// Test flow:
+//  1. Serve one inference on a stored session, then hold the session lock as a nonce commit writing to a slow store does.
+//  2. Read the published nonce while the lock is held.
+//  3. Assert the read returns the served nonce without waiting: routing and status read it on every request and every poll.
+func TestSession_PublishedNonceIsReadWhileTheLockIsHeld(t *testing.T) {
+	session := setupStoredSession(t, storage.NewMemory())
+	served, err := session.SendInference(context.Background(), signatureTestParams())
+	require.NoError(t, err)
+
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	read := make(chan uint64, 1)
+	go func() { read <- session.PublishedNonce() }()
+
+	select {
+	case nonce := <-read:
+		require.Equal(t, served.Nonce, nonce)
+	case <-time.After(5 * time.Second):
+		t.Fatal("reading the published nonce waited for the session lock")
+	}
+}

@@ -242,7 +242,7 @@ func RecoverSession(
 			} else {
 				sm.RestoreSealedNonces(sealedNonces)
 				replayFrom = snapNonce + 1
-				sess.nonce = snapNonce
+				sess.setNonceLocked(snapNonce)
 				snapshotCursor = restoredHostCursor(cursor, len(group), snapNonce)
 				snapshotRestored = true
 				log.Printf("recover_session escrow=%s snapshot_restored nonce=%d replay_from=%d total=%d skipped=%d host_cursors=%d",
@@ -328,7 +328,7 @@ func RecoverSession(
 			}
 
 			sess.diffs = append(sess.diffs, rec.Diff)
-			sess.nonce = rec.Nonce
+			sess.setNonceLocked(rec.Nonce)
 
 			for slotID, sig := range rec.Signatures {
 				sess.recordSignatureLocked(rec.Nonce, slotID, sig)

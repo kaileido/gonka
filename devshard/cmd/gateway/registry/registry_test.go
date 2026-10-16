@@ -95,6 +95,7 @@ func (f *fakeSession) SendPendingDiff(context.Context) error {
 func (f *fakeSession) ParticipantKeys() []string        { return f.participants }
 func (f *fakeSession) HostParticipantKeyList() []string { return f.perSlotKeys }
 func (f *fakeSession) Nonce() uint64                    { return f.nonce.Load() }
+func (f *fakeSession) PublishedNonce() uint64           { return f.nonce.Load() }
 func (f *fakeSession) Balance() uint64                  { return 1 << 40 }
 func (f *fakeSession) TokenPrice() uint64               { return 1 }
 func (f *fakeSession) FeePerNonce() uint64              { return 0 }

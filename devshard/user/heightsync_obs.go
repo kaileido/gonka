@@ -58,6 +58,22 @@ func (s *Session) publishHeightSyncView() {
 	s.publishHeightSyncViewOpt(false)
 }
 
+func (s *Session) publishHeightSyncViewOffPath() {
+	if s == nil || !s.heightSyncWired.Load() {
+		return
+	}
+	s.heightSyncDirty.Store(true)
+	if !s.heightSyncPublishMu.TryLock() {
+		return
+	}
+	defer s.heightSyncPublishMu.Unlock()
+	interval := time.Duration(s.heightSyncMinPublishNs.Load())
+	if interval <= 0 {
+		interval = heightSyncDefaultMinPublish
+	}
+	s.armHeightSyncFlushLocked(interval)
+}
+
 func (s *Session) publishHeightSyncViewForce() {
 	if s == nil || !s.heightSyncWired.Load() {
 		return

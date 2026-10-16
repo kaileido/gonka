@@ -221,3 +221,32 @@ func TestSnapshotHeightSync_DoesNotSealAnchors(t *testing.T) {
 	session.mu.Unlock()
 	require.Zero(t, session.anchors.OpenLen(), "producer ObserveTip seals")
 }
+
+// Test flow:
+//  1. Wire height sync on a session and hold its lock, as a nonce commit does.
+//  2. Publish the view from a hot path while the lock is held.
+//  3. Assert the publish returns without waiting for the lock, and the view reaches the cache once the lock is released: the escrow's dispatcher hands out its next nonce instead of queueing for the lock a second time.
+func TestPublishHeightSyncViewOffPath_DoesNotWaitForTheSessionLock(t *testing.T) {
+	session, _, _ := setupSessionWithOptions(t, 2, 100000, 100, WithHeightSyncCadence(10, 2))
+	session.TestingOnlySetHeightSyncMinPublish(20 * time.Millisecond)
+	session.SetHeightSyncPeerTips(transport.NewHeightSyncPeerTips())
+
+	session.mu.Lock()
+	session.overlap.Total = 7
+	published := make(chan struct{})
+	go func() {
+		session.publishHeightSyncViewOffPath()
+		close(published)
+	}()
+	select {
+	case <-published:
+	case <-time.After(5 * time.Second):
+		session.mu.Unlock()
+		t.Fatal("the hot-path publish waited for the session lock")
+	}
+	session.mu.Unlock()
+
+	require.Eventually(t, func() bool {
+		return session.CachedHeightSyncView().Overlap.Total == 7
+	}, 2*time.Second, 5*time.Millisecond, "the trailing flush publishes the view the hot path left dirty")
+}

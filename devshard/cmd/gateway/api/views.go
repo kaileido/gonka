@@ -262,7 +262,7 @@ func (s *Server) devshardStatus(escrow scheduler.Escrow) devshardStatus {
 	if !held {
 		return status
 	}
-	status.Nonce = session.Nonce()
+	status.Nonce = session.PublishedNonce()
 	status.Phase = phaseName(session.Phase())
 	status.Balance = session.Balance()
 	status.SessionVersion = session.ProtocolVersion()

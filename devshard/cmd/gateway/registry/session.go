@@ -48,6 +48,7 @@ type EscrowSession interface {
 	WaitHeightSeedReady(ctx context.Context) error
 	HostParticipantKeyList() []string
 	Nonce() uint64
+	PublishedNonce() uint64
 	Balance() uint64
 	TokenPrice() uint64
 	FeePerNonce() uint64
@@ -198,24 +199,28 @@ func (h sessionHandle) ChatBudgets() map[string]ChatBudget {
 	return budgets
 }
 
-// slots is taken once: the group is fixed for the life of a session, and asking the session takes the lock a nonce commit holds.
+// slots and participants are taken once: the group is fixed for the life of a session, and asking the session takes the lock a nonce commit holds.
 type nonceStream struct {
-	session EscrowSession
-	model   string
-	slots   []string
-	budgets map[string]ChatBudget
-	now     func() time.Time
+	session      EscrowSession
+	model        string
+	slots        []string
+	participants []string
+	budgets      map[string]ChatBudget
+	now          func() time.Time
 }
 
 // newNonceStream is the only way to build one, so the cached group cannot disagree with the session's.
 func newNonceStream(session EscrowSession, model string, now func() time.Time) nonceStream {
-	return nonceStream{session: session, model: model, slots: session.HostParticipantKeyList(), budgets: session.ChatBudgets(), now: now}
+	return nonceStream{
+		session: session, model: model, now: now,
+		slots: session.HostParticipantKeyList(), participants: session.ParticipantKeys(), budgets: session.ChatBudgets(),
+	}
 }
 
-func (s nonceStream) ParticipantKeys() []string  { return s.session.ParticipantKeys() }
+func (s nonceStream) ParticipantKeys() []string  { return s.participants }
 func (s nonceStream) SlotParticipants() []string { return s.slots }
 func (s nonceStream) GroupSize() int             { return len(s.slots) }
-func (s nonceStream) LatestNonce() uint64        { return s.session.Nonce() }
+func (s nonceStream) LatestNonce() uint64        { return s.session.PublishedNonce() }
 func (s nonceStream) Balance() uint64            { return s.session.Balance() }
 func (s nonceStream) TokenPrice() uint64         { return s.session.TokenPrice() }
 func (s nonceStream) FeePerNonce() uint64        { return s.session.FeePerNonce() }
