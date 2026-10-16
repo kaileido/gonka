@@ -83,9 +83,6 @@ func IsEscrowLookupLimited(statusCode int, devshardError string) bool {
 		strings.EqualFold(strings.TrimSpace(devshardError), DevshardErrorEscrowLookupLimited)
 }
 
-// IsEscrowLookupLimitedError reports a refusal from a host whose unknown-escrow lookup budget is spent, over HTTP or Connect.
-func IsEscrowLookupLimitedError(err error) bool { return isEscrowLookupLimitedError(err) }
-
 // IsStorageBusy reports a host 503 storage_busy: the host could not persist
 // the request's diffs in time and applied none of them, so the same request
 // may be resent.
@@ -100,6 +97,12 @@ func IsStorageBusy(err error) bool {
 		return strings.EqualFold(strings.TrimSpace(ce.Meta().Get(HeaderDevshardError)), DevshardErrorStorageBusy)
 	}
 	return false
+}
+
+// IsEscrowLookupLimitedError reports an escrow_lookup_limited 429 on either
+// transport. See IsEscrowLookupLimited.
+func IsEscrowLookupLimitedError(err error) bool {
+	return isEscrowLookupLimitedError(err)
 }
 
 func isEscrowLookupLimitedError(err error) bool {
@@ -291,8 +294,12 @@ func isChatTransportFault(err error) bool {
 	return isRPCH2TransportMiss(err)
 }
 
-// connectRetryAfter is the wait advertised on a Connect error (delta-seconds
+// ConnectRetryAfter is the wait advertised on a Connect error (delta-seconds
 // or HTTP-date). Zero means the meta was missing or unparsable.
+func ConnectRetryAfter(err error) time.Duration {
+	return connectRetryAfter(err)
+}
+
 func connectRetryAfter(err error) time.Duration {
 	var ce *connect.Error
 	if !errors.As(err, &ce) {
