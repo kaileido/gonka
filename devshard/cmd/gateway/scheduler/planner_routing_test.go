@@ -57,8 +57,8 @@ func TestExhaustionReportsOnlyTheNonceCap(t *testing.T) {
 	starved := Escrow{ID: "starved", Model: modelA, Session: &fakeSession{balance: 20_000, tokenPrice: 1, slots: slotsOf("starved", 4), latestNonce: 1}}
 	capped := Escrow{ID: "capped", Model: modelA, Session: &fakeSession{balance: 1 << 30, tokenPrice: 1, slots: slotsOf("capped", 4), latestNonce: 1_000_000}}
 
-	if reason := scheduler.Exhaustion(starved); reason != "" {
-		t.Fatalf("Exhaustion(starved) = %q, want empty", reason)
+	if reason := scheduler.Exhaustion(starved); reason != ExhaustionNone {
+		t.Fatalf("Exhaustion(starved) = %q, want ExhaustionNone", reason)
 	}
 	if reason := scheduler.Exhaustion(capped); reason != ExhaustionNonceCap {
 		t.Fatalf("Exhaustion(capped) = %q, want %q", reason, ExhaustionNonceCap)

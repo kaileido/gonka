@@ -76,6 +76,7 @@ func TestDefaultsMatchSpec(t *testing.T) {
 		{"Perf.HostStalenessSeconds", configuration.Perf.HostStalenessSeconds, int64(3_600)},
 		{"Scheduler.MatchWaitMS", configuration.Scheduler.MatchWaitMS, int64(2_000)},
 		{"Scheduler.MaxConsecutiveBurns", configuration.Scheduler.MaxConsecutiveBurns, int64(2)},
+		{"Scheduler.DispatchQueueDepth", configuration.Scheduler.DispatchQueueDepth, int64(1_024)},
 		{"Engine.ReceiptTimeoutMS", configuration.Engine.ReceiptTimeoutMS, int64(5_000)},
 		{"Engine.FirstTokenFloorMS", configuration.Engine.FirstTokenFloorMS, int64(6_000)},
 		{"Engine.InterChunkStallMS", configuration.Engine.InterChunkStallMS, int64(30_000)},
@@ -221,6 +222,8 @@ func TestValidateCatchesEveryRuleBreach(t *testing.T) {
 		{"scheduler_match_wait_ms above ceiling", func(c *Config) { c.Scheduler.MatchWaitMS = 5_001 }, "scheduler_match_wait_ms"},
 		{"scheduler_max_consecutive_burns negative", func(c *Config) { c.Scheduler.MaxConsecutiveBurns = -1 }, "scheduler_max_consecutive_burns"},
 		{"scheduler_max_consecutive_burns above ceiling", func(c *Config) { c.Scheduler.MaxConsecutiveBurns = 1_001 }, "scheduler_max_consecutive_burns"},
+		{"scheduler_dispatch_queue_depth zero", func(c *Config) { c.Scheduler.DispatchQueueDepth = 0 }, "scheduler_dispatch_queue_depth"},
+		{"scheduler_dispatch_queue_depth above ceiling", func(c *Config) { c.Scheduler.DispatchQueueDepth = 65_537 }, "scheduler_dispatch_queue_depth"},
 		{"engine_receipt_timeout_ms too low", func(c *Config) { c.Engine.ReceiptTimeoutMS = 0 }, "engine_receipt_timeout_ms"},
 		{"engine_first_token_floor_ms too low", func(c *Config) { c.Engine.FirstTokenFloorMS = 0 }, "engine_first_token_floor_ms"},
 		{"engine_inter_chunk_stall_ms too low", func(c *Config) { c.Engine.InterChunkStallMS = 0 }, "engine_inter_chunk_stall_ms"},
@@ -412,5 +415,19 @@ func TestContextLengthTakesTheOperatorsPinOverGovernance(t *testing.T) {
 				t.Fatalf("ContextLength = %d, want %d", got, testCase.want)
 			}
 		})
+	}
+}
+
+// Test flow:
+//  1. Build a default config with the dispatch queue depth at each edge of its range, 1 and 65 536.
+//  2. Assert `Validate` accepts both.
+func TestValidateAcceptsTheDispatchQueueDepthEdges(t *testing.T) {
+	for _, depth := range []int64{1, maxDispatchQueueDepth} {
+		configuration := Defaults()
+		configuration.Scheduler.DispatchQueueDepth = depth
+
+		if err := configuration.Validate(); err != nil {
+			t.Fatalf("Validate() with scheduler_dispatch_queue_depth %d = %v, want nil", depth, err)
+		}
 	}
 }

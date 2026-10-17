@@ -77,6 +77,10 @@ func (s *Scheduler) matchWait() time.Duration {
 	return time.Duration(s.settings.Load().Scheduler.MatchWaitMS) * time.Millisecond
 }
 
+func (s *Scheduler) dispatchQueueDepth() int {
+	return int(s.settings.Load().Scheduler.DispatchQueueDepth)
+}
+
 // maxConsecutiveBurns is read per drain rather than per dispatcher, so an admin change reaches an escrow already running. See routing.md, "The forced send".
 func (s *Scheduler) maxConsecutiveBurns() int64 {
 	return s.settings.Load().Scheduler.MaxConsecutiveBurns

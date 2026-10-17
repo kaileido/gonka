@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"cmp"
 	"errors"
 	"slices"
 	"sync"
@@ -11,6 +12,7 @@ import (
 	"go.uber.org/goleak"
 
 	"devshard/cmd/gateway/chain"
+	"devshard/cmd/gateway/config"
 	"devshard/cmd/gateway/limits"
 	"devshard/types"
 )
@@ -464,7 +466,7 @@ func newHarness(t *testing.T, cfg harnessConfig) *harness {
 		maxConsecutiveBurns: burnLimit.Load,
 		retirementReserve:   func() uint64 { return cfg.retirementReserve },
 		newTimer:            clock.newTimer,
-		submitBuffer:        cfg.submitBuffer,
+		submitBuffer:        cmp.Or(cfg.submitBuffer, int(config.Defaults().Scheduler.DispatchQueueDepth)),
 		onExhausted:         func(escrowID string, reason ExhaustionReason) { exhausted.Store(&escrowID) },
 		holdEscrow:          cfg.escrowHold,
 	})

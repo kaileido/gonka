@@ -22,7 +22,8 @@ const (
 	maxConcurrentRequests    = 10_000_000
 	maxAdmissionQueuePerSlot = 10_000
 
-	maxConsecutiveBurns = 1_000
+	maxConsecutiveBurns   = 1_000
+	maxDispatchQueueDepth = 65_536
 
 	maxSnapshotAgeSeconds   = 86_400
 	maxEngineTimingMS       = 86_400_000
@@ -304,6 +305,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Scheduler.MaxConsecutiveBurns < 0 || c.Scheduler.MaxConsecutiveBurns > maxConsecutiveBurns {
 		complain("scheduler_max_consecutive_burns: %d must be in [0, %d]", c.Scheduler.MaxConsecutiveBurns, maxConsecutiveBurns)
+	}
+	if c.Scheduler.DispatchQueueDepth < 1 || c.Scheduler.DispatchQueueDepth > maxDispatchQueueDepth {
+		complain("scheduler_dispatch_queue_depth: %d must be in [1, %d]", c.Scheduler.DispatchQueueDepth, maxDispatchQueueDepth)
 	}
 	for index, participant := range c.Scheduler.ParticipantAllowlist {
 		if problem := participantEntryProblem(participant); problem != "" {

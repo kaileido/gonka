@@ -383,3 +383,18 @@ func TestTheSettleMarginDefaultsTo600BlocksAndRefusesLessThanOne(t *testing.T) {
 		}
 	}
 }
+
+// Test flow:
+//  1. Build a config with the dispatch queue depth set in the environment, with no overrides.
+//  2. Assert the built scheduler carries that depth.
+func TestTheDispatchQueueDepthComesFromTheEnvironment(t *testing.T) {
+	t.Parallel()
+	built, err := Build(env.Values{DispatchQueueDepth: int64Pointer(4_096)}, Overrides{})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	if built.Scheduler.DispatchQueueDepth != 4_096 {
+		t.Fatalf("scheduler_dispatch_queue_depth = %d, want 4096 from the environment", built.Scheduler.DispatchQueueDepth)
+	}
+}

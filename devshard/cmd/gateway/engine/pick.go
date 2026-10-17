@@ -149,6 +149,7 @@ func (c *raceCoordinator) launch(assignment scheduler.Assignment, role, startRea
 		inInference: !pocGenerating(c.deps.Snapshots.Snapshot(), c.deps.Modes),
 		// Read once: plan() runs on every event, and the quantile cannot move mid-attempt.
 		observedFirst: c.observedFirstContent(assignment.Host),
+		fleetScale:    c.deps.Fleet.hedgeScale(c.deps.Now()),
 	}
 	c.attempts = append(c.attempts, attempt)
 	c.byNonce[nonce] = attempt

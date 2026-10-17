@@ -123,6 +123,7 @@ func Defaults() Config {
 		Scheduler: Scheduler{
 			MatchWaitMS:         2_000,
 			MaxConsecutiveBurns: 2,
+			DispatchQueueDepth:  1_024,
 			WarmNewEscrows:      true,
 		},
 		TimeoutSweep: TimeoutSweep{

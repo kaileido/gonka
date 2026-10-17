@@ -309,3 +309,28 @@ func TestThePickReadsAQueuesDepthFromTheLiveDispatcher(t *testing.T) {
 		t.Fatalf("picked %q, want the escrow whose cursor is not behind a queue", picked.ID)
 	}
 }
+
+// Test flow:
+//  1. Build a scheduler with a "backlogged" candidate that serves nobody yet and a "busy" candidate serving one request, every host of both open.
+//  2. Register a dispatcher for "backlogged" with five waiters queued behind a slow session.
+//  3. Pick an escrow and assert "busy" is picked: waiters queued on an escrow are load it already carries, so a slow escrow sheds new requests to its neighbour instead of filling its queue.
+func TestQueuedWaitersCountAsLoadAnEscrowCarries(t *testing.T) {
+	t.Parallel()
+	scheduler, escrows, _ := newScheduler(
+		candidate{id: "backlogged", activeUsers: 0, weight: 10, latestNonce: 3, slots: []string{"backlogged-0", "backlogged-1"}},
+		candidate{id: "busy", activeUsers: 1, weight: 10, latestNonce: 3, slots: []string{"busy-0", "busy-1"}},
+	)
+	backlogged := escrows.byModel[modelA][0]
+	slow := newDispatcher(dispatcherDeps{escrowID: backlogged.ID, sessionID: backlogged.SessionID})
+	slow.pendingSubmits.Store(5)
+	scheduler.dispatchers[backlogged.ID] = slow
+
+	picked, err := pickWith(scheduler, RequestProfile{Model: modelA}, chain.PhaseSnapshot{})
+
+	if err != nil {
+		t.Fatalf("pickEscrow: %v", err)
+	}
+	if picked.ID != "busy" {
+		t.Fatalf("picked %q, want the escrow with one request in flight over the one with five queued", picked.ID)
+	}
+}

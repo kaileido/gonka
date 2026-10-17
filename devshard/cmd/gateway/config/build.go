@@ -48,6 +48,7 @@ func Build(values env.Values, overrides Overrides) (*Config, error) {
 	overrideIfSet(&configuration.Limits.AdmissionQueuePerSlot, values.AdmissionQueuePerSlot)
 	overrideIfSet(&configuration.Scheduler.MatchWaitMS, values.MatchWaitMS)
 	overrideIfSet(&configuration.Scheduler.MaxConsecutiveBurns, values.MaxConsecutiveBurns)
+	overrideIfSet(&configuration.Scheduler.DispatchQueueDepth, values.DispatchQueueDepth)
 	overrideIfSet(&configuration.Scheduler.WarmNewEscrows, values.WarmNewEscrows)
 
 	overrideIfSet(&configuration.Modes.PoCMode, values.PoCMode)

@@ -195,6 +195,7 @@ type Engine struct {
 type Scheduler struct {
 	MatchWaitMS             int64
 	MaxConsecutiveBurns     int64
+	DispatchQueueDepth      int64
 	WarmNewEscrows          bool
 	ParticipantAllowlist    []string
 	UnthrottledParticipants []string

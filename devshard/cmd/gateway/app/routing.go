@@ -86,7 +86,7 @@ type escrowExhaustion struct {
 func (e escrowExhaustion) Exhaustion(escrowID string) scheduler.ExhaustionReason {
 	candidate, live := e.escrows.Routable(escrowID)
 	if !live {
-		return ""
+		return scheduler.ExhaustionNone
 	}
 	return e.router.Exhaustion(candidate)
 }

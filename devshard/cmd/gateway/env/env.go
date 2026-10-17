@@ -55,6 +55,7 @@ type Values struct {
 	RotationPrePoCBlocks                   *int64
 	MatchWaitMS                            *int64
 	MaxConsecutiveBurns                    *int64
+	DispatchQueueDepth                     *int64
 	ForceUpstreamStreaming                 *bool
 	LogprobsOptimization                   *bool
 	MaxBufferedResponseBytes               *int64
@@ -321,6 +322,7 @@ func Load() (Values, error) {
 	readString("DEVSHARD_ESCROW_ROTATION_MODELS_JSON", &values.RotationModelsJSON)
 	readStrictInt("GATEWAY_MATCH_WAIT_MS", &values.MatchWaitMS)
 	readStrictInt("GATEWAY_MAX_CONSECUTIVE_BURNS", &values.MaxConsecutiveBurns)
+	readStrictInt("GATEWAY_DISPATCH_QUEUE_DEPTH", &values.DispatchQueueDepth)
 	readStrictBool("GATEWAY_FORCE_UPSTREAM_STREAMING", &values.ForceUpstreamStreaming)
 	readStrictBool("GATEWAY_LOGPROBS_OPTIMIZATION_OVERRIDE", &values.LogprobsOptimization)
 	readStrictInt("GATEWAY_MAX_BUFFERED_RESPONSE_BYTES", &values.MaxBufferedResponseBytes)

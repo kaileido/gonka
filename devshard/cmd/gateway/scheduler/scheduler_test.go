@@ -263,6 +263,9 @@ func newSchedulerHarness(t *testing.T, cfg schedulerConfig) *schedulerHarness {
 
 	settings := config.Defaults()
 	settings.Scheduler.MatchWaitMS = cfg.matchWaitMS
+	if cfg.submitBuffer > 0 {
+		settings.Scheduler.DispatchQueueDepth = int64(cfg.submitBuffer)
+	}
 
 	limiter := newFakeLimiter()
 	limiter.window = cfg.hostWindow
@@ -292,7 +295,6 @@ func newSchedulerHarness(t *testing.T, cfg schedulerConfig) *schedulerHarness {
 		Config:            config.NewHolder(&settings),
 		Observer:          test.observer,
 		Now:               test.clock.Now,
-		SubmitBuffer:      cfg.submitBuffer,
 		OnEscrowExhausted: test.exhausted.record,
 		OnReserveTaken:    test.reserves.record,
 	})

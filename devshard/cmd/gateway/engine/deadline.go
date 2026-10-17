@@ -309,6 +309,7 @@ func (c *raceCoordinator) plan() deadlinePlan {
 			Completed:     attempt.completed,
 
 			FirstContentP75: attempt.observedFirst,
+			FleetHedgeScale: attempt.fleetScale,
 
 			ReceiptDeadlineJudged:    attempt.receiptDeadline != deadlineOwed,
 			FirstTokenDeadlineJudged: attempt.firstTokenDeadline != deadlineOwed,

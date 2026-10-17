@@ -44,7 +44,7 @@ func (s *Scheduler) pickEscrow(profile RequestProfile, snapshot chain.PhaseSnaps
 			if belowBalanceFloor(candidate, request) {
 				return Escrow{}, pinnedEscrowShort()
 			}
-			if ceiling != "" {
+			if ceiling != ExhaustionNone {
 				return Escrow{}, noCapacity(ceiling)
 			}
 			return candidate, nil
@@ -66,7 +66,7 @@ func (s *Scheduler) pickEscrow(profile RequestProfile, snapshot chain.PhaseSnaps
 		reserve := s.rankCandidates(candidates, ranking, true)
 		picked, admitted = reserve.picked, admitted+reserve.admitted
 		moneyDeclined = moneyDeclined || reserve.moneyDeclined
-		if reserve.declined != "" {
+		if reserve.declined != ExhaustionNone {
 			declined = reserve.declined
 		}
 	}
@@ -142,7 +142,7 @@ func (s *Scheduler) rankCandidates(candidates []Escrow, ranking escrowRanking, r
 			}
 			continue
 		}
-		if reason := exhaustionReason(candidate, ranking.snapshot.MaxNonce); reason != "" {
+		if reason := exhaustionReason(candidate, ranking.snapshot.MaxNonce); reason != ExhaustionNone {
 			result.declined = reason
 			// Routing only declines; the rotation lifecycle is what replaces an exhausted escrow.
 			s.reportExhausted(candidate.ID, reason)
@@ -159,7 +159,7 @@ func (s *Scheduler) rankCandidates(candidates []Escrow, ranking escrowRanking, r
 			continue
 		}
 		forecast := expectedBurns(candidate, ranking.fleet.forEscrow(s.stateBlocked(candidate.ID), chatBudgetSpent(candidate)), ranking.queued, ranking.ahead[index])
-		score := float64(candidate.ActiveUsers+forecast) / weight
+		score := (float64(candidate.ActiveUsers+forecast) + float64(ranking.ahead[index])) / weight
 		switch {
 		case !reserveTier && !affordsAttempts(candidate, ranking.request, ranking.attempts):
 			thin.offer(index, score)
@@ -216,7 +216,7 @@ func (s *Scheduler) reportMoneyShort(model string) {
 
 // reportExhausted passes over the fallback ceiling: it is not the hosts' cap, and a reported nonce cap retires the escrow. See routing.md, "Picking an escrow".
 func (s *Scheduler) reportExhausted(escrowID string, reason ExhaustionReason) {
-	if reason = retirable(reason); s.onEscrowExhausted == nil || reason == "" {
+	if reason = retirable(reason); s.onEscrowExhausted == nil || reason == ExhaustionNone {
 		return
 	}
 	s.onEscrowExhausted(escrowID, reason)
@@ -229,7 +229,7 @@ func (s *Scheduler) Exhaustion(candidate Escrow) ExhaustionReason {
 
 func retirable(reason ExhaustionReason) ExhaustionReason {
 	if reason == exhaustionFallbackNonceCeiling {
-		return ""
+		return ExhaustionNone
 	}
 	return reason
 }
@@ -270,10 +270,10 @@ func unusableWeight(weight float64) bool {
 	return weight <= 0 || math.IsNaN(weight)
 }
 
-// nonceCeilingReason names the ceiling an escrow has reached, and is empty below it.
+// nonceCeilingReason names the ceiling an escrow has reached, and is ExhaustionNone below it.
 func nonceCeilingReason(candidate Escrow, maxNonce uint64) ExhaustionReason {
 	if candidate.Session == nil {
-		return ""
+		return ExhaustionNone
 	}
 	cutoff, reason := fallbackNonceCeiling, exhaustionFallbackNonceCeiling
 	if maxNonce > 0 {
@@ -286,12 +286,12 @@ func nonceCeilingReason(candidate Escrow, maxNonce uint64) ExhaustionReason {
 		reason = ExhaustionNonceCap
 	}
 	if candidate.Session.LatestNonce() < cutoff {
-		return ""
+		return ExhaustionNone
 	}
 	return reason
 }
 
-// exhaustionReason is empty while the escrow may still be picked; a balance never retires an escrow. See routing.md, "Picking an escrow".
+// exhaustionReason is ExhaustionNone while the escrow may still be picked; a balance never retires an escrow. See routing.md, "Picking an escrow".
 func exhaustionReason(candidate Escrow, maxNonce uint64) ExhaustionReason {
 	return nonceCeilingReason(candidate, maxNonce)
 }

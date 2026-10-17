@@ -21,7 +21,7 @@ func (m *Manager) markSpent(devshards []store.DevshardRecord) {
 		if !record.Active {
 			continue
 		}
-		if reason := m.exhaustion.Exhaustion(record.EscrowID); reason != "" {
+		if reason := m.exhaustion.Exhaustion(record.EscrowID); reason != scheduler.ExhaustionNone {
 			m.OnBalanceExhausted(record.EscrowID, reason)
 		}
 	}

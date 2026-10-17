@@ -12,8 +12,6 @@ import (
 	"devshard/types"
 )
 
-const defaultSubmitBuffer = 64
-
 // EscrowRetired lets an observer forget an escrow, whose id is never reused. See README, "Dispatcher lifecycle".
 type dispatchObserver interface {
 	GhostBurned(escrowID string, burned Burn)
@@ -78,9 +76,6 @@ func newDispatcher(deps dispatcherDeps) *dispatcher {
 	}
 	if deps.newTimer == nil {
 		deps.newTimer = realTimer
-	}
-	if deps.submitBuffer <= 0 {
-		deps.submitBuffer = defaultSubmitBuffer
 	}
 	if deps.holdEscrow == nil {
 		deps.holdEscrow = func() (func(), bool) { return nil, true }

@@ -41,7 +41,7 @@ func (s *Scheduler) dispatcherFor(escrow Escrow) (*dispatcher, error) {
 			newTimer:            s.newTimer,
 			retire:              s.retire,
 			idleGrace:           idleDispatcherGrace,
-			submitBuffer:        s.submitBuffer,
+			submitBuffer:        s.dispatchQueueDepth(),
 			onExhausted:         s.onEscrowExhausted,
 		})
 		s.dispatchers[escrow.ID] = target

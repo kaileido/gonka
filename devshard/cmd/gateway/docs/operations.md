@@ -83,6 +83,7 @@ Signing keys are addressed **by the name of the variable that holds them**, neve
 | Variable | Default | What it decides |
 | --- | --- | --- |
 | `DEVSHARD_PORT` | 8080 | the listening port |
+| `DEVSHARD_CHAIN_ID` | empty | the chain id the gateway signs its transactions for; empty asks the node over `DEVSHARD_CHAIN_GRPC`, and a configured value wins over the node |
 | `DEVSHARD_STORAGE_DIR` | `$HOME/.cache/gonka-gateway` | where `gateway.db` and the escrow storage live |
 | `DEVSHARD_SESSION_RETENTION_EPOCHS` | 2 | how many epochs before the effective one an escrow's session directory stays on disk; `0` keeps every one, and `1` is raised to 2, the hosts' own horizon ("Session storage" below) |
 | `GATEWAY_MAX_CONCURRENT_REQUESTS` | 2048 | the hard admission ceiling; unset lets the weight model decide |
@@ -96,6 +97,7 @@ Signing keys are addressed **by the name of the variable that holds them**, neve
 | `DEVSHARD_ESCROW_ROTATION_PREVIOUS_EPOCH_SETTLEMENT_ENABLED` | false | settles parked and deadline escrows once their chain epoch is over, never inside it; a model's own `previous_epoch_settlement_enabled` in the models JSON overrides it |
 | `GATEWAY_ROTATION_SETTLE_MARGIN_BLOCKS` | 600 | blocks before an escrow's settlement deadline at which it is parked for settling; at least 1; a margin the measured block time (over at least 100 blocks) makes shorter than two settle windows is journalled as `settle margin shorter than two settle windows`, once per episode; the margin is never refused |
 | `DEVSHARD_ESCROW_ROTATION_PRE_POC_BLOCKS` | 300 | how early the bridge starts |
+| `DEVSHARD_ESCROW_ROTATION_MODELS_JSON` | empty | the models rotation keeps escrows for, each with `model_id`, `temp_count`, `amount` and `private_key_env`; optional are `target_count` (1), `reserve_count` (1, `0` turns reserves off), `max_unsettled` (the target, temp and reserve counts plus 4), `full_context_slots` (2) and the model's own `settlement_enabled` and `previous_epoch_settlement_enabled`; empty rotates no model |
 | `GATEWAY_WARM_NEW_ESCROWS` | true | whether a new escrow is taught to its group before serving |
 | `GATEWAY_CHAIN_SNAPSHOT_MAX_AGE_SECONDS` | 60 | how stale the chain snapshot may be before requests are refused 503; `0` disables the gate |
 | `GATEWAY_ENGINE_RECEIPT_TIMEOUT_MS` | 5 000 | receipt deadline; doubled above 100 000 input tokens |
@@ -106,6 +108,7 @@ Signing keys are addressed **by the name of the variable that holds them**, neve
 | `GATEWAY_ENGINE_HEDGE_FIRST_TOKEN_FLOOR_MS` | 1 500 | lower bound on the slow-start hedge that starts a second attempt before the judged deadline; `0` turns it off |
 | `GATEWAY_ENGINE_MAX_CONCURRENT_TIMEOUT_VOTES` | 64 | chain votes for unfinished nonces being posted at once, not a bound on settling escrows; one past it waits for a poster rather than being dropped |
 | `DEVSHARD_STATS_ENABLED` | false | the per-nonce ledger and its JSON API on `DEVSHARD_STATS_PORT` (9091) |
+| `DEVSHARD_STATS_SNAPSHOT_SECONDS` | 300 | how often the nonce ledger writes its snapshot to disk; a value below 1 is ignored with a warning |
 | `DEVSHARD_STATS_RETENTION_EPOCHS` | 2 | how many epochs before the current one the nonce ledger keeps retired escrows; `0` keeps every epoch |
 | `GATEWAY_PERF_EWMA_HALFLIFE_SECONDS` | 600 | how fast a host's history forgets |
 | `GATEWAY_TIMEOUT_SWEEP_BUDGET_PER_TICK` | 8 | execution-timeout votes one tick may retry across every escrow, the most overdue first; `0` turns the sweep off |
@@ -145,6 +148,7 @@ These are read the same way and rarely need changing. Where a knob has a longer 
 | `GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT` | 0 | the per-model budget of input tokens in flight, scaled by capacity; `0` is unlimited |
 | `GATEWAY_MATCH_WAIT_MS` | 2 000 | how long a bound nonce waits for a compatible request before it is burned; `0` burns at once, and 5 000 is the most it accepts |
 | `GATEWAY_MAX_CONSECUTIVE_BURNS` | 2 | nonces one escrow may burn in a row before the next one is sent over a full congestion window; `0` never forces a send ([`routing.md`](routing.md), "The forced send") |
+| `GATEWAY_DISPATCH_QUEUE_DEPTH` | 1 024 | waiters one escrow's dispatcher holds; past it an unpinned request walks to the next escrow, and when every escrow of the model is full it is refused busy (503); 1 to 65 536, read when an escrow's dispatcher starts |
 | `GATEWAY_FORCE_UPSTREAM_STREAMING` | true | whether a non-streaming request is still streamed from the host and assembled by the gateway ([`request.md`](request.md)) |
 | `GATEWAY_LOGPROBS_OPTIMIZATION_OVERRIDE` | unset | forces the hosts' logprobs optimization on or off for every inference; unset leaves each host on its own default (`DEVSHARD_LOGPROBS_OPTIMIZATION_ENABLED`, on). The admin override `logprobs_optimization` takes precedence, and removing it falls back to this value |
 | `GATEWAY_REQUESTS_RETENTION_HOURS` / `GATEWAY_REQUESTS_RETENTION_MAX_ROWS` | 168 / 1 000 000 | how long and how many request records are kept; neither may be zero |

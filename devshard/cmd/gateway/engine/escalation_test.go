@@ -600,7 +600,7 @@ func TestShippedDefaultsBoundTheRaceAndItsFirstTokenWait(t *testing.T) {
 }
 
 // Test flow:
-//  1. For each table case's policy, attempt state and request size (no receipt with the curve beating the floor, a growing curve with the prompt, a hedge floor above the curve, a zero hedge floor falling back to the receipt deadline, a receipt without a token under both a real and a zero hedge floor, and a curve overtaken by the receipt or first-token deadline for a large prompt), call `NextEscalation`.
+//  1. For each table case's policy, attempt state and request size (no receipt with the curve beating the floor, a growing curve with the prompt, a hedge floor above the curve, a zero hedge floor falling back to the receipt deadline, a receipt without a token under both a real and a zero hedge floor, a curve overtaken by the receipt or first-token deadline for a large prompt, and an attempt's fleet scale that moves the hedge out, stays above the floor, or passes the receipt deadline), call `NextEscalation`.
 //  2. Assert it arms the expected stage and deadline.
 func TestAHedgeArmsOnTheCurveBeforeTheJudgedDeadline(t *testing.T) {
 	hedging := EscalationPolicy{
@@ -683,6 +683,30 @@ func TestAHedgeArmsOnTheCurveBeforeTheJudgedDeadline(t *testing.T) {
 			request:      largePrompt,
 			wantStage:    StageFirstToken,
 			wantDeadline: raceStart.Add(9_700 * time.Millisecond),
+		},
+		{
+			name:         "a slow fleet moves the hedge out to its own level",
+			policy:       hedging,
+			attempt:      EscalationAttempt{ClockStart: raceStart, FleetHedgeScale: 2},
+			request:      emptyPrompt,
+			wantStage:    StageHedge,
+			wantDeadline: raceStart.Add(3_400 * time.Millisecond),
+		},
+		{
+			name:         "a fast fleet keeps the hedge floor",
+			policy:       hedging,
+			attempt:      EscalationAttempt{ClockStart: raceStart, FleetHedgeScale: 0.5},
+			request:      emptyPrompt,
+			wantStage:    StageHedge,
+			wantDeadline: raceStart.Add(1_500 * time.Millisecond),
+		},
+		{
+			name:         "a fleet level past the receipt deadline leaves the receipt deadline in charge",
+			policy:       hedging,
+			attempt:      EscalationAttempt{ClockStart: raceStart, FleetHedgeScale: 4},
+			request:      emptyPrompt,
+			wantStage:    StageReceiptTimeout,
+			wantDeadline: raceStart.Add(5 * time.Second),
 		},
 	}
 	for _, testCase := range testCases {

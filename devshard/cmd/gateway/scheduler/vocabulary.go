@@ -15,13 +15,13 @@ const (
 	GhostReasonPrepareFailed       = "nonce_spent_on_failed_prepare"
 )
 
-// ExhaustionReason is why routing will no longer pick an escrow, reported to the lifecycle that replaces it.
+// ExhaustionReason is why routing will no longer pick an escrow, reported to the lifecycle that replaces it; ExhaustionNone is an escrow it may still pick, and the fallback nonce ceiling is never reported, so it never leaves this package. See routing.md, "Picking an escrow".
 type ExhaustionReason string
 
 const (
-	ExhaustionNonceCap            ExhaustionReason = "nonce_cap"
-	ExhaustionBalanceFloor        ExhaustionReason = "balance_floor"
-	ExhaustionInsufficientBalance ExhaustionReason = "insufficient_balance"
-	// exhaustionFallbackNonceCeiling is the one decline reason never reported, so it never leaves this package. See routing.md, "Picking an escrow".
+	ExhaustionNone                 ExhaustionReason = ""
+	ExhaustionNonceCap             ExhaustionReason = "nonce_cap"
+	ExhaustionBalanceFloor         ExhaustionReason = "balance_floor"
+	ExhaustionInsufficientBalance  ExhaustionReason = "insufficient_balance"
 	exhaustionFallbackNonceCeiling ExhaustionReason = "fallback_nonce_ceiling"
 )

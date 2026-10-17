@@ -69,6 +69,7 @@ type raceDeps struct {
 	CancelGrace  time.Duration
 	Classify     func(participant string) streamClassifier
 	PrefixBudget *carryBudget
+	Fleet        *fleetFirstToken
 	Now          func() time.Time
 	Timer        func() raceTimer
 	Journal      raceJournal
@@ -116,6 +117,7 @@ type liveAttempt struct {
 	completed    time.Time
 
 	observedFirst time.Duration
+	fleetScale    float64
 	escalated     bool
 	done          bool
 	abandoned     bool

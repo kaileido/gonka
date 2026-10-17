@@ -87,6 +87,7 @@ type EscalationRequest struct {
 
 type EscalationAttempt struct {
 	FirstContentP75 time.Duration
+	FleetHedgeScale float64
 	Suspicious      bool
 	Escalated       bool
 	Done            bool
@@ -208,12 +209,20 @@ func (p EscalationPolicy) triggerFor(attempt *EscalationAttempt, request Escalat
 
 func (p EscalationPolicy) hedgeBefore(stage EscalationStage, judged time.Time, attempt *EscalationAttempt, request EscalationRequest) ArmedEscalation {
 	if p.HedgeFirstTokenFloor > 0 {
-		hedge := attempt.ClockStart.Add(max(p.HedgeFirstTokenFloor, firstTokenCurve(request.InputTokens)))
+		hedge := attempt.ClockStart.Add(p.hedgeWait(attempt, request))
 		if hedge.Before(judged) {
 			return ArmedEscalation{Stage: StageHedge, Deadline: hedge}
 		}
 	}
 	return ArmedEscalation{Stage: stage, Deadline: judged}
+}
+
+func (p EscalationPolicy) hedgeWait(attempt *EscalationAttempt, request EscalationRequest) time.Duration {
+	curve := firstTokenCurve(request.InputTokens)
+	if attempt.FleetHedgeScale != fleetScaleUnknown {
+		return max(p.HedgeFirstTokenFloor, time.Duration(float64(curve)*attempt.FleetHedgeScale))
+	}
+	return max(p.HedgeFirstTokenFloor, curve)
 }
 
 // answered reports an attempt that finished its nonce with something a client can render; an empty stream closes its nonce and still leaves nothing.

@@ -20,10 +20,14 @@ func (c *raceCoordinator) apply(event AttemptEvent) {
 	switch event.Kind {
 	case AttemptDispatched:
 		attempt.sendTime = event.At
+		if c.feedsFleet(attempt) {
+			c.deps.Fleet.recordDispatch(attempt, attempt.clockStart(), c.request.InputTokens)
+		}
 	case AttemptReceipt:
 		attempt.receiptTime = event.At
 	case AttemptFirstToken:
 		attempt.firstToken, attempt.lastChunk = event.At, event.At
+		c.deps.Fleet.recordFirstToken(attempt, event.At)
 	case AttemptContent:
 		attempt.firstContent, attempt.lastChunk = event.At, event.At
 	case AttemptChunk:
@@ -139,8 +143,13 @@ func (c *raceCoordinator) traceUnreported(attempt *liveAttempt, reason string) {
 	})
 }
 
+func (c *raceCoordinator) feedsFleet(attempt *liveAttempt) bool {
+	return attempt == c.attempts[0] && c.decision == StartPrimary
+}
+
 func (c *raceCoordinator) retire(attempt *liveAttempt) {
 	c.pending--
+	c.deps.Fleet.forget(attempt)
 	attempt.cancel()
 	c.deps.Perf.Release(attempt.participant)
 }

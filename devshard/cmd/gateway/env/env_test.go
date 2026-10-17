@@ -593,3 +593,21 @@ func TestTheLogprobsOptimizationOverrideReadsAsATriState(t *testing.T) {
 		t.Fatalf("LogprobsOptimization = %v, want nil so the host decides", *unset.LogprobsOptimization)
 	}
 }
+
+// Test flow:
+//  1. Set GATEWAY_DISPATCH_QUEUE_DEPTH to a number, call `Load`, then set it to a word and call `Load` again.
+//  2. Assert the number is read as the depth and the word is refused with an error naming the variable.
+func TestTheDispatchQueueDepthIsReadStrictly(t *testing.T) {
+	t.Setenv("GATEWAY_DISPATCH_QUEUE_DEPTH", "2048")
+	values, err := Load()
+	if err != nil || values.DispatchQueueDepth == nil || *values.DispatchQueueDepth != 2048 {
+		t.Fatalf("Load() with GATEWAY_DISPATCH_QUEUE_DEPTH=2048 = (%v, %v), want 2048", values.DispatchQueueDepth, err)
+	}
+
+	t.Setenv("GATEWAY_DISPATCH_QUEUE_DEPTH", "deep")
+	_, err = Load()
+
+	if err == nil || !strings.Contains(err.Error(), "GATEWAY_DISPATCH_QUEUE_DEPTH") {
+		t.Fatalf("Load() with GATEWAY_DISPATCH_QUEUE_DEPTH=deep = %v, want an error naming the variable", err)
+	}
+}

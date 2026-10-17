@@ -109,6 +109,7 @@ type Engine struct {
 	deps           Deps
 	carry          *carryBudget
 	prefixBudget   *carryBudget
+	fleets         *fleetsByModel
 	crown          *crownStrikes
 	lookups        *lookupRefusals
 	settles        *settleQueue
@@ -145,6 +146,7 @@ func NewEngine(deps Deps) (*Engine, error) {
 		deps:           deps,
 		carry:          newCarryBudget(deps.Config.Load().Stream),
 		prefixBudget:   newPrefixBudget(),
+		fleets:         newFleetsByModel(),
 		crown:          newCrownStrikes(deps.Journal),
 		lookups:        newLookupRefusals(),
 		settles:        newSettleQueue(clock),
@@ -269,6 +271,7 @@ func (e *Engine) raceDeps(settings *config.Config, request Request, registration
 		DrainTimeout: DrainTimeoutFromConfig(settings.Stream),
 		Classify:     e.classify(request.Model),
 		PrefixBudget: e.prefixBudget,
+		Fleet:        e.fleets.forModel(request.Model),
 		Now:          e.deps.Now,
 		Timer:        e.deps.Timer,
 		Journal:      e.deps.Journal,

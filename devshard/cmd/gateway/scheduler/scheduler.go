@@ -13,7 +13,7 @@ import (
 // idleDispatcherGrace is how long an escrow's actor stays alive with an empty queue. See routing.md, "Idle dispatchers are reaped".
 const idleDispatcherGrace = 5 * time.Minute
 
-// Deps wires the runtime facts routing reads; Observer, Now, SubmitBuffer, OnEscrowExhausted, OnReserveTaken and OnMoneyShort are optional.
+// Deps wires the runtime facts routing reads; Observer, Now, OnEscrowExhausted, OnReserveTaken and OnMoneyShort are optional.
 type Deps struct {
 	Escrows           escrowSource
 	Capacity          escrowWeights
@@ -23,7 +23,6 @@ type Deps struct {
 	Config            *config.Holder
 	Observer          dispatchObserver
 	Now               func() time.Time
-	SubmitBuffer      int
 	OnEscrowExhausted func(escrowID string, reason ExhaustionReason)
 	OnReserveTaken    func(escrowID string)
 	OnMoneyShort      func(model string)
@@ -40,7 +39,6 @@ type Scheduler struct {
 	observer          dispatchObserver
 	now               func() time.Time
 	newTimer          func(time.Duration) (<-chan time.Time, func())
-	submitBuffer      int
 	onEscrowExhausted func(escrowID string, reason ExhaustionReason)
 	onReserveTaken    func(escrowID string)
 	onMoneyShort      func(model string)
@@ -84,7 +82,6 @@ func NewScheduler(deps Deps) (*Scheduler, error) {
 		settings:          deps.Config,
 		observer:          deps.Observer,
 		now:               deps.Now,
-		submitBuffer:      deps.SubmitBuffer,
 		onEscrowExhausted: deps.OnEscrowExhausted,
 		onReserveTaken:    deps.OnReserveTaken,
 		onMoneyShort:      deps.OnMoneyShort,

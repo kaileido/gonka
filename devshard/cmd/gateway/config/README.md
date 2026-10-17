@@ -38,7 +38,7 @@ Everything the gateway's behaviour depends on, in one value that is never mutate
 | `Stream` | the drain timeout and the three-tier classification byte budget. |
 | `Perf` | Envoy-style host ejection: consecutive-fail and rate-with-min-volume triggers, timed backoff, and the pool-wide ejection cap. `MinAvailableHosts` is a floor kept routable regardless of that cap, and host-model state unseen for `HostStalenessSeconds` is evicted. |
 | `Engine` | race-escalation tuning. A zero `MaxAttemptsPerRequest` is bounded only by the host group, and the backstops this struct does not carry are engine constants — see [`docs/race.md`](../docs/race.md), "Tunables and backstops". |
-| `Scheduler` | `MatchWaitMS` is how long a bound nonce waits for a co-arriving compatible request before it is burned; 0 burns immediately. `MaxConsecutiveBurns` is how many nonces one escrow may burn in a row before the next binding is sent over a full congestion window instead; 0 turns that off. |
+| `Scheduler` | `MatchWaitMS` is how long a bound nonce waits for a co-arriving compatible request before it is burned; 0 burns immediately. `MaxConsecutiveBurns` is how many nonces one escrow may burn in a row before the next binding is sent over a full congestion window instead; 0 turns that off. `DispatchQueueDepth` is how many waiters one escrow's dispatcher holds before a request walks on or is refused busy; it is read when an escrow's dispatcher starts. |
 
 Three accessors carry rules of their own. `Server.AdminEnabled` is what callers must gate on — comparing a presented credential against `AdminAPIKey` directly would authenticate an empty one. `Limits.AccessFor` resolves a model outside a *populated* `ModelAccess` to admin-only rather than open; with no map at all every model is open. See [`docs/operations.md`](../docs/operations.md), "Who may call what". `Limits.ContextLength` takes the operator's `max_model_len` pin over the `--max-model-len` governance registers and reads a length above `MaxContextTokens` as none; the race judges a context refusal against it and the scheduler prices an escrow's retirement floor on it.
 
@@ -51,6 +51,7 @@ Most checks are ordinary range bounds. These are the ones that exist because a l
 - `host_cutoff_max_ms` must not exceed `perf_ejection_max_seconds`, so [`perf`](../perf/) stays the dominant ejection authority rather than the per-host cutoff.
 - `engine_loser_grace_ms` must be at least `engine_inter_chunk_stall_ms`. A loser is cancelled at the grace, so a grace under the stall window kills attempts that are merely between chunks — before the gateway would even call such a stream stalled.
 - `scheduler_match_wait_ms` is capped at 5000. A long grace parks a committed-cost nonce on the chance of a co-arrival, so the ceiling is a budget guard, not a taste judgement.
+- `scheduler_dispatch_queue_depth` is in [1, 65536]: each escrow's dispatcher allocates its queue up front, so the ceiling bounds that allocation; the waiters themselves are bounded by admission, since each holds its admission slot.
 - `scheduler_max_consecutive_burns` is capped at 1000, which is past any real group size: a run longer than the group is a rung that never fires.
 - `rotation_settle_margin_blocks` below 1.
 - `chain_grpc` is checked as `host:port`, not as a URL: a gRPC target carries no scheme, so a URL check would pass anything.
