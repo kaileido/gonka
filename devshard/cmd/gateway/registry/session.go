@@ -18,11 +18,10 @@ import (
 
 const ghostMaxTokens = uint64(completionapi.MinTokensFloor)
 
+// See README.md, "Nonces and ghost burns".
 var (
-	// ghostPrompt is composed into the diff, never sent to a host. See routing.md, "Ghost burns".
 	ghostPrompt = fmt.Appendf(nil, `{"messages":[{"role":"user","content":"."}],"max_tokens":%d}`, ghostMaxTokens)
 
-	// errNonceDeclined leaves the bound nonce unconsumed, so the next caller sees the same nonce.
 	errNonceDeclined = errors.New("nonce declined")
 )
 

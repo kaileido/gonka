@@ -6,7 +6,10 @@ import (
 	"devshard/cmd/gateway/chain"
 )
 
-const blockPaceMinimumBlocks = 100
+const (
+	blockPaceMinimumBlocks = 100
+	marginSettleWindows    = 2
+)
 
 type blockPace struct {
 	firstHeight    int64
@@ -46,7 +49,7 @@ func (m *Manager) checkSettleMargin(snapshot chain.PhaseSnapshot) {
 		return
 	}
 	marginBlocks := m.config.Load().Rotation.SettleMarginBlocks
-	need := 2 * commitmentReconcileGrace
+	need := marginSettleWindows * commitmentReconcileGrace
 	if time.Duration(marginBlocks)*blockTime >= need {
 		m.pace.narratedMargin = 0
 		return

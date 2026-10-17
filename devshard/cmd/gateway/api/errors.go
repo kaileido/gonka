@@ -111,7 +111,7 @@ func (e *BlockedError) phaseName() string {
 	if e.Reason != chain.BlockReasonNone {
 		return strings.ReplaceAll(string(e.Reason), "_", " ")
 	}
-	if e.Phase != "" {
+	if e.Phase != chain.EpochPhaseUnknown {
 		return string(e.Phase)
 	}
 	return "chain admission controls"
@@ -252,7 +252,7 @@ func (s *Server) writeErrorFor(w http.ResponseWriter, err error) {
 		w.Header().Set("Retry-After", strconv.FormatInt(int64(escrow.TickInterval.Seconds()), 10))
 	case hostsUnavailable(err):
 		baseMS := s.config.Load().Limits.HostCutoff.BaseMS
-		seconds := int64(math.Ceil(float64(baseMS) / 1000))
+		seconds := int64(math.Ceil(float64(baseMS) / float64(time.Second.Milliseconds())))
 		w.Header().Set("Retry-After", strconv.FormatInt(seconds, 10))
 	case ours, shardHasNoRoom(err):
 		w.Header().Set("Retry-After", strconv.FormatInt(int64(noHostRetryAfter.Seconds()), 10))

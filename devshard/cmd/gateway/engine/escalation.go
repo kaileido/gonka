@@ -7,15 +7,16 @@ import (
 	"devshard/types"
 )
 
+// The backstops, the large-prompt receipt doubling, the attempts a hedged start launches and the measured first-token curve. See README, "Escalation and the deadline ladder" and "Backstops are not tunable".
 const (
-	// Backstops bound a request every tunable already failed to bound. See README, "Backstops are not tunable".
 	streamingHardTimeout = min(20*time.Minute, types.DefaultExecutionTimeoutSeconds*time.Second-time.Minute)
 	schedulerPickTimeout = 2 * time.Minute
 
-	// Admitting a very large prompt is itself work, so such a host gets twice as long to receipt.
-	receiptTimeoutDoubleAboveTokens = 100_000
+	receiptTimeoutDoubleAboveTokens     = 100_000
+	receiptTimeoutLargePromptMultiplier = 2
 
-	// The measured first-token curve over prompt size. See README, "Escalation and the deadline ladder".
+	hedgedStartAttempts = 2
+
 	firstTokenBaseSeconds      = 1.7
 	firstTokenPerTokenSeconds  = 3e-5
 	firstTokenQuadraticSeconds = 5e-10
@@ -77,8 +78,9 @@ func EscalationPolicyFromConfig(engine config.Engine) EscalationPolicy {
 }
 
 const (
-	firstTokenObservedLimit = 4
-	firstTokenObservedSlack = 3
+	firstTokenObservedLimit            = 4
+	firstTokenObservedSlackNumerator   = 3
+	firstTokenObservedSlackDenominator = 2
 )
 
 type EscalationRequest struct {
@@ -128,11 +130,11 @@ type ConfirmedEscalation struct {
 // Decide hedges a primary the race already has reason to distrust. See race.md, "Escalation" and capacity.md, "Outlier ejection".
 func (p EscalationPolicy) Decide(budget int, primarySuspicious, primaryDegraded bool) StartPlan {
 	switch {
-	case budget < 2:
+	case budget < hedgedStartAttempts:
 	case primarySuspicious:
-		return StartPlan{ImmediateAttempts: 2, Reason: StartPrimarySuspicious}
+		return StartPlan{ImmediateAttempts: hedgedStartAttempts, Reason: StartPrimarySuspicious}
 	case primaryDegraded:
-		return StartPlan{ImmediateAttempts: 2, Reason: StartPrimaryDegraded}
+		return StartPlan{ImmediateAttempts: hedgedStartAttempts, Reason: StartPrimaryDegraded}
 	}
 	return StartPlan{ImmediateAttempts: 1, Reason: StartPrimary}
 }
@@ -266,7 +268,7 @@ func (p EscalationPolicy) firstTokenDeadline(attempt *EscalationAttempt, request
 
 func (p EscalationPolicy) receiptTimeout(inputTokens uint64) time.Duration {
 	if inputTokens > receiptTimeoutDoubleAboveTokens {
-		return 2 * p.ReceiptTimeout
+		return receiptTimeoutLargePromptMultiplier * p.ReceiptTimeout
 	}
 	return p.ReceiptTimeout
 }
@@ -277,7 +279,7 @@ func (p EscalationPolicy) firstTokenBudget(inputTokens uint64, observed time.Dur
 	if observed <= 0 || observed > firstTokenObservedLimit*curve {
 		return curve
 	}
-	budget := observed * firstTokenObservedSlack / 2
+	budget := observed * firstTokenObservedSlackNumerator / firstTokenObservedSlackDenominator
 	if budget < curve {
 		return curve
 	}

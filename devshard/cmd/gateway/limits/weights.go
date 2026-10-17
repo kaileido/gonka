@@ -3,12 +3,14 @@ package limits
 
 import "math"
 
+const concurrencyWeightBase = 10_000
+
 // weightConcurrencyLimit = floor(weight * per10000 / 10000); 0 when per10000<=0 or weight<=0.
 func weightConcurrencyLimit(weight, per10000 float64) int64 {
 	if nonPositiveOrNotFinite(weight) || nonPositiveOrNotFinite(per10000) {
 		return 0
 	}
-	limit := math.Floor(weight * per10000 / 10000)
+	limit := math.Floor(weight * per10000 / concurrencyWeightBase)
 	if limit >= float64(math.MaxInt64) {
 		return math.MaxInt64
 	}

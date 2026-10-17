@@ -20,6 +20,13 @@ import (
 	"devshard/cmd/gateway/store"
 )
 
+const (
+	readHeaderTimeout     = 5 * time.Second
+	idleConnectionTimeout = 120 * time.Second
+	maxRequestHeaderBytes = 1 << 20
+	requestIDBytes        = 16
+)
+
 // EscrowRegistry is the live escrow set as the HTTP boundary reads it; *registry.Registry satisfies it.
 type EscrowRegistry interface {
 	Serves(model string) bool
@@ -276,14 +283,14 @@ func (s *Server) HTTPServer(address string) *http.Server {
 	return &http.Server{
 		Addr:              address,
 		Handler:           s.handler,
-		ReadHeaderTimeout: 5 * time.Second,
-		IdleTimeout:       120 * time.Second,
-		MaxHeaderBytes:    1 << 20,
+		ReadHeaderTimeout: readHeaderTimeout,
+		IdleTimeout:       idleConnectionTimeout,
+		MaxHeaderBytes:    maxRequestHeaderBytes,
 	}
 }
 
 func randomRequestID() string {
-	raw := make([]byte, 16)
+	raw := make([]byte, requestIDBytes)
 	if _, err := rand.Read(raw); err != nil {
 		return ""
 	}

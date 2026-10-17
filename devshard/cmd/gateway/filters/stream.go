@@ -8,16 +8,18 @@ import (
 	"slices"
 )
 
+// See README.md, "SSE framing" and "Folding a stream into one body".
 const (
-	// MaxStreamCarryBytes bounds the unterminated tail held per stream. See README.md, "SSE framing".
 	MaxStreamCarryBytes = 32 << 20
 
-	// chunkObject tells a streaming client to read choices[].delta instead of choices[].message.
 	chunkObject = "chat.completion.chunk"
 
-	jsonWhitespace = " \t\r\n"
+	jsonWhitespace      = " \t\r\n"
+	firstNonControlByte = 0x20
+	crlfLength          = len("\r\n")
 )
 
+// See README.md, "SSE framing" and "What the fold returns".
 var (
 	sseLineSeparator      = []byte("\n")
 	sseEventSeparator     = []byte("\n\n")
@@ -25,21 +27,15 @@ var (
 	sseDataPrefix         = []byte("data: ")
 	sseDoneMarker         = []byte("[DONE]")
 
-	// sseDataParsePrefix deliberately omits the space sseDataPrefix emits. See README.md, "Two `data:` prefixes that must not be unified".
 	sseDataParsePrefix = []byte("data:")
 
-	// SSEDoneEvent is the terminator an SSE client reads until; without it the client waits out its own timeout.
 	SSEDoneEvent = []byte("data: [DONE]\n\n")
 
-	// NoResponseDataBody is the reply a non-streaming caller gets when the stream carried no payload.
 	NoResponseDataBody = []byte(`{"error":{"message":"no response data"}}`)
 
-	// TruncatedResponseBody replaces a fold past maxAssembledEvents; the prefix alone would look complete.
 	TruncatedResponseBody = []byte(`{"error":{"message":"response exceeded the assembler's event budget"}}`)
 
-	// ErrStreamCarryOverflow reports an unterminated SSE event larger than MaxStreamCarryBytes.
-	ErrStreamCarryOverflow = errors.New("sse event exceeds carry limit")
-	// ErrStreamTruncatedEvent reports a trailing partial event dropped at end of stream.
+	ErrStreamCarryOverflow  = errors.New("sse event exceeds carry limit")
 	ErrStreamTruncatedEvent = errors.New("sse stream ended mid-event")
 )
 

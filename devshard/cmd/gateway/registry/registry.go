@@ -17,11 +17,10 @@ import (
 	"devshard/user"
 )
 
+// See README.md, "Publishing, retiring and draining".
 var (
-	// ErrClosed rejects work on a registry whose sessions have already been released.
 	ErrClosed = errors.New("registry closed")
 
-	// ErrDraining refuses an id whose earlier entry still owns nonces awaiting votes and the storage they settle through.
 	ErrDraining = errors.New("escrow is still draining")
 )
 

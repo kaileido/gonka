@@ -22,8 +22,8 @@ func TestTimeoutOutcomeOfSpeaksTheOldLedgersVocabulary(t *testing.T) {
 		{action: "failed", reason: "timeout_collection_error", want: TimeoutVoteCollectionFailed, settled: true},
 		{action: "failed", reason: "escrow_gone_from_hosts", want: TimeoutVoteCollectionFailed, settled: true},
 		{action: "failed", reason: "something new", want: TimeoutVoteCollectionFailed, settled: true},
-		{action: "started", reason: "none", settled: false},
-		{action: "", reason: "", settled: false},
+		{action: "started", reason: "none", want: TimeoutNoOutcome, settled: false},
+		{action: "", reason: "", want: TimeoutNoOutcome, settled: false},
 	}
 	for _, testCase := range cases {
 		got, settled := timeoutOutcomeOf(testCase.action, testCase.reason)
@@ -31,7 +31,7 @@ func TestTimeoutOutcomeOfSpeaksTheOldLedgersVocabulary(t *testing.T) {
 			t.Errorf("timeoutOutcomeOf(%q, %q) settled = %v, want %v", testCase.action, testCase.reason, settled, testCase.settled)
 			continue
 		}
-		if settled && got != testCase.want {
+		if got != testCase.want {
 			t.Errorf("timeoutOutcomeOf(%q, %q) = %q, want %q", testCase.action, testCase.reason, got, testCase.want)
 		}
 	}

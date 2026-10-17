@@ -2,10 +2,11 @@ package chain
 
 import "time"
 
-// Chain wire strings, compared verbatim — never normalize.
+// Chain wire strings, compared verbatim — never normalize; EpochPhaseUnknown is a phase the chain has not reported.
 type EpochPhase string
 
 const (
+	EpochPhaseUnknown             EpochPhase = ""
 	EpochPhaseInference           EpochPhase = "Inference"
 	EpochPhasePoCGenerate         EpochPhase = "PoCGenerate"
 	EpochPhasePoCGenerateWindDown EpochPhase = "PoCGenerateWindDown"
@@ -32,6 +33,14 @@ const (
 	ConfirmationPoCGeneration  ConfirmationPoCPhase = "CONFIRMATION_POC_GENERATION"
 	ConfirmationPoCValidation  ConfirmationPoCPhase = "CONFIRMATION_POC_VALIDATION"
 	ConfirmationPoCCompleted   ConfirmationPoCPhase = "CONFIRMATION_POC_COMPLETED"
+)
+
+const (
+	confirmationPoCPhaseNumberInactive = iota
+	confirmationPoCPhaseNumberGracePeriod
+	confirmationPoCPhaseNumberGeneration
+	confirmationPoCPhaseNumberValidation
+	confirmationPoCPhaseNumberCompleted
 )
 
 type BlockReason string

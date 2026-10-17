@@ -5,10 +5,11 @@ package engine
 // a stored counter -- so they are declared here once and referenced by name. Renaming a constant breaks
 // the build; editing its value silently moves the wire string under every panel that reads it.
 
-// MissProofCompleteness is how much of an error stream a miss claim carried, reported on a claim the verifiers rejected.
+// MissProofCompleteness is how much of an error stream a miss claim carried, reported on a claim the verifiers rejected; MissProofNone is a vote that carried no proof.
 type MissProofCompleteness string
 
 const (
+	MissProofNone      MissProofCompleteness = ""
 	MissProofWhole     MissProofCompleteness = "whole"
 	MissProofPartial   MissProofCompleteness = "partial"
 	MissProofTruncated MissProofCompleteness = "truncated"

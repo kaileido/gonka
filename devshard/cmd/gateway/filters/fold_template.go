@@ -97,7 +97,7 @@ func (t *contentTemplate) text(payload []byte) (string, bool) {
 		return "", false
 	}
 	inner := literal[1 : len(literal)-1]
-	if bytes.IndexByte(inner, '\\') < 0 && utf8.Valid(inner) && !slices.ContainsFunc(inner, func(symbol byte) bool { return symbol < 0x20 }) {
+	if bytes.IndexByte(inner, '\\') < 0 && utf8.Valid(inner) && !slices.ContainsFunc(inner, func(symbol byte) bool { return symbol < firstNonControlByte }) {
 		return string(inner), true
 	}
 	var text string

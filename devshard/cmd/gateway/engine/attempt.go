@@ -14,11 +14,9 @@ import (
 
 const maxUpstreamBodyLogged = 256
 
+// See README.md, "Errors the engine returns".
 var (
-	// ErrStateRootDivergence lets the race branch on a diverging post state root without reading error text.
-	ErrStateRootDivergence = errors.New("post state root divergence")
-
-	// ErrLocalRootUnavailable is the gateway's own store failing to give a post state root; the host did nothing wrong.
+	ErrStateRootDivergence  = errors.New("post state root divergence")
 	ErrLocalRootUnavailable = errors.New("local post state root unavailable")
 )
 

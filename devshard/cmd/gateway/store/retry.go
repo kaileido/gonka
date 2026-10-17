@@ -9,7 +9,11 @@ import (
 	sqlite3 "modernc.org/sqlite/lib"
 )
 
-const retryAttempts = 10
+const (
+	retryAttempts         = 10
+	defaultRetryBackoff   = 200 * time.Millisecond
+	sqlitePrimaryCodeMask = 0xFF
+)
 
 // WithRetry retries only a locked database, up to retryAttempts. See README.md, "Writing under a lock".
 func (s *Store) WithRetry(ctx context.Context, fn func() error) error {
@@ -44,6 +48,6 @@ func isLockedError(err error) bool {
 		return false
 	}
 	// Masked to the primary code, because the driver enables extended codes.
-	code := sqliteErr.Code() & 0xFF
+	code := sqliteErr.Code() & sqlitePrimaryCodeMask
 	return code == sqlite3.SQLITE_BUSY || code == sqlite3.SQLITE_LOCKED
 }

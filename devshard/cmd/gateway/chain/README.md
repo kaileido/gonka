@@ -51,7 +51,7 @@ A poll that fails only in part still publishes: `LastError` keeps **every** fail
 
 ### Which nodes count as preserved
 
-`resolvePreservation` picks one of three rules per poll:
+`resolvePreservation` picks one of three rules per poll (`preservationModeAll`, `preservationModeSnapshot`, `preservationModeLegacy`):
 
 | Rule | When | What it keeps |
 | --- | --- | --- |
@@ -88,6 +88,8 @@ The epoch switch height is derived rather than read: the current epoch's `set_ne
 ## Transaction encoding
 
 Transactions are **unordered**: instead of a sequence number they carry a `timeout_timestamp` set `UnorderedTxTTL` (9 min) ahead of now. Inside that window a broadcast transaction can still land, so "not found" is never proof it failed — every reconciliation in [`escrow/`](../escrow/) waits out the window before concluding anything.
+
+The `Default*` constants in `txclient.go` (fee denom and amount, gas limit, poll interval and poll timeout) are what `NewTxClient` applies to zero-value fields, and the single source `config.Defaults` reads. `EscrowDenom` (`ngonka`) is the denom `CreateDevshardEscrow` locks the amount in, and the default fee denom.
 
 The three lookups mean three different things, and callers depend on the distinction:
 

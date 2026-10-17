@@ -8,10 +8,9 @@ import (
 
 type Stage int
 
+// See README.md, "The request pipeline".
 const (
-	// StagePreValidation runs before message hygiene and the token decode.
 	StagePreValidation Stage = iota
-	// StagePostLimits runs after output-token defaults/caps resolve.
 	StagePostLimits
 )
 
@@ -74,8 +73,8 @@ const (
 	metadataMaxValueLen = 512
 )
 
+// parameterTable is the single registration point and knownParameterSet derives from it. See README.md, "Registration order is semantics".
 var (
-	// parameterTable is THE single registration point; knownParameterSet derives from it.
 	parameterTable = []ParameterSpec{
 		spec("model", StagePreValidation, validModelName(modelMaxLen)),
 		{Name: "stream"},
@@ -89,7 +88,6 @@ var (
 		}},
 		spec("messages", StagePreValidation, validListLength(messagesMaxEntries, 0)),
 		spec("seed", StagePreValidation, requireUint()),
-		// Reservation budgets one max_tokens output; n choices can produce n times what it signed for.
 		spec("n", StagePostLimits, replaceIfPresent(uint64(1))),
 		spec("temperature", StagePostLimits, clampFloat(minTemperature, maxTemperature)),
 		spec("repetition_penalty", StagePostLimits, rejectNonPositiveThenClamp(maxRepetitionPenalty)),
@@ -104,7 +102,6 @@ var (
 			{Stage: StagePostLimits, Apply: clampFloat(penaltyMin, penaltyMax)},
 			{Stage: StagePostLimits, Apply: forceZeroPenalty()},
 		}},
-		// The key check must run before the value/size rules below. See README.md, "Registration order is semantics".
 		{Name: "logit_bias", Rules: []StagedRule{
 			{Stage: StagePostLimits, Apply: requireTokenIDKeys()},
 			{Stage: StagePostLimits, Apply: validFloatMap(logitBiasMinValue, logitBiasMaxValue, logitBiasMaxEntries)},
@@ -140,7 +137,6 @@ var (
 		spec("metadata", StagePreValidation, validMetadata(metadataMaxKeys, metadataMaxKeyLen, metadataMaxValueLen)),
 		spec("stream_options", StagePreValidation, validStreamOptions()),
 		spec("min_tokens", StagePreValidation, requireUint()),
-		// tools must precede tool_choice below. See README.md, "Registration order is semantics".
 		spec("tools", StagePreValidation, validTools(SchemaBounds{
 			MaxDepth:      toolsMaxDepth,
 			MaxNodes:      toolsMaxNodes,
@@ -177,7 +173,6 @@ var (
 		spec("reasoning", StagePreValidation, reasoningWrapper()),
 		spec("reasoning_effort", StagePreValidation, reasoningEffortValidate()),
 		spec("enable_thinking", StagePreValidation, enableThinking()),
-		// thinking must run before chat_template_kwargs below. See README.md, "Registration order is semantics".
 		spec("thinking", StagePreValidation, thinking()),
 		{Name: "thinking_token_budget", Rules: []StagedRule{
 			{Stage: StagePreValidation, Apply: requireUint()},
@@ -195,7 +190,6 @@ var (
 		}},
 	}
 
-	// knownParameterSet is the whitelist, derived from parameterTable once at package init.
 	knownParameterSet = buildKnownParameterSet()
 )
 

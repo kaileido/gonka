@@ -236,7 +236,7 @@ Content is accepted as a non-blank string, or as a non-empty array of `{type: "t
 
 `LogprobIntent` is what the client's own request asked for, read before the cap can narrow it. Without it the strip cannot tell a client who asked for logprobs from one who did not, and would answer both by removing them. `logprobs: true` without alternatives keeps `top_logprobs` as a present-but-empty array, which is OpenAI's shape for that ask.
 
-- A client that asked for nothing loses `clientStrippedFields`: the whole logprob family plus `token_ids`, `prompt_token_ids`, `prompt_logprobs`.
+- A client that asked for nothing loses `clientStrippedFields`, at any depth: the whole logprob family plus `token_ids`, `prompt_token_ids`, `prompt_logprobs`.
 - A client that asked for logprobs loses only `alwaysStrippedFields`, which is *derived* by subtracting `requestableFields` from the full list. A hand-written second list can omit a field the full list gained, which exposes `top_logprobs`.
 - A client that asked for logprobs but not alternatives keeps the key with an empty array: that is the shape OpenAI returns. Leaving the forced alternatives in would hand the client a request it never made, and removing the key would drop a field its schema expects to be present.
 
@@ -323,6 +323,8 @@ A lower bound is enough for the race: it only asks whether the request could fit
 
 `MaxStreamCarryBytes` (32 MiB) bounds the unterminated tail held per stream, so a host that never sends a terminator cannot grow it without limit. Both `StreamRewriter` and `BodyFolder` fail permanently once it is exceeded.
 
+`ErrStreamTruncatedEvent` reports a trailing partial event dropped at the end of the stream: `StreamRewriter.Close` rewrites a well-formed trailing partial and drops one that does not parse.
+
 ### Rewriting an event
 
 `rewriteEvent` takes every decision on the decoded payload, never on the event's raw bytes. A host controls those bytes: it can spell a key with a `\u` escape, or split one object across two data lines, and either defeats a byte-wise check while the client's own decoder reads the object whole.
@@ -343,7 +345,7 @@ Every host-controlled field is carried as a raw message. Decoding one into a typ
 
 ## Folding a stream into one body
 
-`BodyFolder` is the incremental fold: it strips per event as chunks arrive, then merges, so a client that did not ask for logprobs never accumulates them. `assembleSSEBody` in `assemble.go` is the whole-body fold, the reference implementation the incremental one is verified against. Both share the merge.
+`BodyFolder` is the incremental fold: it strips per event as chunks arrive, then merges, so a client that did not ask for logprobs never accumulates them. `assembleSSEBody` in `assemble.go` is the whole-body fold, the reference implementation the incremental one is verified against. Both share the merge, and both hold a host to the same bounds it must not exceed: `maxIndexedElements` (256), `maxTopLevelFields` (64) and `maxAssembledEvents` (65,536), each described below.
 
 `Held()` reports what the folder is holding so a shared memory budget can watch it. Merging collapses what the events repeat, so the accumulated size is *measured* rather than summed. The trigger for a re-measure is bytes (`foldMeasureBytes`, 256 KiB) rather than events: one event can carry a megabyte, and a count-based interval would leave that much unaccounted while the cap and the shared budget read low. `measure` re-encodes the accumulator without finalising it, because finalising rewrites the deltas the fold is still appending to.
 

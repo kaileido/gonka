@@ -7,6 +7,8 @@ import (
 	"devshard/cmd/gateway/internal/safemath"
 )
 
+const initialInputWindowFloorMultiple = 2
+
 // WindowBounds is one congestion window's floor, starting size and additive step, in tokens.
 type WindowBounds struct {
 	Min     int64
@@ -78,7 +80,7 @@ func (l *ParticipantLimiter) windowsForLocked(participant, model string) ModelWi
 	inputFloor := safemath.MulSaturating(concurrency, contextTokens)
 	outputFloor := safemath.MulSaturating(concurrency, outputTokens)
 	return ModelWindows{
-		Input:  WindowBounds{Min: inputFloor, Initial: safemath.MulSaturating(inputFloor, 2), Step: contextTokens},
+		Input:  WindowBounds{Min: inputFloor, Initial: safemath.MulSaturating(inputFloor, initialInputWindowFloorMultiple), Step: contextTokens},
 		Output: WindowBounds{Min: outputFloor, Initial: outputFloor, Step: outputTokens},
 	}
 }
@@ -88,5 +90,5 @@ func earnedConcurrency(per10000, weight float64) int64 {
 	if per10000 <= 0 || weight <= 0 {
 		return 0
 	}
-	return max(int64(math.Round(weight*per10000/10000)), 1)
+	return max(int64(math.Round(weight*per10000/concurrencyWeightBase)), 1)
 }

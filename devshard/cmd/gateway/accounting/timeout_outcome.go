@@ -20,5 +20,5 @@ func timeoutOutcomeOf(action, reason string) (TimeoutOutcome, bool) {
 		}
 		return TimeoutVoteCollectionFailed, true
 	}
-	return "", false
+	return TimeoutNoOutcome, false
 }

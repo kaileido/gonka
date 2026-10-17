@@ -32,6 +32,14 @@ Two ladders, and both are sized by what they must be able to *report*, not by wh
 - **`latencyBuckets`** — nineteen exponential buckets from 10 ms reach 2621 s, past the 2400 s drain timeout. A quantile cannot report above the highest finite bound, so a short ladder would silently pin p95 there instead of showing the slowest attempt the engine actually permits.
 - **`chunkGapBuckets`** — fifteen exponential buckets from 5 ms reach 81.92 s, past the 30 s default stall timeout (`engine_inter_chunk_stall_ms`), so a stall still lands in a finite bucket. `latencyBuckets` would reach that far as well; this ladder starts one doubling lower and stops four buckets sooner, and both inter-chunk histograms are written per participant and model, so each pair carries four fewer bucket series in each of them.
 
+## Race labels
+
+The race recorder's own label strings live in `vocabulary.go`, beside the package's other wire strings.
+
+- **`outcomeFailure`** (`failure`) is a request-level outcome with no engine counterpart: attempts report `failed`, a request reports `failure`.
+- **`statusNoCode`** (`0`) labels an attempt that failed without an upstream status.
+- **The reasons.** `none` is what a successful request, or an event with no reason, carries; `escrow_missing`, `balance_exhausted` and `no_attempts` name a failed request's cause ahead of its first attempt's own failure reason.
+
 ## How a collector reaches its source
 
 - **Collectors are registered at construction time**, where a duplicate family is a wiring bug that must stop the process rather than silently drop a series.

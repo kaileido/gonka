@@ -11,3 +11,15 @@ const (
 	HostPingTickStarted = "started"
 	HostPingTickSkipped = "skipped"
 )
+
+// See README.md, "Race labels".
+const (
+	outcomeFailure = "failure"
+
+	statusNoCode = "0"
+
+	reasonNone             = "none"
+	reasonNoAttempts       = "no_attempts"
+	reasonEscrowMissing    = "escrow_missing"
+	reasonBalanceExhausted = "balance_exhausted"
+)

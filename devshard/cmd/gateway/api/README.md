@@ -77,7 +77,7 @@ Each `route` is one registered pattern. An empty label means the route is not in
 
 ## Streaming the reply
 
-`maxBufferedResponseBytes` tracks the stream carry cap. Without a cap at all, a host that wins the race on its first token can then send unlimited valid SSE and take the process out; and because this buffer holds the same `prompt_token_ids` frames the carry cap was derived from, lowering one without the other would refuse the large-context replies that arithmetic was meant to admit.
+`maxBufferedResponseBytes` tracks the stream carry cap on purpose, and caps the SSE a race winner may send. Without a cap at all, a host that wins the race on its first token can then send unlimited valid SSE and take the process out; and because this buffer holds the same `prompt_token_ids` frames the carry cap was derived from, lowering one without the other would refuse the large-context replies that arithmetic was meant to admit.
 
 `writeChatHeaders` is the one place every chat reply header is set, so a cache replay and a live race cannot answer the same request differently.
 

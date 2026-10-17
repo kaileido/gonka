@@ -9,16 +9,14 @@ import (
 	"devshard"
 )
 
+// The bounds are in README.md, "Structural bounds before the decode"; PromptBytesPerToken is in capacity.md, "The balance floor".
 const (
 	MaxNestingDepth = 32
 
-	// MaxBodyBytes bounds the raw request body, both at ingest and before the decode.
 	MaxBodyBytes = 10 << 20
 
-	// PromptBytesPerToken is the gateway's standing estimate of a prompt's size. See README.md, "Output token limits".
 	PromptBytesPerToken = 4
 
-	// MaxStructuralNodes bounds the containers and elements the decode allocates.
 	MaxStructuralNodes = 250_000
 )
 

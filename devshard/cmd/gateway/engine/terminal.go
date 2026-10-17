@@ -37,8 +37,8 @@ const (
 	TerminalEscrowLookupLimited
 )
 
+// See README.md, "Outcome, samples and verdicts".
 var (
-	// terminalStatuses is the one table linking an upstream status to the terminal it produces.
 	terminalStatuses = map[Terminal]int{
 		TerminalThrottled:      http.StatusTooManyRequests,
 		TerminalUnavailable:    http.StatusServiceUnavailable,
@@ -47,7 +47,6 @@ var (
 		TerminalTimestampDrift: http.StatusUnauthorized,
 	}
 
-	// terminalForStatus is the derived inverse, so the two directions cannot disagree.
 	terminalForStatus = func() map[int]Terminal {
 		inverse := make(map[int]Terminal, len(terminalStatuses))
 		for terminal, status := range terminalStatuses {

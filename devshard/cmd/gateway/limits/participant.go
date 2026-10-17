@@ -9,6 +9,7 @@ import (
 
 type Verdict int
 
+// See README.md, "What blames which window".
 const (
 	Success Verdict = iota
 	Overload
@@ -21,7 +22,7 @@ const (
 	EmptyAnswer
 	EmptyAnswerLeftOpen
 	DecodeStalled
-) // See README.md, "What blames which window".
+)
 
 // cutoffNarrator is satisfied by *journal.Journal; it is called under the limiter's lock, so it must queue and return. See README.md, "When a host stops taking work".
 type cutoffNarrator interface {
@@ -57,9 +58,14 @@ func (l *ParticipantLimiter) SetNarrator(narrator cutoffNarrator) {
 	l.narrator = narrator
 }
 
+const (
+	cutoffBackoffMultiplier = 1.6
+	cutoffBackoffPerJitter  = 5
+)
+
 // defaultJitter: up to 20% of base (gRPC connection-backoff's JITTER 0.2), so reopened cutoffs don't retry in lockstep.
 func defaultJitter(base time.Duration) time.Duration {
-	span := int64(base) / 5
+	span := int64(base) / cutoffBackoffPerJitter
 	if span <= 0 {
 		return 0
 	}

@@ -48,8 +48,9 @@ const (
 	TerminalClientCancelled = "client_cancelled"
 )
 
-// A settled timeout round, in the ledger's outcome vocabulary.
+// A settled timeout round, in the ledger's outcome vocabulary; TimeoutNoOutcome is a round the ledger does not settle.
 const (
+	TimeoutNoOutcome            TimeoutOutcome = ""
 	TimeoutSkipped              TimeoutOutcome = "skipped"
 	TimeoutVoteCollectionFailed TimeoutOutcome = "vote_collection_failed"
 	TimeoutInsufficientVotes    TimeoutOutcome = "insufficient_votes"
@@ -65,7 +66,7 @@ const (
 
 // This gateway's reading of what the counters mean. A finding is derived on every read and never
 // stored: the counters are the fact, the finding is only an interpretation of them. See
-// docs/accounting.md for what each one says and what to check.
+// docs/accounting.md for what each one says and what to check. SeverityNone is a rate that flagged nothing.
 const (
 	FindingExecutionTimeouts    = "execution_timeouts"
 	FindingRefusals             = "refusals"
@@ -86,6 +87,7 @@ const (
 	FindingClockDrift           = "clock_drift"
 	FindingSlowDecode           = "slow_decode"
 
+	SeverityNone     Severity = ""
 	SeverityWarning  Severity = "warning"
 	SeverityCritical Severity = "critical"
 )

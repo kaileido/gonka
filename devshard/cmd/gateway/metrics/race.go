@@ -10,24 +10,22 @@ import (
 	"devshard/cmd/gateway/engine"
 )
 
+// See README.md, "Histogram buckets".
 const (
-	// The request-level "failure" has no engine counterpart: attempts report failed, requests failure.
-	outcomeFailure = "failure"
-
-	// statusNoCode labels an attempt that failed without an upstream status.
-	statusNoCode = "0"
-
-	reasonNone             = "none"
-	reasonNoAttempts       = "no_attempts"
-	reasonEscrowMissing    = "escrow_missing"
-	reasonBalanceExhausted = "balance_exhausted"
+	bucketGrowthFactor         = 2
+	latencyBucketStartSeconds  = 0.01
+	latencyBucketCount         = 19
+	chunkGapBucketStartSeconds = 0.005
+	chunkGapBucketCount        = 15
+	prefillBucketStartSeconds  = 0.0001
+	prefillBucketCount         = 12
 )
 
-// The top bucket clears the 2400s drain timeout: a quantile cannot report above the highest finite bound.
-var latencyBuckets = prometheus.ExponentialBuckets(0.01, 2, 19)
-
-// chunkGapBuckets start one doubling below latencyBuckets and stop at 81.92 s, past the stall timeout. See README.md, "Histogram buckets".
-var chunkGapBuckets = prometheus.ExponentialBuckets(0.005, 2, 15)
+// See README.md, "Histogram buckets".
+var (
+	latencyBuckets  = prometheus.ExponentialBuckets(latencyBucketStartSeconds, bucketGrowthFactor, latencyBucketCount)
+	chunkGapBuckets = prometheus.ExponentialBuckets(chunkGapBucketStartSeconds, bucketGrowthFactor, chunkGapBucketCount)
+)
 
 // RaceRecorder satisfies the engine's metrics hook. See operations.md, "Metrics".
 type RaceRecorder struct {
@@ -134,7 +132,7 @@ func NewRaceRecorder(telemetry *Metrics, now func() time.Time, staleness func() 
 		prefillPerToken: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "devshard_gateway_participant_prefill_seconds_per_input_token",
 			Help:    "Receipt-to-first-content time divided by input tokens, by participant and model.",
-			Buckets: prometheus.ExponentialBuckets(0.0001, 2, 12),
+			Buckets: prometheus.ExponentialBuckets(prefillBucketStartSeconds, bucketGrowthFactor, prefillBucketCount),
 		}, []string{"participant_key", "model"}),
 		outputTokens: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "devshard_gateway_participant_output_tokens_total",

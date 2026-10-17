@@ -18,7 +18,6 @@ const (
 	cacheSweepInterval = time.Minute
 	cacheEntryOverhead = 256
 
-	// expectedStreamEvents is the event count a streamed reply usually carries.
 	expectedStreamEvents = 64
 )
 

@@ -13,12 +13,11 @@ import (
 	"devshard/types"
 )
 
+// See README.md, "Order and the locks it takes".
 const (
 	defaultMoneyCeiling    = 100_000
 	defaultProgressBacklog = 8_192
-
-	// retainedBatchCapacity keeps one burst's buffer from being held for the life of the process.
-	retainedBatchCapacity = 4_096
+	retainedBatchCapacity  = 4_096
 
 	skippedProgressMessage = "journal skipped progress lines"
 	lateEventMessage       = "journal received an event after it closed"

@@ -8,8 +8,8 @@ import (
 	"devshard"
 )
 
+// See README.md, "Response stripping".
 var (
-	// clientStrippedFields are response keys, at any depth, hidden from a client that asked for none of them.
 	clientStrippedFields = []string{
 		"logprob",
 		"logprobs",
@@ -19,14 +19,12 @@ var (
 		"prompt_logprobs",
 	}
 
-	// requestableFields are the ones a client can ask for, so they survive the strip when it did.
 	requestableFields = []string{
 		"logprob",
 		"logprobs",
 		"top_logprobs",
 	}
 
-	// alwaysStrippedFields is derived, not written out: a hand-written second list is how top_logprobs once leaked.
 	alwaysStrippedFields = func() []string {
 		fields := make([]string, 0, len(clientStrippedFields))
 		for _, field := range clientStrippedFields {

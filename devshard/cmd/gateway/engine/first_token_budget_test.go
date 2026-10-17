@@ -115,7 +115,7 @@ func TestFirstTokenBudget_StaysBoundedWithoutACeiling(t *testing.T) {
 
 	budget := policy.firstTokenBudget(400, firstTokenObservedLimit*curve)
 
-	if ceiling := firstTokenObservedLimit * firstTokenObservedSlack * curve / 2; budget > ceiling {
+	if ceiling := firstTokenObservedLimit * firstTokenObservedSlackNumerator * curve / firstTokenObservedSlackDenominator; budget > ceiling {
 		t.Errorf("budget = %v, want no more than %v", budget, ceiling)
 	}
 }

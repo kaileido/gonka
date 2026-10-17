@@ -19,12 +19,12 @@ import (
 	"devshard/storage"
 )
 
+// See ../docs/operations.md, "Session storage".
 const (
 	sessionEpochFilePrefix      = "epoch_"
 	sessionEpochFileSuffix      = ".db"
 	sessionRetentionPassTimeout = time.Minute
-	// hostHorizonPreviousEpochs is the hosts' own horizon less the current epoch: a session younger than it can still settle.
-	hostHorizonPreviousEpochs = storage.DefaultEpochRetain - 1
+	hostHorizonPreviousEpochs   = storage.DefaultEpochRetain - 1
 )
 
 type escrowSnapshots interface {

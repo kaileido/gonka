@@ -11,10 +11,9 @@ import (
 
 const connectChatPath = "/chat/completions"
 
+// Errors the engine returns. See README.md, "Errors the engine returns".
 var (
-	ErrEmptyStream = errors.New("empty content stream")
-
-	// ErrWinnerIncomplete: the client already saw this attempt's bytes, so no substitute can be sent.
+	ErrEmptyStream      = errors.New("empty content stream")
 	ErrWinnerIncomplete = errors.New("winner failed after streaming started")
 )
 

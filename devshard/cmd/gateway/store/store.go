@@ -25,7 +25,10 @@ type Store struct {
 	ledger *Ledger
 }
 
-const gatewayDatabaseFileName = "gateway.db"
+const (
+	gatewayDatabaseFileName = "gateway.db"
+	storageDirectoryMode    = 0o755
+)
 
 // migrations run in order, one transaction per version, with progress recorded so Open is idempotent.
 var migrations = []string{
@@ -101,13 +104,10 @@ var migrations = []string{
 	`ALTER TABLE devshards ADD COLUMN gone_from_chain INTEGER NOT NULL DEFAULT 0`,
 }
 
-// Kept out of the migrations block: it decides whether the dir may be migrated at all, and those entries are raw SQL whose indentation is part of the literal.
+// ErrLegacyDatabase reports a gateway.db this gateway did not create, and legacyOnlyTables are the tables that prove it; both are kept out of the migrations block. See README.md, "The legacy-database guard".
 var (
-	// ErrLegacyDatabase reports a gateway.db this gateway did not create. See README.md, "The legacy-database guard".
 	ErrLegacyDatabase = errors.New("storage dir holds a gateway.db this gateway did not create; point the gateway at an empty storage dir")
-
-	// Tables this gateway never creates, so their presence without a schema_version is proof rather than a guess.
-	legacyOnlyTables = []string{"gateway_settings", "gateway_devshards", "gateway_suspicious_hosts", "participant_throttle_state"}
+	legacyOnlyTables  = []string{"gateway_settings", "gateway_devshards", "gateway_suspicious_hosts", "participant_throttle_state"}
 )
 
 // addColumnMigration matches a migration that only adds a column, which Open re-applies by name. See README.md, "Opening the database".
@@ -117,7 +117,7 @@ var addColumnMigration = regexp.MustCompile(`^ALTER TABLE (\w+) ADD COLUMN (\w+)
 const connectionPragmas = "?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(5000)"
 
 func Open(storageDir string) (*Store, error) {
-	if err := os.MkdirAll(storageDir, 0o755); err != nil {
+	if err := os.MkdirAll(storageDir, storageDirectoryMode); err != nil {
 		return nil, fmt.Errorf("creating storage dir: %w", err)
 	}
 	databasePath := filepath.Join(storageDir, gatewayDatabaseFileName)
@@ -138,7 +138,7 @@ func Open(storageDir string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
-	return &Store{db: db, retryBackoff: 200 * time.Millisecond, retryable: isLockedError}, nil
+	return &Store{db: db, retryBackoff: defaultRetryBackoff, retryable: isLockedError}, nil
 }
 
 func refuseLegacyDatabase(db *sql.DB, databasePath string) error {

@@ -113,7 +113,7 @@ func classOf(record types.InferenceRecord, input Input, refusalWindow, execution
 	case types.StatusChallenged:
 		return ClassStuck, record.ActualCost, true
 	}
-	return "", 0, false
+	return ClassNone, 0, false
 }
 
 func surplus(record types.InferenceRecord, price Price) uint64 {

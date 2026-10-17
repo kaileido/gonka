@@ -9,9 +9,10 @@ import (
 )
 
 const (
-	fallbackNonceCeiling    uint64 = 19_800
-	nonceInFlightMargin     uint64 = 200
-	unboundedAttemptsToFund        = 2
+	fallbackNonceCeiling     uint64 = 19_800
+	nonceInFlightMargin      uint64 = 200
+	nonceCeilingPerMaxMargin uint64 = 2
+	unboundedAttemptsToFund         = 2
 )
 
 // avoidReason is why one round of a pick steps over an escrow; only a busy one keeps the reserves shut.
@@ -282,7 +283,7 @@ func nonceCeilingReason(candidate Escrow, maxNonce uint64) ExhaustionReason {
 			maxNonce = math.MaxUint32
 		}
 		cutoff = types.MaxActiveNonce(uint32(maxNonce), candidate.Session.GroupSize())
-		cutoff -= min(nonceInFlightMargin, cutoff/2)
+		cutoff -= min(nonceInFlightMargin, cutoff/nonceCeilingPerMaxMargin)
 		reason = ExhaustionNonceCap
 	}
 	if candidate.Session.LatestNonce() < cutoff {

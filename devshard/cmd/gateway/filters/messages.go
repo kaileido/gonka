@@ -5,8 +5,8 @@ import (
 	"strings"
 )
 
+// See README.md, "Message hygiene".
 const (
-	// Message role wire values; the only roles validateMessages accepts.
 	roleDeveloper = "developer"
 	roleSystem    = "system"
 	roleUser      = "user"
@@ -14,15 +14,12 @@ const (
 	roleTool      = "tool"
 	roleFunction  = "function"
 
-	// emptyToolResultContent fills an empty role:"tool" message -- vLLM chat templates require text in every tool turn.
 	emptyToolResultContent = "<empty tool result>"
 )
 
 var (
-	// disallowedAgenticFields are fields a plain-text role (no tool/function agency) must never carry.
 	disallowedAgenticFields = []string{"tool_calls", "tool_call_id", "function_call"}
 
-	// messageRolePolicies is keyed by wire role value; a role missing from this map is rejected.
 	messageRolePolicies = map[string]messageRolePolicy{
 		roleDeveloper: {disallowedFields: disallowedAgenticFields},
 		roleSystem:    {disallowedFields: disallowedAgenticFields},
@@ -32,7 +29,6 @@ var (
 		roleFunction:  {disallowedFields: disallowedAgenticFields, requireName: true},
 	}
 
-	// messageNormalizerChain is fixed and order-sensitive. See README.md, "Message hygiene".
 	messageNormalizerChain = []messageNormalizer{
 		dropOrphanToolMessages,
 		dropEmptyAssistantTurns,

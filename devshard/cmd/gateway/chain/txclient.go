@@ -14,19 +14,17 @@ import (
 	"devshard/signing"
 )
 
-// Defaults applied by NewTxClient for zero-value fields, and the single source config.Defaults reads.
+// See README.md, "Transaction encoding".
 const (
 	DefaultFeeDenom     = EscrowDenom
 	DefaultFeeAmount    = uint64(1_000_000)
 	DefaultGasLimit     = uint64(700_000)
 	DefaultPollInterval = 2 * time.Second
 	DefaultPollTimeout  = 45 * time.Second
-	// UnorderedTxTTL is how far past "now" a built tx's timeout_timestamp is set.
-	UnorderedTxTTL = 9 * time.Minute
-)
+	UnorderedTxTTL      = 9 * time.Minute
 
-// EscrowDenom is the denom CreateDevshardEscrow locks the amount in.
-const EscrowDenom = "ngonka"
+	EscrowDenom = "ngonka"
+)
 
 // ErrWalletUnderfunded marks a create refused before it was prepared, because the wallet cannot pay for it.
 var ErrWalletUnderfunded = errors.New("wallet cannot pay for the escrow")

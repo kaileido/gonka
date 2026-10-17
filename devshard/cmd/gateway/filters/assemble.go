@@ -7,12 +7,12 @@ import (
 	"strings"
 )
 
+// See README.md, "Folding a stream into one body".
 const (
 	completionObject = "chat.completion"
 
 	errorObject = "error"
 
-	// The three bounds a host must not exceed. See README.md, "Folding a stream into one body".
 	maxIndexedElements = 256
 	maxTopLevelFields  = 64
 	maxAssembledEvents = 65_536

@@ -6,12 +6,11 @@ import (
 	"devshard"
 )
 
-// Package-default output-token limits; also the single source config.Defaults reads.
+// Output-token limits: the package defaults config.Defaults reads, and MaxOutputTokens above them all. See README.md, "Output token limits".
 const (
 	DefaultRequestMaxTokens uint64 = 4_096
 	RequestMaxTokensCap     uint64 = 4_096
 
-	// MaxOutputTokens is the most any request may answer with. See capacity.md, "The participant limiter: IOCW".
 	MaxOutputTokens uint64 = 10_000_000
 )
 

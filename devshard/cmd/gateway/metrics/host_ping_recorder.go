@@ -5,6 +5,11 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+const (
+	hostPingBucketStartSeconds = 0.001
+	hostPingBucketCount        = 12
+)
+
 // HostPingRecorder holds what the host pings observed. See ../hostping/README.md.
 type HostPingRecorder struct {
 	up         *prometheus.GaugeVec
@@ -29,7 +34,7 @@ func NewHostPingRecorder(telemetry *Metrics) *HostPingRecorder {
 		warmRTT: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Name:    "devshard_gateway_host_ping_warm_rtt_seconds",
 			Help:    "Round trips over a reused connection, which is the fleet's distribution without dial cost.",
-			Buckets: prometheus.ExponentialBuckets(0.001, 2, 12),
+			Buckets: prometheus.ExponentialBuckets(hostPingBucketStartSeconds, bucketGrowthFactor, hostPingBucketCount),
 		}),
 		divergence: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "devshard_gateway_host_clock_divergence_seconds",

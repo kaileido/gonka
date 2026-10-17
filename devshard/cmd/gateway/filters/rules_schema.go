@@ -5,21 +5,18 @@ import (
 	"strings"
 )
 
+// See README.md, "`structured_outputs`" and "`chat_template_kwargs`".
 var (
 	responseFormatNameRegex = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 
-	// structuredOutputsConstraintFields are mutually exclusive per vLLM's StructuredOutputsParams.__post_init__.
 	structuredOutputsConstraintFields = []string{"json", "regex", "choice", "grammar", "json_object", "structural_tag"}
 
-	// structuredOutputsAuxiliaryFields may accompany any single constraint field.
 	structuredOutputsAuxiliaryFields = []string{"whitespace_pattern", "disable_any_whitespace", "disable_additional_properties"}
 
-	// structuredOutputsPrivateFields are internal backend state, never client-settable; stripped silently.
 	structuredOutputsPrivateFields = []string{"_backend", "_backend_was_auto"}
 
 	structuredOutputsKnownFields = buildStructuredOutputsKnownFields()
 
-	// forbiddenChatTemplateKwargsKeys override apply_hf_chat_template's positional arguments; add_generation_prompt is not banned.
 	forbiddenChatTemplateKwargsKeys = map[string]struct{}{
 		"chat_template":          {}, // CVE-2025-61620: arbitrary Jinja template
 		"tokenize":               {}, // CVE-2025-62426: stalls the request handler

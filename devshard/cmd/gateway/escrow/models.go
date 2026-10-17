@@ -26,9 +26,10 @@ type ModelConfig struct {
 	FullContextSlots               int    `json:"full_context_slots"`
 }
 
+// The count defaults apply only to an absent field: an explicit target_count of 0 is rejected, an explicit reserve_count of 0 turns reserves off.
 const (
-	defaultTargetCount  = 1 // applies only when target_count is absent; an explicit 0 is still a mistake to reject
-	defaultReserveCount = 1 // applies only when reserve_count is absent; an explicit 0 turns reserves off
+	defaultTargetCount  = 1
+	defaultReserveCount = 1
 
 	defaultFullContextSlots = 2
 	unsettledHeadroom       = 4

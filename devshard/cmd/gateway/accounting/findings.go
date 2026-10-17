@@ -30,6 +30,8 @@ const (
 	decodedLogprobsWarning   = 0.001
 	decodedLogprobsCritical  = 0.01
 	neverCritical            = 2.0
+
+	expectedFindingsPerRecord = 4
 )
 
 // findingCodes is every code this gateway can emit, pinned so a rename has to be deliberate.
@@ -61,7 +63,7 @@ func findingsFor(record ParticipantRecord) []Finding {
 	unfinished := without(record.Dispositions[DispositionUnfinishedExecution], counted.unfinishedOffRecord)
 	reached := delivered + refused + unfinished
 
-	findings := make([]Finding, 0, 4)
+	findings := make([]Finding, 0, expectedFindingsPerRecord)
 	add := func(finding Finding, flagged bool) {
 		if flagged {
 			findings = append(findings, finding)
@@ -221,7 +223,7 @@ func ratio(part, whole uint64, warning, critical float64, code string) (Finding,
 
 func rate(part, whole uint64, warning, critical float64) (Severity, bool) {
 	if whole < findingMinimumVolume || part == 0 {
-		return "", false
+		return SeverityNone, false
 	}
 	measured := float64(part) / float64(whole)
 	switch {
@@ -230,7 +232,7 @@ func rate(part, whole uint64, warning, critical float64) (Severity, bool) {
 	case measured >= warning:
 		return SeverityWarning, true
 	}
-	return "", false
+	return SeverityNone, false
 }
 
 // The dispositions that reached the host and produced nothing; which terminal is in the counter beside it.

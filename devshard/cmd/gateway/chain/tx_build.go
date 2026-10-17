@@ -10,6 +10,8 @@ import (
 	"devshard/signing"
 )
 
+const compactSignatureLength = 64
+
 // The escrow messages are marshalled by the chain's own generated types, so their wire layout tracks the chain by construction. See README.md, "How a message is encoded".
 func encodeMsgCreateDevshardEscrow(creator string, amount uint64, modelID string) ([]byte, error) {
 	message := &inferencetypes.MsgCreateDevshardEscrow{Creator: creator, Amount: amount, ModelId: modelID}
@@ -51,10 +53,10 @@ func encodeMsgSettleDevshardEscrow(settler string, input SettlementInput) ([]byt
 
 // truncateSignature drops the recovery byte so only r||s (64 bytes) goes into the tx.
 func truncateSignature(sig []byte) ([]byte, error) {
-	if len(sig) < 64 {
+	if len(sig) < compactSignatureLength {
 		return nil, fmt.Errorf("invalid signature length %d", len(sig))
 	}
-	return sig[:64], nil
+	return sig[:compactSignatureLength], nil
 }
 
 // buildCreateEscrowTx assembles and signs an unordered MsgCreateDevshardEscrow tx; ttl is caller-supplied so encoding stays deterministic.

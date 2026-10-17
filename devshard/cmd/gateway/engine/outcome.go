@@ -8,10 +8,9 @@ import (
 	"devshard/types"
 )
 
+// See README.md, "The exemption ladder".
 const (
-	longResponseExemption = 280 * time.Second
-
-	// Below this a burn-empty is the model's output; at or above it the host held it past the refusal point.
+	longResponseExemption  = 280 * time.Second
 	emptyStreamHeldTooLong = types.DefaultRefusalTimeoutSeconds * time.Second
 )
 
@@ -109,9 +108,10 @@ func ClockOffset(attempt AttemptOutcome) (time.Duration, bool) {
 	if attempt.ConfirmedAt == 0 || attempt.SendTime.IsZero() || !attempt.ReceiptTime.After(attempt.SendTime) {
 		return 0, false
 	}
-	midpoint := attempt.SendTime.Add(attempt.ReceiptTime.Sub(attempt.SendTime) / 2)
-	stamped := time.Unix(attempt.ConfirmedAt, 0).Add(executorStampTruncation / 2)
-	return stamped.Sub(midpoint), true
+	roundTripMidpoint := timeMidpoint(attempt.SendTime, attempt.ReceiptTime)
+	confirmed := time.Unix(attempt.ConfirmedAt, 0)
+	stamped := timeMidpoint(confirmed, confirmed.Add(executorStampTruncation))
+	return stamped.Sub(roundTripMidpoint), true
 }
 
 // OutputTokens is what the attempt produced. See race.md, "Counting what an attempt produced".
@@ -171,4 +171,8 @@ func (a AttemptOutcome) firstContentDelay() time.Duration {
 		return 0
 	}
 	return a.FirstContent.Sub(a.SendTime)
+}
+
+func timeMidpoint(start, end time.Time) time.Time {
+	return start.Add(end.Sub(start) / 2)
 }

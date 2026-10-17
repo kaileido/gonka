@@ -150,5 +150,9 @@ func medianOf(values []float64) float64 {
 	if len(values)%2 == 1 {
 		return values[middle]
 	}
-	return (values[middle-1] + values[middle]) / 2
+	return midpoint(values[middle-1], values[middle])
+}
+
+func midpoint(low, high float64) float64 {
+	return (low + high) / 2
 }

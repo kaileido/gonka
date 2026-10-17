@@ -8,6 +8,8 @@ import (
 	"devshard/cmd/gateway/liquidity"
 )
 
+const demandPeakPerHeadroom = 2
+
 // EscrowState is one live escrow of the model as the planner sees it. See README.md, "Inputs".
 type EscrowState struct {
 	ID              string
@@ -72,7 +74,7 @@ type Retire struct {
 	Reason   Reason
 }
 
-// Decision is what Plan wants for one model in one tick. See README.md, "The decision".
+// Decision is what Plan wants for one model in one tick. See README.md, "The algorithm".
 type Decision struct {
 	Creates       []Create
 	Retires       []Retire
@@ -157,7 +159,7 @@ func amountNeeded(state ModelState) uint64 {
 }
 
 func demandNeed(state ModelState, misconfigured bool) uint64 {
-	headroom := saturatingAdd(state.DemandPeak, state.DemandPeak/2)
+	headroom := saturatingAdd(state.DemandPeak, state.DemandPeak/demandPeakPerHeadroom)
 	if misconfigured {
 		return headroom
 	}

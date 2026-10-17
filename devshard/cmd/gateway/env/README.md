@@ -21,6 +21,12 @@ One typed table: name, type, and nothing else.
 
 `LogFormat` reads `DEVSHARD_LOG_FORMAT` apart from `Load`, because the format must be applied before anything can log and `Load` is the first thing that can fail. Empty means `json`, the form a collector reads as labels; any other value than `json` keeps the `log` package's own text line.
 
+## The values it names
+
+- `PoCModeOff` and `PoCModeRelaxed` are what `DEVSHARD_POC_REQUEST_MODE` accepts.
+- `LogFormatJSON` and `LogFormatText` are what `DEVSHARD_LOG_FORMAT` selects; empty means `LogFormatJSON`.
+- `AllowPrivateAddressesVariable` is named in the log line that reports the dial guard switched off.
+
 ## Which names are read
 
 Each variable is read under one name only: `DEVSHARD_*`, `DEVSHARDS_JSON` or `GATEWAY_*`. `PrivateKey` reads exactly the variable an escrow record names. See [`docs/operations.md`](../docs/operations.md), "Variable names", for which variables are lenient, the defaults that shape a first deployment, and the variables that are not read.

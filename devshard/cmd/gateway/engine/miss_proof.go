@@ -28,7 +28,7 @@ func (p *MissProof) releaseHeldFinish() {
 func (p *MissProof) completeness() MissProofCompleteness {
 	switch {
 	case p == nil:
-		return ""
+		return MissProofNone
 	case p.Truncated:
 		return MissProofTruncated
 	case p.Complete:

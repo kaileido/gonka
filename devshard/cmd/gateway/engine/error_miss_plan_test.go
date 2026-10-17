@@ -206,7 +206,7 @@ func TestAnOrdinaryVoteNamesNoCompleteness(t *testing.T) {
 
 	vote, _ := poster.SettleTimeout(context.Background(), TimeoutStep{Nonce: 7})
 
-	if vote.Completeness != "" {
+	if vote.Completeness != MissProofNone {
 		t.Fatalf("completeness = %q, want it unnamed", vote.Completeness)
 	}
 }

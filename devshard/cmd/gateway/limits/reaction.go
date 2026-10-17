@@ -135,7 +135,7 @@ func (l *ParticipantLimiter) applyBreakerLocked(state *hostState, effect breaker
 		if state.consecutiveCutoffFaults < int(l.cfg.AfterFailures) && !state.halfOpen {
 			return
 		}
-		capped := min(time.Duration(float64(l.cfg.BaseOpen)*math.Pow(1.6, float64(state.backoffCount))), l.cfg.MaxOpen)
+		capped := min(time.Duration(float64(l.cfg.BaseOpen)*math.Pow(cutoffBackoffMultiplier, float64(state.backoffCount))), l.cfg.MaxOpen)
 		state.openUntil = now.Add(capped + l.jitter(capped))
 		if capped < l.cfg.MaxOpen {
 			state.backoffCount++

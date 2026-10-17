@@ -230,12 +230,11 @@ type Config struct {
 	NonceAccounting NonceAccounting
 }
 
+// PoCMode values are what Modes.PoCMode accepts, and ModelAccess values what Limits.ModelAccess accepts.
 const (
-	// PoC mode values accepted in Modes.PoCMode.
 	PoCModeOff     = env.PoCModeOff
 	PoCModeRelaxed = env.PoCModeRelaxed
 
-	// Model access values accepted in Limits.ModelAccess.
 	ModelAccessOpen      = "open"
 	ModelAccessAPIKey    = "api_key"
 	ModelAccessAdminOnly = "admin_only"

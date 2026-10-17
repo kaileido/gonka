@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"time"
 
 	"devshard/cmd/gateway/chain"
 	"devshard/cmd/gateway/filters"
@@ -14,8 +15,8 @@ import (
 
 func notFinite(value float64) bool { return math.IsNaN(value) || math.IsInf(value, 0) }
 
+// MaxContextTokens is the longest context a model may be priced at. See capacity.md, "The participant limiter: IOCW".
 const (
-	// MaxContextTokens is the longest context a model may be priced at. See capacity.md, "The participant limiter: IOCW".
 	MaxContextTokens = 100_000_000
 
 	maxWindowRequests        = 1_000_000
@@ -30,6 +31,8 @@ const (
 	snapshotAgePollMultiple = 7
 
 	minAddressDataLength = 4
+
+	maxTCPPort = 65535
 )
 
 // ErrInvalid marks a configuration the operator got wrong, so the surface answers 400 rather than 502.
@@ -137,7 +140,7 @@ func (c *Config) Validate() error {
 	if c.Limits.HostCutoff.MaxMS < c.Limits.HostCutoff.BaseMS {
 		complain("host_cutoff_max_ms: %d must be >= host_cutoff_ms %d", c.Limits.HostCutoff.MaxMS, c.Limits.HostCutoff.BaseMS)
 	}
-	if perfEjectionMaxMS := c.Perf.EjectionMaxSeconds * 1000; c.Limits.HostCutoff.MaxMS > perfEjectionMaxMS {
+	if perfEjectionMaxMS := c.Perf.EjectionMaxSeconds * time.Second.Milliseconds(); c.Limits.HostCutoff.MaxMS > perfEjectionMaxMS {
 		complain("host_cutoff_max_ms: %d must be <= perf_ejection_max_seconds %d (ms) so perf stays the dominant ejection authority", c.Limits.HostCutoff.MaxMS, perfEjectionMaxMS)
 	}
 	// A guessable key is worse than none: "none" disables admin entirely, a weak one authenticates.
@@ -204,8 +207,8 @@ func (c *Config) Validate() error {
 	if c.NonceAccounting.SnapshotSeconds < 1 {
 		complain("nonce_accounting_snapshot_seconds: %d must be >= 1", c.NonceAccounting.SnapshotSeconds)
 	}
-	if portOutOfRange := c.NonceAccounting.Port < 1 || c.NonceAccounting.Port > 65535; c.NonceAccounting.Enabled && portOutOfRange {
-		complain("nonce_accounting_port: %d out of range 1..65535 while nonce accounting is enabled", c.NonceAccounting.Port)
+	if portOutOfRange := c.NonceAccounting.Port < 1 || c.NonceAccounting.Port > maxTCPPort; c.NonceAccounting.Enabled && portOutOfRange {
+		complain("nonce_accounting_port: %d out of range 1..%d while nonce accounting is enabled", c.NonceAccounting.Port, maxTCPPort)
 	}
 	if notFinite(c.Capture.SampleRate) || c.Capture.SampleRate < 0 || c.Capture.SampleRate > 1 {
 		complain("capture_sample_rate: %v must be in [0, 1]", c.Capture.SampleRate)

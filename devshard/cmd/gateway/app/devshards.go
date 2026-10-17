@@ -449,9 +449,14 @@ func readOnlySessions(records devshardLookup, storageDir string) registry.Sessio
 	}
 }
 
+const (
+	storageDirectoryMode = 0o755
+	storageFileMode      = 0o600
+)
+
 func escrowStorage(storageDir, escrowID string) (string, error) {
 	storagePath := api.DevshardStoragePath(storageDir, escrowID)
-	if err := os.MkdirAll(storagePath, 0o755); err != nil {
+	if err := os.MkdirAll(storagePath, storageDirectoryMode); err != nil {
 		return "", fmt.Errorf("creating storage for escrow %s: %w", escrowID, err)
 	}
 	return storagePath, nil
@@ -471,7 +476,7 @@ func copySessionStorage(sourceDir, targetDir string) error {
 		if err != nil {
 			return fmt.Errorf("reading %s: %w", entry.Name(), err)
 		}
-		if err := os.WriteFile(filepath.Join(targetDir, entry.Name()), contents, 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(targetDir, entry.Name()), contents, storageFileMode); err != nil {
 			return fmt.Errorf("writing %s: %w", entry.Name(), err)
 		}
 	}

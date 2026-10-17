@@ -13,8 +13,8 @@ import (
 	"devshard/cmd/gateway/filters"
 )
 
+// See README.md, "Streaming the reply".
 const (
-	// Tracks the carry cap on purpose, and caps a winner's SSE. See README.md, "Streaming the reply".
 	maxBufferedResponseBytes = filters.MaxStreamCarryBytes
 )
 

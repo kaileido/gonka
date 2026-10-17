@@ -8,11 +8,9 @@ import (
 	"devshard/cmd/gateway/internal/logkey"
 )
 
+// See ../docs/operations.md, "The request record".
 const (
-	// loggedFieldSlots is every keyval a finished request can carry, so the line is never copied to grow.
-	loggedFieldSlots = 32
-
-	// maxLoggedErrorBytes bounds host-controlled error text. See docs/operations.md, "The request record".
+	loggedFieldSlots    = 32
 	maxLoggedErrorBytes = 256
 
 	cacheHitOutcome = "cache_hit"

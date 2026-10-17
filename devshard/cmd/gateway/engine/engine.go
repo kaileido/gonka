@@ -14,17 +14,12 @@ import (
 	"devshard/cmd/gateway/perf"
 )
 
+// Errors the engine returns. See README.md, "Errors the engine returns".
 var (
-	// ErrStopped rejects a request the engine can no longer see through to a settled nonce.
-	ErrStopped = errors.New("engine stopped")
-
+	ErrStopped           = errors.New("engine stopped")
 	ErrAllAttemptsFailed = errors.New("every attempt failed")
-
-	// ErrHostsUnavailable is a race whose every attempt was refused as overloaded, not answered badly. See README.md, "Errors the engine returns".
-	ErrHostsUnavailable = errors.New("every host refused the request as unavailable")
-
-	// ErrPoCTookTheHosts is a race whose every attempt proof of compute ended; the hosts are unavailable, so it answers as ErrHostsUnavailable does.
-	ErrPoCTookTheHosts = fmt.Errorf("%w: proof of compute started on every host the request reached", ErrHostsUnavailable)
+	ErrHostsUnavailable  = errors.New("every host refused the request as unavailable")
+	ErrPoCTookTheHosts   = fmt.Errorf("%w: proof of compute started on every host the request reached", ErrHostsUnavailable)
 )
 
 const (

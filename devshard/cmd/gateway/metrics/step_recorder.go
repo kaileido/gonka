@@ -6,7 +6,12 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-var stepBuckets = prometheus.ExponentialBuckets(0.0005, 2, 18)
+const (
+	stepBucketStartSeconds = 0.0005
+	stepBucketCount        = 18
+)
+
+var stepBuckets = prometheus.ExponentialBuckets(stepBucketStartSeconds, bucketGrowthFactor, stepBucketCount)
 
 // StepRecorder times where a request waits inside the gateway itself. See operations.md, "Where the gateway spends a request's time".
 type StepRecorder struct {

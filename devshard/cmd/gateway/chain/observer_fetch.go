@@ -98,12 +98,10 @@ func deriveEffectiveEpochIndex(payload chainEpochInfoResponse) uint64 {
 	return latest
 }
 
+// See README.md, "Which nodes count as preserved".
 const (
-	// preservationModeLegacy keeps nodes whose second timeslot allocation is set.
 	preservationModeLegacy preservationMode = iota
-	// preservationModeSnapshot keeps nodes listed in the preserved-nodes snapshot.
 	preservationModeSnapshot
-	// preservationModeAll keeps every node.
 	preservationModeAll
 )
 
@@ -331,15 +329,15 @@ func (p *confirmationPoCPhaseValue) UnmarshalJSON(data []byte) error {
 	var asInt int
 	if err := json.Unmarshal(data, &asInt); err == nil {
 		switch asInt {
-		case 0:
+		case confirmationPoCPhaseNumberInactive:
 			*p = confirmationPoCPhaseValue(ConfirmationPoCInactive)
-		case 1:
+		case confirmationPoCPhaseNumberGracePeriod:
 			*p = confirmationPoCPhaseValue(ConfirmationPoCGracePeriod)
-		case 2:
+		case confirmationPoCPhaseNumberGeneration:
 			*p = confirmationPoCPhaseValue(ConfirmationPoCGeneration)
-		case 3:
+		case confirmationPoCPhaseNumberValidation:
 			*p = confirmationPoCPhaseValue(ConfirmationPoCValidation)
-		case 4:
+		case confirmationPoCPhaseNumberCompleted:
 			*p = confirmationPoCPhaseValue(ConfirmationPoCCompleted)
 		default:
 			*p = confirmationPoCPhaseValue(strconv.Itoa(asInt))

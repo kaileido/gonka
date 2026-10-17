@@ -10,6 +10,9 @@ const (
 	latencyWindowSize    = 64
 	latencyWindowMinimum = 10
 	baselineRise         = 0.001
+
+	thirdQuartileNumerator   = 3
+	thirdQuartileDenominator = 4
 )
 
 type hostKey struct {
@@ -155,5 +158,5 @@ func (w *latencyWindow) p75(minimum int) (time.Duration, bool) {
 	var scratch [latencyWindowSize]time.Duration
 	sorted := scratch[:copy(scratch[:], w.samples[:w.filled])]
 	slices.Sort(sorted)
-	return sorted[(len(sorted)*3)/4], true
+	return sorted[(len(sorted)*thirdQuartileNumerator)/thirdQuartileDenominator], true
 }

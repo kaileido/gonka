@@ -73,7 +73,7 @@ func eventPayload(event []byte) (dataLines int, payload []byte, held bool) {
 			payload = data
 			continue
 		}
-		if dataLines == 2 {
+		if joined == nil {
 			joined = append(make([]byte, 0, len(payload)+len(data)+1), payload...)
 		}
 		if len(joined) > 0 {
@@ -144,7 +144,7 @@ func indexEventEnd(buf []byte) int {
 		case next < len(buf) && buf[next] == '\n':
 			return next + 1
 		case next+1 < len(buf) && buf[next] == '\r' && buf[next+1] == '\n':
-			return next + 2
+			return next + crlfLength
 		}
 		offset = next
 	}

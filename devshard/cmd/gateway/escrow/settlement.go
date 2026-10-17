@@ -13,17 +13,14 @@ import (
 	"devshard/cmd/gateway/store"
 )
 
+// ErrUnknownEscrow means the registry has no row for the escrow, ErrEscrowPruned that the chain pruned it after its settlement window. See README.md, "Settlement and retirement".
 var (
-	// ErrDevshardBusy marks a settlement deferred because requests are still spending the escrow's nonces.
 	ErrDevshardBusy = errors.New("devshard busy")
 
-	// ErrUnknownEscrow marks a settlement asked for an escrow the registry has no row for.
 	ErrUnknownEscrow = errors.New("unknown escrow")
 
-	// ErrSettlementInFlight marks a settlement another caller is already running -- not success.
 	ErrSettlementInFlight = errors.New("settlement already in flight")
 
-	// ErrEscrowPruned marks an escrow the chain no longer holds: pruned after its settlement window, so there is nothing left to settle.
 	ErrEscrowPruned = errors.New("escrow pruned on chain")
 )
 

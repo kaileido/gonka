@@ -15,6 +15,7 @@ const (
 	DefaultObserverPollInterval = 5 * time.Second
 	refreshDeadlineMultiple     = 6
 	versionsTTLPollMultiplier   = 3
+	observerHTTPTimeout         = 5 * time.Second
 
 	epochInfoPath    = "/v1/epochs/latest"
 	participantsPath = "/v1/epochs/current/participants"
@@ -69,7 +70,7 @@ func NewPhaseObserver(cfg ObserverConfig) (*PhaseObserver, error) {
 	}
 	client := cfg.HTTPClient
 	if client == nil {
-		client = &http.Client{Timeout: 5 * time.Second}
+		client = &http.Client{Timeout: observerHTTPTimeout}
 	}
 	now := cfg.Now
 	if now == nil {
@@ -101,15 +102,8 @@ func (o *PhaseObserver) Start(ctx context.Context) {
 	o.cancel, o.doneCh = cancel, done
 
 	var running sync.WaitGroup
-	running.Add(2)
-	go func() {
-		defer running.Done()
-		o.run(ctx)
-	}()
-	go func() {
-		defer running.Done()
-		o.versions.Run(ctx, o.pollInterval)
-	}()
+	running.Go(func() { o.run(ctx) })
+	running.Go(func() { o.versions.Run(ctx, o.pollInterval) })
 	go func() {
 		running.Wait()
 		close(done)

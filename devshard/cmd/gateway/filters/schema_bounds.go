@@ -43,6 +43,7 @@ const (
 	structuredOutputsMaxStructuralTagLen = 4 * 1024
 )
 
+// See README.md, "Schema bounds".
 var (
 	// validSchemaTypes are the JSON-Schema primitives; anything else crashes xgrammar's compiler (CVE-2025-48944).
 	validSchemaTypes = map[string]struct{}{
@@ -52,12 +53,10 @@ var (
 	forbiddenSchemaKeys = []string{"$ref", "$defs", "definitions"}
 	branchSchemaKeys    = []string{"anyOf", "oneOf", "allOf"}
 
-	// schemaDataKeys hold literal data, not child schemas — the walker must not recurse into them.
 	schemaDataKeys = map[string]struct{}{
 		"enum": {}, "const": {}, "default": {}, "examples": {}, "required": {}, "dependentRequired": {},
 	}
 
-	// schemaChildMapKeys hold name->schema maps; each value is walked as a child, the wrapper is not counted.
 	schemaChildMapKeys = map[string]struct{}{
 		"properties": {}, "patternProperties": {}, "dependentSchemas": {},
 	}

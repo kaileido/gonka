@@ -2,14 +2,14 @@ package filters
 
 import "slices"
 
-// ThinkingDisposition is the closed set of ways a profile handles the thinking/enable_thinking fields.
+// ThinkingDisposition is the closed set of ways a profile handles the thinking/enable_thinking fields. See README.md, "Model profiles".
 type ThinkingDisposition int
 
 const (
-	ThinkingNormalizeInPlace ThinkingDisposition = iota // default/Qwen
-	ThinkingMirrorToKwargs                              // Kimi
-	ThinkingStrip                                       // MiniMax
-	ThinkingForceOn                                     // GLM-5.3-Flash
+	ThinkingNormalizeInPlace ThinkingDisposition = iota
+	ThinkingMirrorToKwargs
+	ThinkingStrip
+	ThinkingForceOn
 )
 
 // Profile captures one routed model's deltas from the default pipeline; a nil *Profile is the default. See README.md, "Model profiles".

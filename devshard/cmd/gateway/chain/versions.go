@@ -15,8 +15,8 @@ import (
 	"devshard/cmd/gateway/internal/strictjson"
 )
 
+// See README.md, "What the chain observer provides".
 const (
-	// Together these keep one pass inside the freshness window. See README.md, "What the chain observer provides".
 	versionsPollConcurrency = 16
 	versionsFetchTimeout    = 2 * time.Second
 
