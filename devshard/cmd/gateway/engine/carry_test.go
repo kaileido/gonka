@@ -33,13 +33,13 @@ func TestCarryBudgetGlobalTripRollsBackParticipantCharge(t *testing.T) {
 	budget := testBudget(1<<20, 1<<20, 32)
 	counter := budget.counterFor("alice")
 
-	if !budget.reserve(counter, 24) {
+	if budget.reserve(counter, 24) != budgetGranted {
 		t.Fatal("first reserve rejected")
 	}
 	assertUsage(t, budget, "alice", 24, 24)
 
-	if budget.reserve(counter, 16) {
-		t.Fatal("reserve past the global cap was accepted")
+	if budget.reserve(counter, 16) != budgetGlobalFull {
+		t.Fatal("reserve past the global cap was not refused for the global pool")
 	}
 	assertUsage(t, budget, "alice", 24, 24)
 }
@@ -52,15 +52,15 @@ func TestCarryBudgetParticipantTripLeavesGlobalUntouched(t *testing.T) {
 	budget := testBudget(1<<20, 32, 1<<20)
 	alice, bob := budget.counterFor("alice"), budget.counterFor("bob")
 
-	if !budget.reserve(alice, 24) {
+	if budget.reserve(alice, 24) != budgetGranted {
 		t.Fatal("first reserve rejected")
 	}
-	if budget.reserve(alice, 16) {
-		t.Fatal("reserve past the participant cap was accepted")
+	if budget.reserve(alice, 16) != budgetParticipantFull {
+		t.Fatal("reserve past the participant cap was not refused for the participant")
 	}
 	assertUsage(t, budget, "alice", 24, 24)
 
-	if !budget.reserve(bob, 24) {
+	if budget.reserve(bob, 24) != budgetGranted {
 		t.Fatal("a second participant was starved by the first's cap")
 	}
 	assertUsage(t, budget, "bob", 24, 48)

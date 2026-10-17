@@ -36,6 +36,8 @@ type scriptedSession struct {
 	commits         []committedNonce
 	failWith        error
 	failAfterDecide error
+	failAfterSpend  error
+	keepFailing     bool
 	swallowCommit   bool
 	gate            chan struct{}
 	entered         chan struct{}
@@ -71,6 +73,14 @@ func (s *scriptedSession) Advance(decide func(HostBinding) NonceIntent) (Prepare
 	if !intent.Commit {
 		s.declines++
 		return nil, nil
+	}
+	if s.failAfterSpend != nil {
+		s.nonce = nonce
+		err := s.failAfterSpend
+		if !s.keepFailing {
+			s.failAfterSpend = nil
+		}
+		return nil, NewSpentNonceError(nonce, err)
 	}
 	if s.swallowCommit {
 		return nil, nil
@@ -358,6 +368,8 @@ type harnessConfig struct {
 	afterDecide         func(HostBinding)
 	failWith            error
 	failAfterDecide     error
+	failAfterSpend      error
+	keepFailing         bool
 	swallowCommit       bool
 	refused             []string
 	gate                chan struct{}
@@ -391,6 +403,8 @@ func newHarness(t *testing.T, cfg harnessConfig) *harness {
 		feePerNonce:     cfg.feePerNonce,
 		failWith:        cfg.failWith,
 		failAfterDecide: cfg.failAfterDecide,
+		failAfterSpend:  cfg.failAfterSpend,
+		keepFailing:     cfg.keepFailing,
 		swallowCommit:   cfg.swallowCommit,
 		gate:            cfg.gate,
 		afterDecide:     cfg.afterDecide,
@@ -1254,5 +1268,47 @@ func TestABurnSkipsAnAbandonedWaiterAndNamesTheOldestLiveOne(t *testing.T) {
 	wantNoReply(t, head)
 	if got := test.observer.burnRequests(); !slices.Equal(got, []string{"request-middle", "request-tail"}) {
 		t.Fatalf("burned during = %v, want each burn charged to the oldest live waiter, skipping the abandoned head", got)
+	}
+}
+
+// Test flow:
+//  1. Build a harness whose session commits a nonce and then fails reading the host's catch-up, once, and submit two requests.
+//  2. Assert the request that nonce was committed for fails alone, the next is served, the spent nonce is burned in its name, and its slot was given back.
+func TestDispatcherFailsOnlyTheRequestWhoseNonceWasSpentUnprepared(t *testing.T) {
+	test := newHarness(t, harnessConfig{failAfterSpend: errors.New("database is locked")})
+
+	first := test.submitAs(t, "request-first", test.clock.Now())
+	second := test.submitAs(t, "request-second", test.clock.Now())
+
+	var spent *SpentNonceError
+	if result := awaitReply(t, first); !errors.As(result.err, &spent) || spent.Nonce != 1 {
+		t.Fatalf("first request err = %v, want the spent nonce 1", result.err)
+	}
+	if result := awaitReply(t, second); result.err != nil {
+		t.Fatalf("second request err = %v, want it served", result.err)
+	}
+	if burns, nonces, requests := test.observer.burns(), test.observer.burnedNonces(), test.observer.burnRequests(); len(burns) != 1 || burns[0] != GhostReasonPrepareFailed || nonces[0] != 1 || requests[0] != "request-first" {
+		t.Fatalf("burns = %v nonces = %v requests = %v, want nonce 1 burned for request-first's failed prepare", burns, nonces, requests)
+	}
+	test.wantSlots(t, 1, 2)
+}
+
+// Test flow:
+//  1. Build a harness whose session commits a nonce and fails preparing it on every pass, and submit two requests.
+//  2. Assert each request fails once and the drain stops: a lasting store failure costs one nonce per request, not one per pass.
+func TestDispatcherStopsSpendingNoncesOnALastingPrepareFailure(t *testing.T) {
+	test := newHarness(t, harnessConfig{failAfterSpend: errors.New("database is locked"), keepFailing: true})
+
+	first := test.submitAs(t, "request-first", test.clock.Now())
+	second := test.submitAs(t, "request-second", test.clock.Now())
+
+	if result := awaitReply(t, first); result.err == nil {
+		t.Fatal("first request served, want it failed")
+	}
+	if result := awaitReply(t, second); result.err == nil {
+		t.Fatal("second request served, want it failed")
+	}
+	if burns := test.observer.burns(); len(burns) != 2 {
+		t.Fatalf("burns = %v, want one spent nonce per request", burns)
 	}
 }

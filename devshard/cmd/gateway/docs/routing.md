@@ -183,6 +183,7 @@ A ghost commits a real inference into the escrow's local diff and never sends it
 | `ghostEjected` | `participant_ejected_no_send` | The outlier detector ejected the host, and the pool-wide cap left room to honour it. |
 | `ghostExclude` | `no_compatible_request_after_stale` | The queue has already raced this host, and the hold grace expired. |
 | `ghostAbandoned` | `request_abandoned_before_dispatch` | The nonce was committed for a caller who vanished before the assignment reached it. |
+| `ghostPrepareFailed` | `nonce_spent_on_failed_prepare` | The session committed the nonce and then failed to finish preparing it, as when reading a host's catch-up from the store fails (`user.ErrPreparedAfterCommit`, reported as `SpentNonceError`). The nonce is spent either way: the request it was committed for fails alone, the burn is recorded in its name, and the drain goes on with the rest of the queue. It does not count as a burn in a row, because a store failure says nothing about the host's window, but it does spend the drain's burn budget, so a failure that lasts costs one nonce per request. |
 | `ghostNotAllowed` | `participant_outside_allowlist` | The host is not on the participant allowlist, which is checked before every other gate. |
 | `ghostStateDiverged` | `participant_state_diverged_no_send` | The host's escrow state diverged from this gateway's, so nothing may be dispatched to it on that escrow. |
 
@@ -303,7 +304,7 @@ The draining set is keyed by *entry*, not by escrow id, so the same id can be re
 
 **Closing an entry flushes before releasing storage** (`escrow.go`, `escrowEntry.close`). Finalize advances the nonce, so an escrow closed without a flush replays its whole diff tail on the next rehydration. The mirror-image rule is that an *unpublished* session — one opened by `Add` on a path that then bails — is closed *without* flushing, because it served nothing and its snapshot would land on the storage of the entry that did serve (`registry.go`, `Registry.Add`).
 
-**Rehydration is lazy and picks the right kind of session.** Finalizing collects signatures from hosts, so a non-resident escrow is rehydrated with a serving session; building a settlement payload reads only local storage, so it rehydrates read-only. A read-only session has no host clients — dispatching through one is a bug, which is why the two factories are distinct types rather than a flag (`session.go`, `SessionFactory`).
+**Rehydration is lazy and picks the right kind of session.** Finalizing collects signatures from hosts, so a non-resident escrow is rehydrated with a serving session; building a settlement payload reads only local storage, so it rehydrates read-only. A read-only session has no host clients — dispatching through one is a bug, which is why the two factories are distinct types rather than a flag (`session.go`, `SessionFactory`). A finalize that a failure or a restart cut short is resumed by sending its remaining finalize rounds before the quorum check (`session.go`, `sessionHandle.Finalize`; `user.Session.SendFinalizeRound`): those rounds run on the nonces the chain's cap reserves for finalizing, where an ordinary pending diff is refused.
 
 ## A reserve escrow
 

@@ -448,3 +448,44 @@ func TestTheLedgerReadsAnEscrowAfterItsFinalize(t *testing.T) {
 		})
 	}
 }
+
+// Test flow:
+//  1. Build a registry around a settleable session whose settlement signatures, checked and spread over each validator's slots, differ from its raw signature map; then one whose signatures fall short of quorum.
+//  2. Call `BuildSettlement` for each.
+//  3. Assert the payload carries the checked signatures, and short of a checked quorum it carries every signature held: a read-only session cannot resolve a warm key the chain still accepts.
+//  4. Assert a payload short of quorum is narrated unverifiable once, however many checks found it short.
+func TestBuildSettlementSignsWithTheCheckedSettlementSignatures(t *testing.T) {
+	t.Parallel()
+	for _, testCase := range []struct {
+		name           string
+		checked        map[uint32][]byte
+		shortfall      error
+		wantSigs       []chain.SettlementSlotSig
+		wantNarrations int
+	}{
+		{name: "checked signatures", checked: map[uint32][]byte{1: []byte("checked-1"), 0: []byte("checked-0")},
+			wantSigs: []chain.SettlementSlotSig{{SlotID: 0, Signature: []byte("checked-0")}, {SlotID: 1, Signature: []byte("checked-1")}}},
+		{name: "short of quorum", shortfall: errors.New("insufficient signatures: 1/2 weight"),
+			wantSigs:       []chain.SettlementSlotSig{{SlotID: 0, Signature: []byte("sig-0")}, {SlotID: 2, Signature: []byte("sig-2")}},
+			wantNarrations: 1},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			session := settleableSession(9)
+			session.settlementSignatures, session.settlementShortfall = testCase.checked, testCase.shortfall
+			narrator := &recordingEscrowNarrator{}
+			registry := New(Deps{ReadOnlySessions: newSessions(map[string]*fakeSession{"5": session}).open, Narrator: narrator, Now: fixedClock()})
+
+			input, err := registry.BuildSettlement(context.Background(), "5")
+
+			if err != nil {
+				t.Fatalf("BuildSettlement = %v, want nil", err)
+			}
+			if !reflect.DeepEqual(input.SlotSigs, testCase.wantSigs) {
+				t.Fatalf("slot signatures = %v, want %v", input.SlotSigs, testCase.wantSigs)
+			}
+			if recorded := narrator.recorded(); len(recorded) != testCase.wantNarrations {
+				t.Fatalf("narrated %v, want %d unverifiable lines", recorded, testCase.wantNarrations)
+			}
+		})
+	}
+}

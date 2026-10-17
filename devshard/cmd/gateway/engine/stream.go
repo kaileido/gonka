@@ -3,8 +3,6 @@ package engine
 import (
 	"io"
 	"net/http"
-
-	"devshard/cmd/gateway/filters"
 )
 
 // streamVerdict is the coordinator's answer to one attempt's claim on the client stream.
@@ -32,18 +30,19 @@ type winnerWriter struct {
 	client   io.Writer
 	withheld io.Writer
 
-	verdict    streamVerdict
-	prefix     []byte
-	prefixLost bool
+	verdict         streamVerdict
+	prefix          []byte
+	prefixAllowance prefixAllowance
 }
 
-func newWinnerWriter(nonce uint64, client io.Writer, crown chan<- crownRequest, raceDone <-chan struct{}) *winnerWriter {
+func newWinnerWriter(nonce uint64, client io.Writer, crown chan<- crownRequest, raceDone <-chan struct{}, allowance prefixAllowance) *winnerWriter {
 	return &winnerWriter{
-		nonce:    nonce,
-		crown:    crown,
-		reply:    make(chan streamVerdict, 1),
-		raceDone: raceDone,
-		withheld: client,
+		nonce:           nonce,
+		crown:           crown,
+		reply:           make(chan streamVerdict, 1),
+		raceDone:        raceDone,
+		withheld:        client,
+		prefixAllowance: allowance,
 	}
 }
 
@@ -75,6 +74,12 @@ func (w *winnerWriter) Flush() {
 // Abandon forfeits this attempt's claim: what an uncrowned attempt buffered must never be forwarded.
 func (w *winnerWriter) Abandon() {
 	w.verdict, w.prefix, w.client, w.withheld = streamSuppressed, nil, nil, nil
+	w.prefixAllowance.release()
+}
+
+func (w *winnerWriter) releasePrefix() {
+	w.prefix = nil
+	w.prefixAllowance.release()
 }
 
 func (w *winnerWriter) claim() streamVerdict {
@@ -100,6 +105,7 @@ func (w *winnerWriter) claim() streamVerdict {
 func (w *winnerWriter) forward(chunk []byte) error {
 	prefix := w.prefix
 	w.prefix = nil
+	w.prefixAllowance.release()
 	if w.client == nil {
 		return nil
 	}
@@ -112,13 +118,17 @@ func (w *winnerWriter) forward(chunk []byte) error {
 	return err
 }
 
-// buffer holds pre-content bytes until a claim can flush them; past the cap the prefix is dropped, never the attempt. See race.md, "Crowning".
+// buffer holds pre-content bytes until a claim can flush them; past the prefix budget it ends the attempt. See race.md, "Crowning".
 func (w *winnerWriter) buffer(chunk []byte) {
-	if w.prefixLost {
+	select {
+	case <-w.raceDone:
+		w.Abandon()
 		return
+	default:
 	}
-	if int64(len(w.prefix))+int64(len(chunk)) > filters.MaxStreamCarryBytes {
-		w.prefix, w.prefixLost = nil, true
+	if err := w.prefixAllowance.charge(int64(len(chunk))); err != nil {
+		w.Abandon()
+		w.prefixAllowance.overflow(err)
 		return
 	}
 	w.prefix = append(w.prefix, chunk...)

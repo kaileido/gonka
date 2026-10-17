@@ -211,7 +211,7 @@ func TestSettleTimeoutReportsACancelledWaitAsNoVote(t *testing.T) {
 		t.Errorf("SettleTimeout error = %v, want it to match context.Canceled", err)
 	}
 	if vote.Kind != "" {
-		t.Errorf("vote = %q, want empty: the protocol deadline was never reached", vote)
+		t.Errorf("vote = %+v, want empty: the protocol deadline was never reached", vote)
 	}
 }
 

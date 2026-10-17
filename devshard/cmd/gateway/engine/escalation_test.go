@@ -20,7 +20,7 @@ func judgedOnly(policy EscalationPolicy) EscalationPolicy {
 }
 
 func dispatched(offset time.Duration) EscalationAttempt {
-	return EscalationAttempt{SendTime: raceStart.Add(offset)}
+	return EscalationAttempt{ClockStart: raceStart.Add(offset)}
 }
 
 // Test flow:
@@ -169,7 +169,7 @@ func TestAttemptLimitIsTheHostGroupUnlessNoncesAreScarce(t *testing.T) {
 //  1. For each table case's attempt state and request (an already-escalated attempt, a suspicious attempt, a finished attempt with and without an empty stream, a failed streaming attempt, an undispatched attempt, a dispatched attempt awaiting receipt, a streaming attempt that already produced a token, and a receipted attempt still waiting on its first token — where the first-token floor pushes its deadline out to receipt time plus the floor, since the raw curve would fire before the receipt even landed), call `triggerFor`.
 //  2. Assert each rule fires (or does not) with the expected stage and deadline.
 func TestLadderRuleInIsolation(t *testing.T) {
-	receiptedNoToken := EscalationAttempt{SendTime: raceStart, ReceiptTime: raceStart.Add(time.Second)}
+	receiptedNoToken := EscalationAttempt{ClockStart: raceStart, ReceiptTime: raceStart.Add(time.Second)}
 	testCases := []struct {
 		name         string
 		attempt      EscalationAttempt
@@ -179,33 +179,33 @@ func TestLadderRuleInIsolation(t *testing.T) {
 	}{
 		{
 			name:      "rule 0: an attempt that already escalated never triggers again",
-			attempt:   EscalationAttempt{Escalated: true, Suspicious: true, SendTime: raceStart},
+			attempt:   EscalationAttempt{Escalated: true, Suspicious: true, ClockStart: raceStart},
 			request:   streaming,
 			wantStage: StageNone,
 		},
 		{
 			name:         "rule 1: a suspicious attempt escalates immediately",
-			attempt:      EscalationAttempt{Suspicious: true, SendTime: raceStart},
+			attempt:      EscalationAttempt{Suspicious: true, ClockStart: raceStart},
 			request:      streaming,
 			wantStage:    StageSuspicious,
 			wantDeadline: raceStart,
 		},
 		{
 			name:      "rule 3: a finished attempt needs no successor",
-			attempt:   EscalationAttempt{Done: true, NonceFinished: true, SendTime: raceStart},
+			attempt:   EscalationAttempt{Done: true, NonceFinished: true, ClockStart: raceStart},
 			request:   streaming,
 			wantStage: StageNone,
 		},
 		{
 			name:         "rule 4: a finished attempt that answered with an empty stream escalates immediately",
-			attempt:      EscalationAttempt{Done: true, NonceFinished: true, EmptyStream: true, SendTime: raceStart},
+			attempt:      EscalationAttempt{Done: true, NonceFinished: true, EmptyStream: true, ClockStart: raceStart},
 			request:      streaming,
 			wantStage:    StageAttemptFailed,
 			wantDeadline: raceStart,
 		},
 		{
 			name:         "rule 5: a failed streaming attempt escalates immediately",
-			attempt:      EscalationAttempt{Done: true, SendTime: raceStart},
+			attempt:      EscalationAttempt{Done: true, ClockStart: raceStart},
 			request:      streaming,
 			wantStage:    StageAttemptFailed,
 			wantDeadline: raceStart,
@@ -225,7 +225,7 @@ func TestLadderRuleInIsolation(t *testing.T) {
 		},
 		{
 			name:      "rule 9: a streaming attempt that produced a token is on its own",
-			attempt:   EscalationAttempt{SendTime: raceStart, ReceiptTime: raceStart.Add(time.Second), FirstToken: raceStart.Add(2 * time.Second)},
+			attempt:   EscalationAttempt{ClockStart: raceStart, ReceiptTime: raceStart.Add(time.Second), FirstToken: raceStart.Add(2 * time.Second)},
 			request:   streaming,
 			wantStage: StageNone,
 		},
@@ -277,7 +277,7 @@ func TestOwedDeadlineIsTheEscalationDeadlineJudgedOncePerStage(t *testing.T) {
 		},
 		{
 			name:      "a finished attempt owes nothing",
-			attempt:   EscalationAttempt{Done: true, SendTime: raceStart},
+			attempt:   EscalationAttempt{Done: true, ClockStart: raceStart},
 			wantStage: StageNone,
 		},
 		{
@@ -288,35 +288,35 @@ func TestOwedDeadlineIsTheEscalationDeadlineJudgedOncePerStage(t *testing.T) {
 		},
 		{
 			name:         "an attempt that already escalated still owes its deadline",
-			attempt:      EscalationAttempt{Escalated: true, SendTime: raceStart},
+			attempt:      EscalationAttempt{Escalated: true, ClockStart: raceStart},
 			wantStage:    StageReceiptTimeout,
 			wantDeadline: raceStart.Add(5 * time.Second),
 		},
 		{
 			name:      "a judged receipt deadline is not owed again",
-			attempt:   EscalationAttempt{SendTime: raceStart, ReceiptDeadlineJudged: true},
+			attempt:   EscalationAttempt{ClockStart: raceStart, ReceiptDeadlineJudged: true},
 			wantStage: StageNone,
 		},
 		{
 			name:         "a receipted attempt owes the first-token deadline",
-			attempt:      EscalationAttempt{SendTime: raceStart, ReceiptTime: raceStart.Add(time.Second)},
+			attempt:      EscalationAttempt{ClockStart: raceStart, ReceiptTime: raceStart.Add(time.Second)},
 			wantStage:    StageFirstToken,
 			wantDeadline: raceStart.Add(7 * time.Second),
 		},
 		{
 			name:         "a receipt that came after its judged deadline still owes the first-token deadline",
-			attempt:      EscalationAttempt{SendTime: raceStart, ReceiptTime: raceStart.Add(time.Second), ReceiptDeadlineJudged: true},
+			attempt:      EscalationAttempt{ClockStart: raceStart, ReceiptTime: raceStart.Add(time.Second), ReceiptDeadlineJudged: true},
 			wantStage:    StageFirstToken,
 			wantDeadline: raceStart.Add(7 * time.Second),
 		},
 		{
 			name:      "a judged first-token deadline is not owed again",
-			attempt:   EscalationAttempt{SendTime: raceStart, ReceiptTime: raceStart.Add(time.Second), FirstTokenDeadlineJudged: true},
+			attempt:   EscalationAttempt{ClockStart: raceStart, ReceiptTime: raceStart.Add(time.Second), FirstTokenDeadlineJudged: true},
 			wantStage: StageNone,
 		},
 		{
 			name:      "an attempt that produced a token owes nothing",
-			attempt:   EscalationAttempt{SendTime: raceStart, ReceiptTime: raceStart.Add(time.Second), FirstToken: raceStart.Add(2 * time.Second)},
+			attempt:   EscalationAttempt{ClockStart: raceStart, ReceiptTime: raceStart.Add(time.Second), FirstToken: raceStart.Add(2 * time.Second)},
 			wantStage: StageNone,
 		},
 	}
@@ -393,7 +393,7 @@ func TestFirstTokenTimeoutHoldsTheFloorAndGrowsWithInput(t *testing.T) {
 func TestNextEscalationPicksTheEarliestDeadline(t *testing.T) {
 	attempts := []EscalationAttempt{
 		dispatched(0),
-		{Escalated: true, SendTime: raceStart.Add(-time.Hour)},
+		{Escalated: true, ClockStart: raceStart.Add(-time.Hour)},
 		dispatched(-2 * time.Second),
 		{},
 	}
@@ -417,8 +417,8 @@ func TestNextEscalationPicksTheEarliestDeadline(t *testing.T) {
 //  3. Assert it reports no trigger.
 func TestNextEscalationReportsNothingWhenNoAttemptQualifies(t *testing.T) {
 	attempts := []EscalationAttempt{
-		{Done: true, NonceFinished: true, SendTime: raceStart},
-		{Escalated: true, SendTime: raceStart},
+		{Done: true, NonceFinished: true, ClockStart: raceStart},
+		{Escalated: true, ClockStart: raceStart},
 	}
 
 	if armed, ok := testPolicy.NextEscalation(raceStart, attempts, streaming); ok {
@@ -440,7 +440,7 @@ func TestConfirmRejectsAnEscalationWhoseConditionCleared(t *testing.T) {
 	fireTime := armed.Deadline
 
 	receipted := []EscalationAttempt{{
-		SendTime:    raceStart,
+		ClockStart:  raceStart,
 		ReceiptTime: raceStart.Add(400 * time.Millisecond),
 		FirstToken:  raceStart.Add(900 * time.Millisecond),
 	}}
@@ -448,7 +448,7 @@ func TestConfirmRejectsAnEscalationWhoseConditionCleared(t *testing.T) {
 		t.Fatalf("Confirm on a receipted, streaming attempt = %+v, want rejection", confirmed)
 	}
 
-	stillSilent := []EscalationAttempt{{SendTime: raceStart, ReceiptTime: raceStart.Add(400 * time.Millisecond)}}
+	stillSilent := []EscalationAttempt{{ClockStart: raceStart, ReceiptTime: raceStart.Add(400 * time.Millisecond)}}
 	if confirmed, ok := testPolicy.Confirm(armed, fireTime, stillSilent, streaming); ok {
 		t.Fatalf("Confirm after the stage advanced to first-token = %+v, want rejection", confirmed)
 	}
@@ -558,7 +558,7 @@ func TestStageReasonLabelsEveryTrigger(t *testing.T) {
 //  2. Call `triggerFor` at the moment of that receipt.
 //  3. Assert it arms the first-token stage with a deadline still ahead of the receipt, not one already past due.
 func TestAReceiptAlwaysBuysItsHostFirstTokenGrace(t *testing.T) {
-	slowReceipt := EscalationAttempt{SendTime: raceStart, ReceiptTime: raceStart.Add(4 * time.Second)}
+	slowReceipt := EscalationAttempt{ClockStart: raceStart, ReceiptTime: raceStart.Add(4 * time.Second)}
 
 	armed, ok := testPolicy.triggerFor(&slowReceipt, streaming, raceStart.Add(4*time.Second))
 
@@ -611,7 +611,7 @@ func TestAHedgeArmsOnTheCurveBeforeTheJudgedDeadline(t *testing.T) {
 	}
 	emptyPrompt := EscalationRequest{InputTokens: 0}
 	largePrompt := EscalationRequest{InputTokens: 100_000}
-	receipted := EscalationAttempt{SendTime: raceStart, ReceiptTime: raceStart.Add(time.Second)}
+	receipted := EscalationAttempt{ClockStart: raceStart, ReceiptTime: raceStart.Add(time.Second)}
 	testCases := []struct {
 		name         string
 		policy       EscalationPolicy
@@ -710,7 +710,7 @@ func TestAHedgeLeavesTheJudgedDeadlineWhereItWas(t *testing.T) {
 		wantDeadline time.Time
 	}{
 		{"no receipt owes the receipt deadline", dispatched(0), StageReceiptTimeout, raceStart.Add(5 * time.Second)},
-		{"a receipt owes the floored first-token deadline", EscalationAttempt{SendTime: raceStart, ReceiptTime: raceStart.Add(time.Second)}, StageFirstToken, raceStart.Add(7 * time.Second)},
+		{"a receipt owes the floored first-token deadline", EscalationAttempt{ClockStart: raceStart, ReceiptTime: raceStart.Add(time.Second)}, StageFirstToken, raceStart.Add(7 * time.Second)},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -743,7 +743,7 @@ func TestConfirmHonoursTheHedgeDeadline(t *testing.T) {
 		t.Fatalf("Confirm on the hedge deadline = (%+v, %t), want attempt 0 at %q", confirmed, ok, StageHedge)
 	}
 
-	receipted := []EscalationAttempt{{SendTime: raceStart, ReceiptTime: raceStart.Add(time.Second)}}
+	receipted := []EscalationAttempt{{ClockStart: raceStart, ReceiptTime: raceStart.Add(time.Second)}}
 	if _, ok := hedging.Confirm(armed, raceStart.Add(3*time.Second), receipted, streaming); !ok {
 		t.Fatal("Confirm of a hedge whose receipt landed before it fired: want the escalation, got rejection")
 	}

@@ -103,7 +103,13 @@ var (
 	// ErrTimeoutNotApplied reports a timeout the group would not carry. Callers separate a settled vote
 	// from an unsettled one by unwrapping, so this has to arrive wrapped or it reads as success.
 	ErrTimeoutNotApplied = errors.New("timeout was not applied")
+
+	// ErrPreparedAfterCommit marks a PrepareInferenceFn failure that came after its nonce was committed.
+	ErrPreparedAfterCommit = errors.New("nonce committed but its request was not prepared")
 )
+
+// TimeoutOutcomeVoteCollectionFailed is the TimeoutResult.Outcome of a vote the verifiers erred on before the group weighed it.
+const TimeoutOutcomeVoteCollectionFailed = "vote_collection_failed"
 
 // TimeoutResult reports what happened during timeout handling.
 type TimeoutResult struct {
@@ -1843,14 +1849,14 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 		// way we do above; a mismatch would mean the lock didn't actually
 		// serialise the increment with our chooser, which would resurrect
 		// the very race this method exists to prevent.
-		return nil, fmt.Errorf("internal: hostIdx race detected (chooser=%d composed=%d)", hostIdx, composedIdx)
+		return nil, fmt.Errorf("internal: hostIdx race detected (chooser=%d composed=%d): %w", hostIdx, composedIdx, ErrPreparedAfterCommit)
 	}
 
 	s.nonceStates[nonce] = &nonceOutcome{}
 
 	catchUp, inline, err := s.inlineCatchUpLocked(hostIdx, nonce)
 	if err != nil {
-		return nil, fmt.Errorf("read catch-up for host %d nonce %d: %w", hostIdx, nonce, err)
+		return nil, fmt.Errorf("read catch-up for host %d nonce %d: %w: %w", hostIdx, nonce, ErrPreparedAfterCommit, err)
 	}
 	if inline {
 		// TODO: remove this when we are sure that there is no bug in CatchUp
@@ -2094,6 +2100,11 @@ func (s *Session) SendInference(ctx context.Context, params InferenceParams) (*h
 		return nil, fmt.Errorf("process response from host %d: %w", p.hostIdx, err)
 	}
 	return resp, nil
+}
+
+// SendFinalizeRound sends one more round of a finalize already in progress, on the nonces the chain cap reserves for it.
+func (s *Session) SendFinalizeRound(ctx context.Context) error {
+	return s.sendDiffRound(ctx, nil, true)
 }
 
 // sendDiffRound composes a diff, sends it to the next host, processes the response.
@@ -2920,6 +2931,18 @@ func (s *Session) SignedSlots() map[uint64]types.Bitmap128 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return maps.Clone(s.signedSlots)
+}
+
+// SignaturesAt copies the signatures held for nonce under the session lock, checked or not.
+func (s *Session) SignaturesAt(nonce uint64) map[uint32][]byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	held := s.signaturesAtLocked(nonce)
+	copied := make(map[uint32][]byte, len(held))
+	for slot, signature := range held {
+		copied[slot] = append([]byte(nil), signature...)
+	}
+	return copied
 }
 
 // Signatures returns the in-memory signature map. Nonces at or below every
@@ -4068,7 +4091,7 @@ func (s *Session) VoteTimeout(ctx context.Context, nonce uint64, sendTime time.T
 
 	votes, recovery, _, verifierError, err := s.collectTimeoutVotes(ctx, nonce, reason, payload, verifiers, nil)
 	if err != nil {
-		result.Outcome = "vote_collection_failed"
+		result.Outcome = TimeoutOutcomeVoteCollectionFailed
 		if ctx.Err() != nil {
 			result.DetailReason = "context_canceled"
 		}
@@ -4135,7 +4158,7 @@ func (s *Session) VoteTimeout(ctx context.Context, nonce uint64, sendTime time.T
 	}
 
 	if verifierError != "" {
-		result.Outcome = "vote_collection_failed"
+		result.Outcome = TimeoutOutcomeVoteCollectionFailed
 		result.DetailReason = verifierError
 		if ctx.Err() != nil {
 			result.DetailReason = "context_canceled"

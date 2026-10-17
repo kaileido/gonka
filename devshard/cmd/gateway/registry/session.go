@@ -54,7 +54,8 @@ type EscrowSession interface {
 	FeePerNonce() uint64
 	Phase() types.SessionPhase
 	PrepareInferenceFn(chooser user.ParamsForHost) (*user.PreparedInference, error)
-	Signatures() map[uint64]map[uint32][]byte
+	SettlementSignatures(nonce uint64) (map[uint32][]byte, error)
+	SignaturesAt(nonce uint64) map[uint32][]byte
 	SignedSlots() map[uint64]types.Bitmap128
 	SignatureStatus() (entries []user.SignatureStatusEntry, highestQuorum uint64, hasAny bool)
 	SnapshotState() types.EscrowState
@@ -100,7 +101,7 @@ func (h sessionHandle) Finalize(ctx context.Context) error {
 	defer h.finalizing.Unlock()
 	for h.machine.Phase() == types.PhaseFinalizing {
 		nonce := h.Nonce()
-		if err := h.SendPendingDiff(ctx); err != nil && h.Nonce() == nonce {
+		if err := h.SendFinalizeRound(ctx); err != nil && h.Nonce() == nonce {
 			return fmt.Errorf("resuming the finalize cut short at nonce %d: %w", nonce, err)
 		}
 	}
@@ -230,7 +231,9 @@ func (s nonceStream) ChatBudgetSpent(participant string) bool {
 }
 
 func (s nonceStream) Advance(decide func(scheduler.HostBinding) scheduler.NonceIntent) (scheduler.Prepared, error) {
+	var bound uint64
 	prepared, err := s.session.PrepareInferenceFn(func(binding user.HostBinding) (user.InferenceParams, bool, context.Context, error) {
+		bound = binding.Nonce
 		intent := decide(scheduler.HostBinding{
 			Nonce:       binding.Nonce,
 			HostIdx:     binding.HostIdx,
@@ -251,6 +254,8 @@ func (s nonceStream) Advance(decide func(scheduler.HostBinding) scheduler.NonceI
 	switch {
 	case errors.Is(err, errNonceDeclined):
 		return nil, nil
+	case errors.Is(err, user.ErrPreparedAfterCommit):
+		return nil, scheduler.NewSpentNonceError(bound, err)
 	case err != nil:
 		return nil, err
 	case prepared == nil:

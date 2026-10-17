@@ -95,7 +95,7 @@ type EscalationAttempt struct {
 	NonceFinished   bool
 	EmptyStream     bool
 	LaunchTime      time.Time
-	SendTime        time.Time
+	ClockStart      time.Time
 	ReceiptTime     time.Time
 	FirstToken      time.Time
 	FirstContent    time.Time
@@ -196,7 +196,7 @@ func (p EscalationPolicy) triggerFor(attempt *EscalationAttempt, request Escalat
 		return ArmedEscalation{}, false
 	case attempt.Done:
 		return ArmedEscalation{Stage: StageAttemptFailed, Deadline: now}, true
-	case attempt.SendTime.IsZero():
+	case attempt.ClockStart.IsZero():
 		return ArmedEscalation{}, false
 	case attempt.ReceiptTime.IsZero():
 		return p.hedgeBefore(StageReceiptTimeout, p.receiptDeadline(attempt, request), attempt, request), true
@@ -208,7 +208,7 @@ func (p EscalationPolicy) triggerFor(attempt *EscalationAttempt, request Escalat
 
 func (p EscalationPolicy) hedgeBefore(stage EscalationStage, judged time.Time, attempt *EscalationAttempt, request EscalationRequest) ArmedEscalation {
 	if p.HedgeFirstTokenFloor > 0 {
-		hedge := attempt.SendTime.Add(max(p.HedgeFirstTokenFloor, firstTokenCurve(request.InputTokens)))
+		hedge := attempt.ClockStart.Add(max(p.HedgeFirstTokenFloor, firstTokenCurve(request.InputTokens)))
 		if hedge.Before(judged) {
 			return ArmedEscalation{Stage: StageHedge, Deadline: hedge}
 		}
@@ -233,7 +233,7 @@ func (p EscalationPolicy) owedDeadline(attempt *EscalationAttempt, request Escal
 }
 
 func (attempt *EscalationAttempt) owesNoDeadline() bool {
-	if attempt.Done || attempt.SendTime.IsZero() {
+	if attempt.Done || attempt.ClockStart.IsZero() {
 		return true
 	}
 	if attempt.ReceiptTime.IsZero() {
@@ -243,12 +243,12 @@ func (attempt *EscalationAttempt) owesNoDeadline() bool {
 }
 
 func (p EscalationPolicy) receiptDeadline(attempt *EscalationAttempt, request EscalationRequest) time.Time {
-	return attempt.SendTime.Add(p.receiptTimeout(request.InputTokens))
+	return attempt.ClockStart.Add(p.receiptTimeout(request.InputTokens))
 }
 
 // firstTokenDeadline is measured from dispatch, but the host owes a first token, not the time its receipt took.
 func (p EscalationPolicy) firstTokenDeadline(attempt *EscalationAttempt, request EscalationRequest) time.Time {
-	deadline := attempt.SendTime.Add(p.firstTokenBudget(request.InputTokens, attempt.FirstContentP75))
+	deadline := attempt.ClockStart.Add(p.firstTokenBudget(request.InputTokens, attempt.FirstContentP75))
 	if graceFromReceipt := attempt.ReceiptTime.Add(p.FirstTokenFloor); graceFromReceipt.After(deadline) {
 		return graceFromReceipt
 	}

@@ -8,7 +8,7 @@ import (
 )
 
 // attemptFinishFields is the widest a finish line gets: the fixed head, every delivery field, and every mark.
-const attemptFinishFields = 58
+const attemptFinishFields = 60
 
 func renderRaceStep(lines logSink, step *engine.RaceStep) {
 	switch step.Kind {
@@ -76,7 +76,7 @@ func attemptFinishHead(step *engine.RaceStep) []any {
 		logkey.Host, logkey.ShortHost(step.Participant),
 		logkey.Terminal, step.Terminal.String(),
 		logkey.NonceFinished, step.NonceFinished, logkey.StateDivergent, step.Outcome.StateDivergent,
-		logkey.LocalFault, step.Outcome.LocalFault)
+		logkey.LocalFault, step.Outcome.LocalFault, logkey.GatewayPressure, step.Outcome.GatewayPressure)
 }
 
 // appendEmptyAnswerFields says what an answer the gateway read as empty actually carried. See race.md, "Reading an empty answer back".

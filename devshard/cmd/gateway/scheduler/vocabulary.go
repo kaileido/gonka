@@ -12,6 +12,7 @@ const (
 	GhostReasonStateDiverged       = "participant_state_diverged_no_send"
 	GhostReasonNoCompatibleRequest = "no_compatible_request_after_stale"
 	GhostReasonAbandoned           = "request_abandoned_before_dispatch"
+	GhostReasonPrepareFailed       = "nonce_spent_on_failed_prepare"
 )
 
 // ExhaustionReason is why routing will no longer pick an escrow, reported to the lifecycle that replaces it.

@@ -143,16 +143,19 @@ type attemptState struct {
 	errorPayload          string
 	capabilityRefused     bool
 
-	confirmed      bool
-	confirmedAt    int64
-	stateDivergent bool
-	localFault     bool
-	terminal       Terminal
-	lifecycle      Lifecycle
+	confirmed       bool
+	confirmedAt     int64
+	stateDivergent  bool
+	localFault      bool
+	gatewayPressure bool
+	terminal        Terminal
+	lifecycle       Lifecycle
 
 	upstreamStatus int
 	upstreamBody   string
 }
+
+type prefixHolder interface{ releasePrefix() }
 
 func runAttempt(ctx context.Context, spec AttemptSpec) {
 	defer spec.Classifier.Release()
@@ -177,6 +180,9 @@ func runAttempt(ctx context.Context, spec AttemptSpec) {
 		})
 	}
 
+	if holder, holds := spec.Sink.(prefixHolder); holds {
+		holder.releasePrefix()
+	}
 	state.completed = spec.Now()
 	if response != nil {
 		state.confirmed, state.confirmedAt = response.Confirmed(), response.ConfirmedAt()

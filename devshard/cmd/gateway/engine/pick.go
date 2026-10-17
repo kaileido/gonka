@@ -134,9 +134,10 @@ func (c *raceCoordinator) launch(assignment scheduler.Assignment, role, startRea
 	// The race holds the escrow for as long as its vote is owed, so the commit's own hold goes back.
 	assignment.ReleaseEscrow()
 	nonce := assignment.Nonce.Nonce()
-	writer := newWinnerWriter(nonce, c.request.Client, c.crown, c.done)
+	attemptCtx, cancelWithCause := context.WithCancelCause(c.drain.race)
+	cancel := func() { cancelWithCause(nil) }
+	writer := newWinnerWriter(nonce, c.request.Client, c.crown, c.done, newPrefixAllowance(c.deps.PrefixBudget, assignment.Host, cancelWithCause))
 	sink := &attemptSink{winner: writer}
-	attemptCtx, cancel := context.WithCancel(c.drain.race)
 
 	attempt := &liveAttempt{
 		nonce:       nonce,

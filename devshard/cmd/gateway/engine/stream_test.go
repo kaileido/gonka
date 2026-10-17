@@ -6,8 +6,6 @@ import (
 	"testing"
 
 	"go.uber.org/goleak"
-
-	"devshard/cmd/gateway/filters"
 )
 
 type recordingClient struct {
@@ -78,7 +76,7 @@ func TestWinnerWriterFlushesPrefixInOrderOnCrowning(t *testing.T) {
 	guardGoroutines(t)
 	desk := newCrownDesk(t, streamWinner)
 	client := &recordingClient{}
-	writer := newWinnerWriter(7, client, desk.requests, nil)
+	writer := newWinnerWriter(7, client, desk.requests, nil, testPrefix())
 
 	for _, chunk := range []string{"role\n\n", "comment\n\n"} {
 		if err := writer.Write([]byte(chunk), false); err != nil {
@@ -108,49 +106,6 @@ func TestWinnerWriterFlushesPrefixInOrderOnCrowning(t *testing.T) {
 }
 
 // Test flow:
-//  1. For each table case's prefix sizes (at the cap, one byte over, or a single oversized chunk), write prefix chunks up to or past `filters.MaxStreamCarryBytes`, then a content chunk that wins the crown.
-//  2. Assert the forwarded bytes keep only up to the cap's worth of prefix (or none, once the cap is exceeded) followed by the content chunk.
-func TestWinnerWriterCappedPrefixStillWins(t *testing.T) {
-	guardGoroutines(t)
-	tests := []struct {
-		name       string
-		prefixes   []int
-		wantPrefix int
-	}{
-		{name: "at cap", prefixes: []int{filters.MaxStreamCarryBytes / 2, filters.MaxStreamCarryBytes / 2}, wantPrefix: filters.MaxStreamCarryBytes},
-		{name: "one byte over cap", prefixes: []int{filters.MaxStreamCarryBytes, 1}, wantPrefix: 0},
-		{name: "single oversized chunk", prefixes: []int{filters.MaxStreamCarryBytes + 1}, wantPrefix: 0},
-	}
-	for _, testCase := range tests {
-		t.Run(testCase.name, func(t *testing.T) {
-			desk := newCrownDesk(t, streamWinner)
-			client := &recordingClient{}
-			writer := newWinnerWriter(1, client, desk.requests, nil)
-
-			for _, size := range testCase.prefixes {
-				if err := writer.Write(bytes.Repeat([]byte("p"), size), false); err != nil {
-					t.Fatalf("Write(prefix) = %v", err)
-				}
-			}
-			if err := writer.Write([]byte("content\n\n"), true); err != nil {
-				t.Fatalf("Write(content) = %v", err)
-			}
-
-			forwarded := client.forwarded()
-			if len(forwarded) != testCase.wantPrefix+len("content\n\n") {
-				t.Fatalf("forwarded %d bytes, want %d", len(forwarded), testCase.wantPrefix+len("content\n\n"))
-			}
-			if !bytes.HasSuffix(forwarded, []byte("content\n\n")) {
-				t.Fatal("client stream does not end at the crowning chunk")
-			}
-			if !bytes.Equal(forwarded[:testCase.wantPrefix], bytes.Repeat([]byte("p"), testCase.wantPrefix)) {
-				t.Fatal("flushed prefix is not the buffered bytes")
-			}
-		})
-	}
-}
-
-// Test flow:
 //  1. Build a `winnerWriter` over a crown desk that will suppress it.
 //  2. Write a mix of pre-content and content chunks.
 //  3. Assert nothing reached the client, its buffered prefix was dropped, and the crown was claimed once.
@@ -158,7 +113,7 @@ func TestWinnerWriterDiscardsLoserBytes(t *testing.T) {
 	guardGoroutines(t)
 	desk := newCrownDesk(t, streamSuppressed)
 	client := &recordingClient{}
-	writer := newWinnerWriter(2, client, desk.requests, nil)
+	writer := newWinnerWriter(2, client, desk.requests, nil, testPrefix())
 
 	chunks := []struct {
 		payload    string
@@ -195,7 +150,7 @@ func TestWinnerWriterAbandonsClaimWhenRaceEnds(t *testing.T) {
 	raceDone := make(chan struct{})
 	close(raceDone)
 	client := &recordingClient{}
-	writer := newWinnerWriter(3, client, make(chan crownRequest), raceDone)
+	writer := newWinnerWriter(3, client, make(chan crownRequest), raceDone, testPrefix())
 
 	if err := writer.Write([]byte("role\n\n"), false); err != nil {
 		t.Fatalf("Write(role) = %v", err)
@@ -219,7 +174,7 @@ func TestWinnerWriterAbandonForfeitsTheClient(t *testing.T) {
 	guardGoroutines(t)
 	desk := newCrownDesk(t, streamWinner)
 	client := &recordingClient{}
-	writer := newWinnerWriter(4, client, desk.requests, nil)
+	writer := newWinnerWriter(4, client, desk.requests, nil, testPrefix())
 
 	if err := writer.Write([]byte("role\n\n"), false); err != nil {
 		t.Fatalf("Write(role) = %v", err)
@@ -244,7 +199,7 @@ func TestWinnerWriterFlushOnlyAfterCrowning(t *testing.T) {
 	guardGoroutines(t)
 	desk := newCrownDesk(t, streamWinner)
 	client := &flushingClient{}
-	writer := newWinnerWriter(5, client, desk.requests, nil)
+	writer := newWinnerWriter(5, client, desk.requests, nil, testPrefix())
 
 	writer.Flush()
 	if client.flushes != 0 {
@@ -268,7 +223,7 @@ func TestWinnerWriterReportsClientFailure(t *testing.T) {
 	desk := newCrownDesk(t, streamWinner)
 	failure := errors.New("client gone")
 	client := &recordingClient{failure: failure}
-	writer := newWinnerWriter(6, client, desk.requests, nil)
+	writer := newWinnerWriter(6, client, desk.requests, nil, testPrefix())
 
 	if err := writer.Write([]byte("role\n\n"), false); err != nil {
 		t.Fatalf("Write(role) = %v", err)
@@ -285,7 +240,7 @@ func TestWinnerWriterReportsClientFailure(t *testing.T) {
 func TestWinnerWriterWithoutClientConsumesBytes(t *testing.T) {
 	guardGoroutines(t)
 	desk := newCrownDesk(t, streamWinner)
-	writer := newWinnerWriter(8, nil, desk.requests, nil)
+	writer := newWinnerWriter(8, nil, desk.requests, nil, testPrefix())
 
 	if err := writer.Write([]byte("role\n\n"), false); err != nil {
 		t.Fatalf("Write(role) = %v", err)
@@ -297,4 +252,8 @@ func TestWinnerWriterWithoutClientConsumesBytes(t *testing.T) {
 		t.Fatal("prefix outlived a crowned attempt with no client")
 	}
 	writer.Flush()
+}
+
+func testPrefix() prefixAllowance {
+	return newPrefixAllowance(newPrefixBudget(), "participant", func(error) {})
 }

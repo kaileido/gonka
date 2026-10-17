@@ -301,7 +301,7 @@ func (c *raceCoordinator) plan() deadlinePlan {
 			NonceFinished: attempt.nonceFinished,
 			EmptyStream:   attempt.outcome != nil && attempt.outcome.Terminal == TerminalEmptyStream,
 			LaunchTime:    attempt.launchTime,
-			SendTime:      attempt.sendTime,
+			ClockStart:    attempt.clockStart(),
 			ReceiptTime:   attempt.receiptTime,
 			FirstToken:    attempt.firstToken,
 			FirstContent:  attempt.firstContent,
@@ -326,6 +326,13 @@ func (c *raceCoordinator) plan() deadlinePlan {
 
 		RetryRuledOut: c.retryRuledOut,
 	}
+}
+
+func (attempt *liveAttempt) clockStart() time.Time {
+	if !attempt.sendTime.IsZero() || attempt.launchTime.IsZero() {
+		return attempt.sendTime
+	}
+	return attempt.launchTime.Add(maxCatchUpBeforeSend)
 }
 
 func (c *raceCoordinator) escalationRequest() EscalationRequest {

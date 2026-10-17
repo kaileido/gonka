@@ -16,6 +16,7 @@ func TestGhostKindReason(t *testing.T) {
 		{name: "cut off", kind: ghostCutOff, want: "participant_cut_off_no_send"},
 		{name: "state diverged", kind: ghostStateDiverged, want: "participant_state_diverged_no_send"},
 		{name: "exclude", kind: ghostExclude, want: "no_compatible_request_after_stale"},
+		{name: "prepare failed", kind: ghostPrepareFailed, want: "nonce_spent_on_failed_prepare"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

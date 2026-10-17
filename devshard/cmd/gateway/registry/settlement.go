@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -82,14 +83,18 @@ func (r *Registry) buildSettlement(escrowID string, session EscrowSession) (chai
 	}
 	nonce := session.Nonce()
 	snapshot := session.SnapshotState()
-	payload, err := state.BuildSettlement(escrowID, snapshot, session.Signatures()[nonce], nonce)
+	signatures, shortfall := session.SettlementSignatures(nonce)
+	if shortfall != nil {
+		signatures = session.SignaturesAt(nonce)
+	}
+	payload, err := state.BuildSettlement(escrowID, snapshot, signatures, nonce)
 	if err != nil {
 		return chain.SettlementInput{}, fmt.Errorf("building settlement for escrow %s: %w", escrowID, err)
 	}
 	hostStats := statsPerPresentSlot(payload.HostStats)
 	verified := *payload
 	verified.HostStats = hostStats
-	if unverifiable := settlementUnverifiable(verified, snapshot); unverifiable != nil && r.narrator != nil {
+	if unverifiable := cmp.Or(settlementUnverifiable(verified, snapshot), shortfall); unverifiable != nil && r.narrator != nil {
 		r.narrator.SettlementUnverifiable(escrowID, nonce, unverifiable)
 	}
 	hostStatsHash, err := state.ComputeHostStatsHash(hostStats)

@@ -46,22 +46,24 @@ type fakeSession struct {
 
 	heightSyncView heightsync.OperatorView
 
-	phase         atomic.Int32
-	sweepReport   user.SweepReport
-	onSweep       func()
-	nonce         atomic.Uint64
-	signatures    map[uint64]map[uint32][]byte
-	escrowState   types.EscrowState
-	finalizeErr   error
-	finalizeCalls atomic.Int64
-	onFinalize    func()
-	flushErr      error
-	flushCalls    atomic.Int64
-	closeErr      error
-	closeCalls    atomic.Int64
-	chainMaxNonce atomic.Uint32
-	onFlush       func()
-	prepare       func(user.ParamsForHost) (*user.PreparedInference, error)
+	phase                atomic.Int32
+	sweepReport          user.SweepReport
+	onSweep              func()
+	nonce                atomic.Uint64
+	signatures           map[uint64]map[uint32][]byte
+	settlementSignatures map[uint32][]byte
+	settlementShortfall  error
+	escrowState          types.EscrowState
+	finalizeErr          error
+	finalizeCalls        atomic.Int64
+	onFinalize           func()
+	flushErr             error
+	flushCalls           atomic.Int64
+	closeErr             error
+	closeCalls           atomic.Int64
+	chainMaxNonce        atomic.Uint32
+	onFlush              func()
+	prepare              func(user.ParamsForHost) (*user.PreparedInference, error)
 
 	pendingTxs       []*types.DevshardTx
 	pendingDiffErr   error
@@ -108,7 +110,17 @@ func (f *fakeSession) PrepareInferenceFn(chooser user.ParamsForHost) (*user.Prep
 	return f.prepare(chooser)
 }
 
-func (f *fakeSession) Signatures() map[uint64]map[uint32][]byte { return f.signatures }
+func (f *fakeSession) SettlementSignatures(nonce uint64) (map[uint32][]byte, error) {
+	if f.settlementShortfall != nil {
+		return nil, f.settlementShortfall
+	}
+	if f.settlementSignatures != nil {
+		return f.settlementSignatures, nil
+	}
+	return f.signatures[nonce], nil
+}
+
+func (f *fakeSession) SignaturesAt(nonce uint64) map[uint32][]byte { return f.signatures[nonce] }
 
 func (f *fakeSession) SignatureStatus() ([]user.SignatureStatusEntry, uint64, bool) {
 	return nil, 0, false

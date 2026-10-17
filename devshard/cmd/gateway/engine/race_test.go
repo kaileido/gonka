@@ -460,18 +460,19 @@ func newRaceFixture(policy EscalationPolicy, hosts int) *raceFixture {
 		reported: make(chan RaceOutcome, 4),
 	}
 	fixture.deps = raceDeps{
-		Picker:    fixture.picker,
-		Targets:   fixture.target,
-		Limiter:   fixture.limiter,
-		Perf:      fixture.perf,
-		Crown:     fixture.crown,
-		Snapshots: stubSnapshots{},
-		Policy:    policy,
-		Modes:     config.Modes{},
-		Classify:  func(string) streamClassifier { return markerClassifier{} },
-		Now:       fixture.clock.Now,
-		Timer:     func() raceTimer { return fixture.clock },
-		Report:    func(outcome RaceOutcome) { fixture.reported <- outcome },
+		PrefixBudget: newPrefixBudget(),
+		Picker:       fixture.picker,
+		Targets:      fixture.target,
+		Limiter:      fixture.limiter,
+		Perf:         fixture.perf,
+		Crown:        fixture.crown,
+		Snapshots:    stubSnapshots{},
+		Policy:       policy,
+		Modes:        config.Modes{},
+		Classify:     func(string) streamClassifier { return markerClassifier{} },
+		Now:          fixture.clock.Now,
+		Timer:        func() raceTimer { return fixture.clock },
+		Report:       func(outcome RaceOutcome) { fixture.reported <- outcome },
 	}
 	fixture.request = raceRequest{
 		Request: Request{
@@ -1033,12 +1034,14 @@ func TestRunRaceRewindsADivergentHostBeforeBlockingIt(t *testing.T) {
 }
 
 // Test flow:
-//  1. Start a race with a denied host and a rival, both scripted to report arrival before producing any content.
+//  1. Start a race with a denied host and a rival inside its receipt deadline, both scripted to report arrival before producing any content.
 //  2. Let both attempts arrive, then release the rival to produce its content.
 //  3. Assert the rival wins the race and it succeeded.
 //  4. Assert the client stream carries none of the denied host's bytes.
 func TestRunRaceSuppressesCrownForDeniedHostWhileARivalIsLive(t *testing.T) {
-	fixture := newRaceFixture(racePolicy(2), 2)
+	policy := racePolicy(2)
+	policy.ReceiptTimeout = time.Hour
+	fixture := newRaceFixture(policy, 2)
 	fixture.crown.denied["host-0"] = true
 	arrive := make(chan uint64, 2)
 	rivalRelease := make(chan struct{})
@@ -1267,13 +1270,13 @@ func TestPoCFactsAreDistinct(t *testing.T) {
 }
 
 func pendingAttempt(sendTime time.Time) EscalationAttempt {
-	return EscalationAttempt{LaunchTime: sendTime, SendTime: sendTime}
+	return EscalationAttempt{LaunchTime: sendTime, ClockStart: sendTime}
 }
 
 func streamingAttempt(sendTime, lastChunk time.Time) EscalationAttempt {
 	return EscalationAttempt{
 		LaunchTime:   sendTime,
-		SendTime:     sendTime,
+		ClockStart:   sendTime,
 		ReceiptTime:  sendTime,
 		FirstToken:   sendTime,
 		FirstContent: sendTime,
@@ -1282,7 +1285,7 @@ func streamingAttempt(sendTime, lastChunk time.Time) EscalationAttempt {
 }
 
 func failedAfterEscalating(sendTime time.Time) EscalationAttempt {
-	return EscalationAttempt{Done: true, Escalated: true, SendTime: sendTime, ReceiptTime: sendTime}
+	return EscalationAttempt{Done: true, Escalated: true, ClockStart: sendTime, ReceiptTime: sendTime}
 }
 
 // judgedPendingAttempt was already judged on its receipt deadline, so only an escalation can still arm on it.
@@ -1440,7 +1443,7 @@ func TestNextDeadlinePrecedence(t *testing.T) {
 					Done:          true,
 					Crowned:       true,
 					NonceFinished: true,
-					SendTime:      base,
+					ClockStart:    base,
 					ReceiptTime:   base,
 					Completed:     base,
 				},

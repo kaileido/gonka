@@ -38,6 +38,7 @@ func (s *SessionTimeouts) SettleTimeout(ctx context.Context, step TimeoutStep) (
 	vote := TimeoutVote{
 		Kind:          result.Reason,
 		Detail:        result.DetailReason,
+		Unjudged:      result.Outcome == user.TimeoutOutcomeVoteCollectionFailed,
 		VerifyRejects: result.VerifyRejects,
 		Completeness:  step.Proof.completeness(),
 	}

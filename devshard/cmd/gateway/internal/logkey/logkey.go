@@ -71,6 +71,7 @@ const (
 	NonceFinished     = "nonce_finished"
 	StateDivergent    = "state_divergent"
 	LocalFault        = "local_fault"
+	GatewayPressure   = "gateway_pressure"
 	PhaseAborted      = "phase_aborted"
 	ContentChunks     = "content_chunks"
 	StreamChunks      = "stream_chunks"

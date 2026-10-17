@@ -28,6 +28,22 @@ var (
 	ErrPinnedEscrowShort = errors.New("pinned escrow cannot pay this attempt")
 )
 
+// SpentNonceError is an Advance that committed Nonce and then failed, so the nonce is spent on nobody. See routing.md, "Ghost burns".
+type SpentNonceError struct {
+	Nonce   uint64
+	wrapped error
+}
+
+func NewSpentNonceError(nonce uint64, err error) *SpentNonceError {
+	return &SpentNonceError{Nonce: nonce, wrapped: err}
+}
+
+func (e *SpentNonceError) Error() string {
+	return fmt.Sprintf("nonce %d spent on a request that was not prepared: %v", e.Nonce, e.wrapped)
+}
+
+func (e *SpentNonceError) Unwrap() error { return e.wrapped }
+
 // EscrowsOutOfFundsError counts the escrows that refused to pay for one request before the fleet ran out. See routing.md, "Past every escrow that cannot pay".
 type EscrowsOutOfFundsError struct {
 	Refused int

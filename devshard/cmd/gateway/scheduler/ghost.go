@@ -12,6 +12,7 @@ const (
 	ghostStateDiverged
 	ghostExclude
 	ghostAbandoned
+	ghostPrepareFailed
 )
 
 func (k GhostKind) reason() string {
@@ -32,6 +33,8 @@ func (k GhostKind) reason() string {
 		return GhostReasonNoCompatibleRequest
 	case ghostAbandoned:
 		return GhostReasonAbandoned
+	case ghostPrepareFailed:
+		return GhostReasonPrepareFailed
 	default:
 		return ""
 	}

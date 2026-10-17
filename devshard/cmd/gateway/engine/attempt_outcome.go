@@ -11,6 +11,7 @@ import (
 )
 
 func (s *attemptState) classify(ctx context.Context, spec AttemptSpec, err error) {
+	defer s.classifyPrefixCancel(ctx)
 	if err != nil {
 		s.lifecycle.EscrowMissing = transport.IsUpstreamEscrowNotFound(err)
 		s.stateDivergent = errors.Is(err, ErrStateRootDivergence)
@@ -35,6 +36,16 @@ func (s *attemptState) classify(ctx context.Context, spec AttemptSpec, err error
 		s.terminal = TerminalBurnEmpty
 	default:
 		s.terminal = TerminalEmptyStream
+	}
+}
+
+func (s *attemptState) classifyPrefixCancel(ctx context.Context) {
+	switch cause := context.Cause(ctx); {
+	case errors.Is(cause, errPrefixGatewayPressure):
+		s.gatewayPressure = true
+		s.terminal = TerminalResponseTooLarge
+	case errors.Is(cause, errPrefixOverBudget):
+		s.terminal = TerminalResponseTooLarge
 	}
 }
 
@@ -154,8 +165,9 @@ func (s *attemptState) outcome(spec AttemptSpec) *AttemptOutcome {
 		ErrorPayload:  s.errorPayload,
 		MissProof:     s.missProof(spec),
 
-		StateDivergent: s.stateDivergent,
-		LocalFault:     s.localFault,
+		StateDivergent:  s.stateDivergent,
+		LocalFault:      s.localFault,
+		GatewayPressure: s.gatewayPressure,
 	}
 }
 

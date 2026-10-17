@@ -89,3 +89,20 @@ func TestFinalizeResumesAFinalizeARestartCutShort(t *testing.T) {
 		t.Fatalf("no signature quorum at nonce %d", session.Nonce())
 	}
 }
+
+// Test flow:
+//  1. Build an interrupted finalize session and share the chain's max nonce with it, as every phase snapshot does for a live escrow.
+//  2. Resume finalize on the session handle.
+//  3. Assert it completes and the phase reaches settlement: the nonce cap reserves the remaining nonces for finalizing, it must not refuse them.
+func TestFinalizeResumesUnderTheChainNonceCap(t *testing.T) {
+	handle, session := interruptedFinalizeSession(t)
+	session.SetChainMaxNonce(1700)
+
+	if err := handle.Finalize(context.Background()); err != nil {
+		t.Fatalf("Finalize = %v, want the interrupted rounds finished under the nonce cap", err)
+	}
+
+	if phase := handle.Phase(); phase != types.PhaseSettlement {
+		t.Fatalf("phase = %v, want settlement", phase)
+	}
+}

@@ -17,7 +17,7 @@ func benchAttempts(count int) []EscalationAttempt {
 	for i := range count {
 		attempts = append(attempts, EscalationAttempt{
 			LaunchTime:      start,
-			SendTime:        start,
+			ClockStart:      start,
 			ReceiptTime:     start.Add(200 * time.Millisecond),
 			FirstContentP75: time.Duration(i+1) * time.Second,
 		})
@@ -123,7 +123,7 @@ func (s *benchSink) Write(chunk []byte) (int, error) {
 // benchWriterChain is the whole per-chunk path a crowned attempt runs on the goroutine that writes to the client.
 func benchWriterChain(events chan AttemptEvent) (*attemptWriter, *benchSink) {
 	client := &benchSink{}
-	winner := newWinnerWriter(77, client, make(chan crownRequest), make(chan struct{}))
+	winner := newWinnerWriter(77, client, make(chan crownRequest), make(chan struct{}), testPrefix())
 	winner.verdict, winner.client, winner.withheld = streamWinner, client, nil
 	sink := &attemptSink{winner: winner}
 	classifier := contentGate{streamClassifier: &fakeClassifier{}, sink: sink}

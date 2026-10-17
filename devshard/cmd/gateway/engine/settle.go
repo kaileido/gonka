@@ -19,6 +19,7 @@ type TimeoutPoster interface {
 type TimeoutVote struct {
 	Kind          string
 	Detail        string
+	Unjudged      bool
 	VerifyRejects []string
 	Completeness  MissProofCompleteness
 }
@@ -174,7 +175,7 @@ func postTimeout(ctx context.Context, poster TimeoutPoster, step TimeoutStep, es
 	posted.VerifyRejects, posted.Completeness = vote.VerifyRejects, vote.Completeness
 	report(posted)
 	return step.Event.Kind == TimeoutKindRefused && posted.Kind == TimeoutKindRefused &&
-		posted.Action == TimeoutActionFailed && !escrowMissing && !errors.Is(err, user.ErrTimeoutNotApplied)
+		posted.Action == TimeoutActionFailed && !escrowMissing && (vote.Unjudged || !errors.Is(err, user.ErrTimeoutNotApplied))
 }
 
 // TimeoutOutcome classifies what a posted vote came back as, preferring the handler's own detail. See README, "Timeout votes".

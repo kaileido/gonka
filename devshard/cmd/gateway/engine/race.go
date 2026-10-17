@@ -68,6 +68,7 @@ type raceDeps struct {
 	DrainTimeout time.Duration
 	CancelGrace  time.Duration
 	Classify     func(participant string) streamClassifier
+	PrefixBudget *carryBudget
 	Now          func() time.Time
 	Timer        func() raceTimer
 	Journal      raceJournal
@@ -93,7 +94,10 @@ const (
 	triggerStall
 )
 
-const cancelledAttemptGrace = 2 * time.Second
+const (
+	cancelledAttemptGrace = 2 * time.Second
+	maxCatchUpBeforeSend  = time.Minute
+)
 
 // Written only by the coordinator: from AttemptEvents, and from its own deadline firings.
 type liveAttempt struct {

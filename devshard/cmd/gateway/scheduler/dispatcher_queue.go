@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"errors"
 	"fmt"
 	"time"
 )
@@ -78,10 +79,17 @@ func (d *dispatcher) drain() (time.Time, bool) {
 
 		offered = offer{}
 		prepared, err := d.session.Advance(decide)
+		var spent *SpentNonceError
 		switch {
 		case offered.escrowRetired:
 			d.failWaiting(ErrEscrowGone)
 			return time.Time{}, false
+		case errors.As(err, &spent):
+			d.burnSpentNonce(offered, spent)
+			if d.spendBurnBudget(&burnBudget) {
+				return time.Time{}, false
+			}
+			continue
 		case err != nil:
 			d.failAdvance(offered.decision, offered.taken, err)
 			return time.Time{}, false
@@ -109,10 +117,7 @@ func (d *dispatcher) drain() (time.Time, bool) {
 			d.recordGhost(burned)
 			offered.taken.releaseHold()
 			d.burnsInARow++
-			burnBudget--
-			if burnBudget <= 0 {
-				d.recordBudgetTrip()
-				d.failWaiting(ErrNoAvailableHost)
+			if d.spendBurnBudget(&burnBudget) {
 				return time.Time{}, false
 			}
 		case hold:
@@ -126,6 +131,27 @@ func (d *dispatcher) drain() (time.Time, bool) {
 			return time.Time{}, false
 		}
 	}
+}
+
+func (d *dispatcher) spendBurnBudget(budget *int) (tripped bool) {
+	*budget--
+	if *budget > 0 {
+		return false
+	}
+	d.recordBudgetTrip()
+	d.failWaiting(ErrNoAvailableHost)
+	return true
+}
+
+func (d *dispatcher) burnSpentNonce(offered offer, spent *SpentNonceError) {
+	d.giveBack(offered.taken)
+	requestID := d.burnedDuring(offered.refusedWaiter)
+	if served, serving := offered.decision.(serve); serving {
+		requestID = served.waiter.profile.RequestID
+		d.dequeue(served.waiter)
+		served.waiter.deliver(pickResult{err: fmt.Errorf("escrow %s: %w", d.escrowID, spent)})
+	}
+	d.recordGhost(Burn{Nonce: spent.Nonce, Participant: offered.taken.participant, Reason: ghostPrepareFailed.reason(), RequestID: requestID})
 }
 
 // sweepExhausted drops waiters no available participant can serve, instantly and without touching the nonce.

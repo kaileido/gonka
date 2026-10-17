@@ -13,6 +13,7 @@ const (
 	ExemptErrorStream
 	ExemptStateDivergent
 	ExemptLocalFault
+	ExemptGatewayPressure
 	ExemptLongResponse
 	ExemptPoCSuppressed
 	ExemptRequestTooLarge
@@ -55,7 +56,7 @@ func (o RaceOutcome) emptyStreamUnderPoCBypass(a AttemptOutcome) bool {
 
 // exemptOnBothLadders holds the rungs the verdict ladder shares with the sample ladder. See race.md, "The exemption ladder".
 func (o RaceOutcome) exemptOnBothLadders(a AttemptOutcome) bool {
-	return a.PhaseTransitionAborted || a.StateDivergent || a.LocalFault || o.longResponseExempt(a) || o.emptyStreamUnderPoCBypass(a)
+	return a.PhaseTransitionAborted || a.StateDivergent || a.LocalFault || a.GatewayPressure || o.longResponseExempt(a) || o.emptyStreamUnderPoCBypass(a)
 }
 
 // sampleExemption is the whole ladder of reasons an attempt contributes no perf sample. See README, "The exemption ladder".
@@ -73,6 +74,8 @@ func (o RaceOutcome) sampleExemption(a AttemptOutcome) SampleExemption {
 		return ExemptStateDivergent
 	case a.LocalFault:
 		return ExemptLocalFault
+	case a.GatewayPressure:
+		return ExemptGatewayPressure
 	case o.longResponseExempt(a):
 		return ExemptLongResponse
 	case o.emptyStreamUnderPoCBypass(a):

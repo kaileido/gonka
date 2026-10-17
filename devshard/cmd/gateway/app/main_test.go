@@ -1237,9 +1237,11 @@ func (s weightlessSession) HostParticipantKeyList() []string { return s.particip
 func (s weightlessSession) Nonce() uint64                    { return 1 }
 func (s weightlessSession) PublishedNonce() uint64           { return 1 }
 func (s weightlessSession) Phase() types.SessionPhase        { return types.PhaseActive }
-func (s weightlessSession) Signatures() map[uint64]map[uint32][]byte {
-	return map[uint64]map[uint32][]byte{}
+func (s weightlessSession) SettlementSignatures(uint64) (map[uint32][]byte, error) {
+	return nil, nil
 }
+
+func (s weightlessSession) SignaturesAt(uint64) map[uint32][]byte { return nil }
 
 func (s weightlessSession) SignatureStatus() ([]user.SignatureStatusEntry, uint64, bool) {
 	return nil, 0, false

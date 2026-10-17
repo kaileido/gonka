@@ -8,7 +8,7 @@ import (
 	"devshard/cmd/gateway/config"
 )
 
-// carryBudget bounds the bytes held for SSE reassembly at attempt, participant and global level. See race.md, "Classification and reassembly".
+// carryBudget bounds bytes held per attempt, participant and gateway: the SSE reassembly tail and the crown prefix each have one. See race.md, "Classification and reassembly".
 type carryBudget struct {
 	attemptLimit     int64
 	participantLimit int64
@@ -40,18 +40,26 @@ func (b *carryBudget) counterFor(participant string) *atomic.Int64 {
 	return counter
 }
 
+type budgetReservation int
+
+const (
+	budgetGranted budgetReservation = iota
+	budgetParticipantFull
+	budgetGlobalFull
+)
+
 // reserve charges the participant then the global pool, undoing the first when the second trips. See rules.md, "9. Bounded by construction".
-func (b *carryBudget) reserve(participant *atomic.Int64, n int64) bool {
+func (b *carryBudget) reserve(participant *atomic.Int64, n int64) budgetReservation {
 	if participant.Add(n) > b.participantLimit {
 		participant.Add(-n)
-		return false
+		return budgetParticipantFull
 	}
 	if b.global.Add(n) > b.globalLimit {
 		b.global.Add(-n)
 		participant.Add(-n)
-		return false
+		return budgetGlobalFull
 	}
-	return true
+	return budgetGranted
 }
 
 func (b *carryBudget) refund(participant *atomic.Int64, n int64) {
@@ -125,7 +133,7 @@ func (c *carryBuffer) replace(tail []byte) bool {
 }
 
 func (c *carryBuffer) charge(n int64) bool {
-	if int64(len(c.held))+n > c.budget.attemptLimit || !c.budget.reserve(c.participant, n) {
+	if int64(len(c.held))+n > c.budget.attemptLimit || c.budget.reserve(c.participant, n) != budgetGranted {
 		c.Release()
 		return false
 	}

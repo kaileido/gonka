@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"devshard/host"
 	"devshard/user"
 )
 
@@ -216,4 +217,76 @@ func TestARetryRoundReportsItsOwnStartedAndFinishedEvents(t *testing.T) {
 	require.Len(t, events, 2)
 	require.Equal(t, TimeoutActionStarted, events[0].Action)
 	require.Equal(t, TimeoutActionFailed, events[1].Action)
+}
+
+type unjudgedPoster struct {
+	failingPoster
+}
+
+func (p *unjudgedPoster) SettleTimeout(ctx context.Context, step TimeoutStep) (TimeoutVote, error) {
+	if p.postCount() == 0 {
+		p.mu.Lock()
+		p.posts++
+		p.mu.Unlock()
+		return TimeoutVote{Kind: TimeoutKindRefused, Unjudged: true}, fmt.Errorf("inference 7: %w: insufficient votes", user.ErrTimeoutNotApplied)
+	}
+	return p.failingPoster.SettleTimeout(ctx, step)
+}
+
+// Test flow:
+//  1. Settle an unsettled attempt through a poster whose first vote came back unjudged — the verifiers erred, so the group never weighed it — then fire the timer.
+//  2. Assert a retry is scheduled the first delay out: an unjudged vote is not the group's answer, however the session wrapped it.
+func TestAnUnjudgedRefusedVoteIsPostedAgain(t *testing.T) {
+	poster := &unjudgedPoster{}
+	races, harness := retryEngine(t, poster)
+	registration := races.admit()
+
+	races.settle(race(unsettledAttempt()), nil, registration)
+	harness.fire(0)
+	awaitPosts(t, &poster.failingPoster, 1)
+	awaitScheduled(t, harness, 2)
+
+	require.Equal(t, 30*time.Second, harness.scheduledDelays()[1], "the retry waits the first delay")
+}
+
+type outcomeHandler struct {
+	outcome string
+	detail  string
+}
+
+func (h outcomeHandler) HandleTimeout(context.Context, uint64, time.Time, *host.InferencePayload) (user.TimeoutResult, error) {
+	return user.TimeoutResult{Reason: TimeoutKindRefused, Outcome: h.outcome, DetailReason: h.detail}, fmt.Errorf("inference 7: %w", user.ErrTimeoutNotApplied)
+}
+
+func (outcomeHandler) HandleErrorMiss(context.Context, uint64, []byte, []byte) (user.TimeoutResult, error) {
+	return user.TimeoutResult{}, nil
+}
+
+func (outcomeHandler) FinishTxFor(uint64) []byte { return nil }
+
+func (outcomeHandler) TimeoutDeadline(uint64, time.Time) (string, time.Time) { return "", time.Time{} }
+
+// Test flow:
+//  1. Settle a vote through session timeouts whose handler ended it as a failed vote collection, a diff that landed without the timeout, then a weighed but short vote.
+//  2. Assert only the failed collection reads as unjudged: the other two are the group's answer.
+func TestSessionTimeoutsMarkAVoteTheGroupNeverWeighedAsUnjudged(t *testing.T) {
+	for _, testCase := range []struct {
+		outcome      string
+		detail       string
+		wantUnjudged bool
+	}{
+		{user.TimeoutOutcomeVoteCollectionFailed, "deadline_exceeded", true},
+		{"diff_send_failed", "timeout_not_applied", false},
+		{"insufficient_votes", "vote_weight_short", false},
+	} {
+		t.Run(testCase.outcome, func(t *testing.T) {
+			timeouts := &SessionTimeouts{handler: outcomeHandler{outcome: testCase.outcome, detail: testCase.detail}}
+
+			vote, _ := timeouts.SettleTimeout(context.Background(), TimeoutStep{Nonce: 7})
+
+			if vote.Unjudged != testCase.wantUnjudged {
+				t.Fatalf("Unjudged = %v, want %v", vote.Unjudged, testCase.wantUnjudged)
+			}
+		})
+	}
 }

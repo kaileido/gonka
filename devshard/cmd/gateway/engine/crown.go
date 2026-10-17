@@ -19,10 +19,14 @@ func (c *raceCoordinator) settleClaims() {
 		return
 	}
 	if c.winner == nil {
-		if c.rivalPossible() {
+		switch {
+		case c.rivalsMissedTheirDeadline():
+			c.crownWinner(c.byNonce[c.claims[0].Nonce], crownRivalsMissedDeadline)
+		case c.rivalPossible():
 			return
+		default:
+			c.crownWinner(c.byNonce[c.claims[0].Nonce], crownNoRival)
 		}
-		c.crownWinner(c.byNonce[c.claims[0].Nonce], crownNoRival)
 	}
 	for _, claim := range c.claims {
 		verdict := streamSuppressed
@@ -44,6 +48,30 @@ func (c *raceCoordinator) crownWinner(attempt *liveAttempt, reason string) {
 	})
 }
 
+func (c *raceCoordinator) rivalsMissedTheirDeadline() bool {
+	rivals := 0
+	for _, attempt := range c.attempts {
+		if attempt.done || c.holdsClaim(attempt.nonce) {
+			continue
+		}
+		missed := attempt.receiptDeadline == deadlineMissed || attempt.firstTokenDeadline == deadlineMissed
+		if !missed || !attempt.firstToken.IsZero() {
+			return false
+		}
+		rivals++
+	}
+	return rivals > 0
+}
+
+func (c *raceCoordinator) holdsClaim(nonce uint64) bool {
+	for _, claim := range c.claims {
+		if claim.Nonce == nonce {
+			return true
+		}
+	}
+	return false
+}
+
 // rivalPossible reports an attempt other than the held claimants that could still be crowned. See race.md, "Crown denial".
 func (c *raceCoordinator) rivalPossible() bool {
 	return c.pending > len(c.claims) || c.picking() || c.moreImmediate > 0
@@ -62,6 +90,8 @@ func (s *attemptSink) Write(chunk []byte) (int, error) {
 	return len(chunk), nil
 }
 func (s *attemptSink) Flush() { s.winner.Flush() }
+
+func (s *attemptSink) releasePrefix() { s.winner.releasePrefix() }
 
 // contentGate hands the sink the one fact an io.Writer signature cannot carry, for the Write that follows.
 type contentGate struct {

@@ -49,8 +49,9 @@ const (
 	RolePrimary     = "primary"
 	RoleSpeculative = "speculative"
 
-	crownFirstClaim = "first_claim"
-	crownNoRival    = "no_rival"
+	crownFirstClaim           = "first_claim"
+	crownNoRival              = "no_rival"
+	crownRivalsMissedDeadline = "rivals_missed_their_deadline"
 )
 
 // How an attempt ended, and what the client saw of it. Visibility is the only account of a race that
