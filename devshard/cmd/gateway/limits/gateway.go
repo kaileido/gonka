@@ -70,6 +70,16 @@ type modelCounter struct {
 	enforced    admission
 }
 
+func (c *modelCounter) take(inputTokens int64) {
+	c.inFlight++
+	c.inputTokens += inputTokens
+}
+
+func (c *modelCounter) give(inputTokens int64) {
+	c.inFlight = max(c.inFlight-1, 0)
+	c.inputTokens = max(c.inputTokens-inputTokens, 0)
+}
+
 // waiter is one blocked Acquire; its reason is what a timed-out wait reports. See capacity.md, "The queue".
 type waiter struct {
 	model    string
@@ -251,10 +261,8 @@ func (l *GatewayLimiter) queueTooDeepLocked(model string, admitted admission) bo
 }
 
 func (l *GatewayLimiter) takeLocked(counter *modelCounter, inputTokens int64) {
-	counter.inFlight++
-	counter.inputTokens += inputTokens
-	l.total.inFlight++
-	l.total.inputTokens += inputTokens
+	counter.take(inputTokens)
+	l.total.take(inputTokens)
 }
 
 // admissionFor treats each model's configured maximum as its own budget. See capacity.md, "The gateway limiter".
@@ -292,10 +300,8 @@ func (l *GatewayLimiter) releaseLocked(model string, inputTokens int64) {
 	if !ok {
 		return
 	}
-	counter.inFlight = max(counter.inFlight-1, 0)
-	counter.inputTokens = max(counter.inputTokens-inputTokens, 0)
-	l.total.inFlight = max(l.total.inFlight-1, 0)
-	l.total.inputTokens = max(l.total.inputTokens-inputTokens, 0)
+	counter.give(inputTokens)
+	l.total.give(inputTokens)
 }
 
 func (l *GatewayLimiter) counterLocked(model string) *modelCounter {

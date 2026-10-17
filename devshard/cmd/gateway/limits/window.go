@@ -1,10 +1,8 @@
 package limits
 
-import (
-	"time"
+import "devshard/cmd/gateway/internal/safemath"
 
-	"devshard/cmd/gateway/internal/safemath"
-)
+const growthEarnedAtPeakShare = 0.5
 
 type key struct {
 	participant string
@@ -38,17 +36,26 @@ func (w *window) reopen(tokens int64) {
 	w.peak = w.inflight
 }
 
-type hostState struct {
-	bounds                  ModelWindows
-	input                   window
-	output                  window
-	consecutiveCutoffFaults int
-	openUntil               time.Time
-	backoffCount            int
-	halfOpen                bool
-	lastUsed                time.Time
+func (w *window) raiseTo(floor int64) {
+	w.tokens = max(w.tokens, float64(floor))
 }
 
-func (s *hostState) idle() bool {
-	return s.input.inflight == 0 && s.output.inflight == 0
+func (w *window) lowerTo(ceiling int64) {
+	w.tokens = min(w.tokens, float64(ceiling))
+}
+
+func (w *window) growIfEarned(carried, step int64) {
+	if float64(w.peak) < w.tokens*growthEarnedAtPeakShare {
+		return
+	}
+	w.tokens = grownBy(w.tokens, carried, float64(step))
+	w.peak = w.inflight
+}
+
+func (w *window) narrow(factor float64, floor int64) {
+	if factor == 1 {
+		return
+	}
+	w.tokens = narrowedTo(w.tokens, factor, float64(floor))
+	w.peak = w.inflight
 }

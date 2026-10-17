@@ -79,8 +79,8 @@ func (l *ParticipantLimiter) Reconfigure(cfg ParticipantConfig) {
 	l.cfg = cfg
 	for tracked, state := range l.states {
 		state.bounds = l.windowsForLocked(tracked.participant, tracked.model)
-		state.input.tokens = max(state.input.tokens, float64(state.bounds.Input.Initial))
-		state.output.tokens = max(state.output.tokens, float64(state.bounds.Output.Initial))
+		state.input.raiseTo(state.bounds.Input.Initial)
+		state.output.raiseTo(state.bounds.Output.Initial)
 	}
 }
 
@@ -104,13 +104,13 @@ func (l *ParticipantLimiter) ObserveWeights(byModel map[string]map[string]float6
 		bounds := l.windowsForLocked(tracked.participant, tracked.model)
 		previous := state.bounds
 		state.bounds = bounds
-		state.input.tokens = max(state.input.tokens, float64(bounds.Input.Min))
+		state.input.raiseTo(bounds.Input.Min)
 		if bounds.Input.Initial < previous.Input.Initial {
-			state.input.tokens = min(state.input.tokens, float64(bounds.Input.Initial))
+			state.input.lowerTo(bounds.Input.Initial)
 		}
-		state.output.tokens = max(state.output.tokens, float64(bounds.Output.Min))
+		state.output.raiseTo(bounds.Output.Min)
 		if bounds.Output.Initial < previous.Output.Initial {
-			state.output.tokens = min(state.output.tokens, float64(bounds.Output.Initial))
+			state.output.lowerTo(bounds.Output.Initial)
 		}
 	}
 }
@@ -126,8 +126,8 @@ func (l *ParticipantLimiter) ObserveModels(contextTokens map[string]int64) {
 	maps.Copy(l.observedContext, contextTokens)
 	for tracked, state := range l.states {
 		state.bounds = l.windowsForLocked(tracked.participant, tracked.model)
-		state.input.tokens = max(state.input.tokens, float64(state.bounds.Input.Min))
-		state.output.tokens = max(state.output.tokens, float64(state.bounds.Output.Min))
+		state.input.raiseTo(state.bounds.Input.Min)
+		state.output.raiseTo(state.bounds.Output.Min)
 	}
 }
 
@@ -191,9 +191,7 @@ func (l *ParticipantLimiter) take(participant, model string, cost TokenCost, ove
 			return nil, refusedBy
 		}
 	}
-	if !state.openUntil.IsZero() {
-		state.halfOpen = true
-	}
+	state.probeIfCutOff()
 	state.input.take(max(cost.Input, 0))
 	state.output.take(max(cost.Output, 0))
 	return l.releaseFor(tracked, cost), AdmissionOpen

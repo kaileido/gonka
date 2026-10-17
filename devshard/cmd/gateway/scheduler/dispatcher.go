@@ -205,7 +205,11 @@ func (d *dispatcher) failAdvance(decision Decision, taken reservation, err error
 	if errors.Is(err, types.ErrInsufficientBalance) && d.onExhausted != nil && d.escrowIsSpent() {
 		d.onExhausted(d.escrowID, ExhaustionInsufficientBalance)
 	}
-	d.failWaiting(fmt.Errorf("escrow %s: advancing nonce: %w", d.escrowID, err))
+	if errors.Is(err, types.ErrInsufficientBalance) {
+		d.failWaiting(fmt.Errorf("escrow %s: advancing nonce: %w", d.escrowID, err))
+		return
+	}
+	d.failWaiting(fmt.Errorf("escrow %s: %w: %w", d.escrowID, ErrEscrowAdvanceFailed, err))
 }
 
 // escrowIsSpent asks whether the escrow can still pay for the largest request its model's hosts accept. See capacity.md, "The balance floor".

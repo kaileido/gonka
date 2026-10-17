@@ -5,7 +5,7 @@ Three limiters, each answering a different question.
 ## What it owns
 
 - **The gateway limiter** (`gateway.go`) — a FIFO admission queue over concurrent requests and in-flight input tokens, per model. Refuses with a typed rejection that names which cap turned the request away, so an operator is not left a wall of identical statuses.
-- **The participant limiter** (`participant.go`, `pricing.go`, `window.go`, `reaction.go`, `report.go`, `congestion.go`) — two congestion windows per `{participant, model}` and a cut-off over them: one window over the input tokens an attempt must prefill, one over the output tokens it reserved. It narrows on host-attributable failures, missed deadlines and latency past the host's own best, widens on answers that arrive in time, and half-opens after a cut-off to admit one real request rather than waiting for a probe. `Acquire` hands back a lease that releases exactly what it took, exactly once.
+- **The participant limiter** (`participant.go`, `pricing.go`, `window.go`, `host_state.go`, `reaction.go`, `report.go`, `congestion.go`) — two congestion windows per `{participant, model}` and a cut-off over them: one window over the input tokens an attempt must prefill, one over the output tokens it reserved. It narrows on host-attributable failures, missed deadlines and latency past the host's own best, widens on answers that arrive in time, and half-opens after a cut-off to admit one real request rather than waiting for a probe. `Acquire` hands back a lease that releases exactly what it took, exactly once.
 - **The capacity model** (`capacity.go`, `weights.go`) — scales the caps by the host weight the chain reports for each model, so a shard that has lost half its hosts admits proportionally less.
 
 ## Boundaries
@@ -67,11 +67,11 @@ A verdict is read once, into the tier it narrows by, the window it blames and wh
 ## Additive increase
 
 - **Growth is judged on peak in-flight since the last adjustment, not the live count.** The engine releases an attempt's lease before it announces the attempt is done and reports its verdict afterwards, so a live read would see the tokens already given back and refuse to grow a window that was genuinely saturated. The peak is set when the tokens are taken and nothing can undo it, which makes the decision independent of which of the two runs first.
-- **Each window is judged and credited on its own.** A window widens only when its own peak reached half its own size, by the tokens its own dimension carried (`reaction.go`, `ParticipantLimiter.growLocked`).
+- **Each window is judged and credited on its own.** A window widens only when its own peak reached half its own size, by the tokens its own dimension carried (`window.go`, `window.growIfEarned`).
 - **A window grows by one step per answer that used it** — one request of the model's worth of tokens, whatever the answer carried. A wide window earns the same rung as a narrow one and so takes proportionally longer to widen by half (`congestion.go`, `grownBy`).
 - **Nothing caps a window.** Where it stops is what the host's congestion signals say; the configuration names a floor and a starting size and no ceiling.
 - **A narrowing stops at `Min`, and never below one token.** A host a run of bad answers narrowed still takes one request of that model, and a half-open cut-off still admits exactly one probe.
-- **A narrowing restarts the peak of the window it applies to**, and only that one: the growth that follows has to be earned against the narrower window rather than credited to the width the host has just lost (`reaction.go`, `narrowWindow`).
+- **A narrowing restarts the peak of the window it applies to**, and only that one: the growth that follows has to be earned against the narrower window rather than credited to the width the host has just lost (`window.go`, `window.narrow`).
 
 ## The cut-off, the peek and the sweep
 

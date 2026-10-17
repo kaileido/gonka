@@ -135,6 +135,46 @@ func TestARequestAnEscrowCannotPayForIsOfferedToAnotherEscrow(t *testing.T) {
 }
 
 // Test flow:
+//  1. Build a `busyEscrowHarness` and make `escrowA` fail advancing with a storage error of its own session.
+//  2. Pick an escrow for a request.
+//  3. Assert the pick succeeds on `escrowB`: a session that cannot advance is "this escrow, right now", and the request never chose it.
+func TestARequestWhoseEscrowCannotAdvanceIsOfferedToAnotherEscrow(t *testing.T) {
+	test := busyEscrowHarness(t, escrowA, escrowB)
+	test.sessions[escrowA].failAdvancing(errors.New("append diff: database is locked"))
+
+	assignment, err := test.scheduler.Pick(context.Background(), RequestProfile{Model: modelA})
+
+	if err != nil {
+		t.Fatalf("Pick: %v", err)
+	}
+	if assignment.Escrow != escrowB {
+		t.Fatalf("assignment escrow = %q, want the request carried to %q", assignment.Escrow, escrowB)
+	}
+}
+
+// Test flow:
+//  1. Build a `busyEscrowHarness` and make both escrows fail advancing with a storage error of their own sessions.
+//  2. Pick an escrow for a request.
+//  3. Assert the pick fails with `ErrEscrowAdvanceFailed` and both escrows were reached: the second round's failure is the answer.
+func TestTwoEscrowsThatCannotAdvanceAnswerTheAdvanceFailure(t *testing.T) {
+	test := busyEscrowHarness(t, escrowA, escrowB)
+	for _, escrowID := range []string{escrowA, escrowB} {
+		test.sessions[escrowID].failAdvancing(errors.New("append diff: database is locked"))
+	}
+
+	_, err := test.scheduler.Pick(context.Background(), RequestProfile{Model: modelA})
+
+	if !errors.Is(err, ErrEscrowAdvanceFailed) {
+		t.Fatalf("Pick = %v, want ErrEscrowAdvanceFailed", err)
+	}
+	for _, escrowID := range []string{escrowA, escrowB} {
+		if !test.reached(t, escrowID) {
+			t.Fatalf("escrow %s was never asked", escrowID)
+		}
+	}
+}
+
+// Test flow:
 //  1. Build a `busyEscrowHarness` and make both escrows fail advancing with `types.ErrInsufficientBalance`.
 //  2. Pick an escrow for a request.
 //  3. Assert the pick fails with `types.ErrInsufficientBalance`.
@@ -381,6 +421,28 @@ func TestABusyRegularDoesNotSpendTheReserve(t *testing.T) {
 	}
 	if test.reached(t, escrowB) {
 		t.Fatal("the busy retry routed to the reserve")
+	}
+	if taken := test.reserves.recorded(); len(taken) != 0 {
+		t.Fatalf("reserves taken = %v, want none", taken)
+	}
+}
+
+// Test flow:
+//  1. Build a scheduler with one regular escrow whose session fails advancing with a storage error and one reserve.
+//  2. Pick for a request.
+//  3. Assert the caller hears the advance failure rather than "no escrow capacity", and the reserve is neither dispatched to nor taken.
+func TestAnAdvanceFailureWithNoOtherRegularKeepsItsOwnAnswer(t *testing.T) {
+	test := busyEscrowHarness(t, escrowA, escrowB)
+	test.markReserve(escrowB)
+	test.sessions[escrowA].failAdvancing(errors.New("append diff: database is locked"))
+
+	_, err := test.scheduler.Pick(context.Background(), RequestProfile{Model: modelA})
+
+	if !errors.Is(err, ErrEscrowAdvanceFailed) {
+		t.Fatalf("Pick = %v, want ErrEscrowAdvanceFailed", err)
+	}
+	if test.reached(t, escrowB) {
+		t.Fatal("the advance failure routed to the reserve")
 	}
 	if taken := test.reserves.recorded(); len(taken) != 0 {
 		t.Fatalf("reserves taken = %v, want none", taken)

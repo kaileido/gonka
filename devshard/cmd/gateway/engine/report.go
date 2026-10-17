@@ -38,9 +38,7 @@ func (c *raceCoordinator) apply(event AttemptEvent) {
 }
 
 func (c *raceCoordinator) complete(attempt *liveAttempt, event AttemptEvent) {
-	attempt.done, attempt.completed = true, event.At
-	attempt.outcome, attempt.lifecycle = event.Outcome, event.Lifecycle
-	attempt.nonceFinished = c.target.NonceFinished(attempt.nonce)
+	attempt.finishWith(event, c.target.NonceFinished(attempt.nonce))
 	c.retire(attempt)
 
 	if attempt.outcome == nil {

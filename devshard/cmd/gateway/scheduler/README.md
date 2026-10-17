@@ -97,6 +97,7 @@ The credit is returned to a participant that served since it was taken — but o
 | `ErrEscrowBusy` | every candidate escrow's dispatch queue is full (a pinned request: its escrow's): the escrows are sound, the caller arrived faster than they can serve | yes |
 | `ErrDispatcherStopped` | the escrow's dispatcher shut down before the request was assigned a nonce; retryable | yes |
 | `ErrEscrowGone` | a request's pinned escrow no longer accepts new inferences | no |
+| `ErrEscrowAdvanceFailed` | the escrow's session could not advance its nonce for a reason of its own, such as a storage write; every waiter in its queue gets it, and an unpinned request is routed once more to another escrow | yes |
 | `SpentNonceError` | the escrow committed a nonce for this request and then failed to prepare it; it names the nonce and wraps the session's error, and the nonce is burned as `nonce_spent_on_failed_prepare` | yes |
 | `ErrPinnedEscrowShort` | a pinned pick (a hedge, a retry, or a client naming the escrow) its escrow's balance cannot pay; it wraps `ErrNoEscrowCapacity` and `ErrInsufficientBalance` and never marks the escrow | a settling inference |
 

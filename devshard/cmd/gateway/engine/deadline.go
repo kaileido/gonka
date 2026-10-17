@@ -347,8 +347,7 @@ func (c *raceCoordinator) abandonCancelled() {
 		if attempt.done {
 			continue
 		}
-		attempt.done, attempt.abandoned, attempt.completed = true, true, now
-		attempt.nonceFinished = c.target.NonceFinished(attempt.nonce)
+		attempt.abandon(now, c.target.NonceFinished(attempt.nonce))
 		c.retire(attempt)
 		c.traceUnreported(attempt, ReasonAbandonedAfterCancel)
 	}

@@ -27,10 +27,7 @@ func (l *ParticipantLimiter) ClearQuarantine(participant string) bool {
 		}
 		state.input.reopen(state.bounds.Input.Initial)
 		state.output.reopen(state.bounds.Output.Initial)
-		state.consecutiveCutoffFaults = 0
-		state.openUntil = time.Time{}
-		state.backoffCount = 0
-		state.halfOpen = false
+		state.clearBreaker()
 		cleared = true
 	}
 	return cleared
@@ -87,62 +84,31 @@ func (l *ParticipantLimiter) CountRefusalIfIdle(participant, model string) {
 
 // growLocked widens each window whose peak earned it. See README.md, "Additive increase".
 func (l *ParticipantLimiter) growLocked(state *hostState, carried TokenCost) {
-	if float64(state.input.peak) >= state.input.tokens/2 {
-		state.input.tokens = grownBy(state.input.tokens, carried.Input, float64(state.bounds.Input.Step))
-		state.input.peak = state.input.inflight
-	}
-	if float64(state.output.peak) >= state.output.tokens/2 {
-		state.output.tokens = grownBy(state.output.tokens, carried.Output, float64(state.bounds.Output.Step))
-		state.output.peak = state.output.inflight
-	}
+	state.input.growIfEarned(carried.Input, state.bounds.Input.Step)
+	state.output.growIfEarned(carried.Output, state.bounds.Output.Step)
 }
 
 // narrowLocked applies one signal's factors to the two windows.
 func (l *ParticipantLimiter) narrowLocked(state *hostState, by narrowing) {
-	narrowWindow(&state.input, by.input, state.bounds.Input.Min)
-	narrowWindow(&state.output, by.output, state.bounds.Output.Min)
-}
-
-// narrowWindow restarts the peak of a window it actually moved. See README.md, "Additive increase".
-func narrowWindow(w *window, factor float64, floor int64) {
-	if factor == 1 {
-		return
-	}
-	w.tokens = narrowedTo(w.tokens, factor, float64(floor))
-	w.peak = w.inflight
+	state.input.narrow(by.input, state.bounds.Input.Min)
+	state.output.narrow(by.output, state.bounds.Output.Min)
 }
 
 func (l *ParticipantLimiter) applyBreakerLocked(state *hostState, effect breakerEffect, participant, model string, now time.Time) {
 	switch effect {
 	case breakerRecovers:
-		state.consecutiveCutoffFaults = 0
-		if !state.halfOpen {
+		if !state.recoverBreaker() {
 			return
-		}
-		state.halfOpen = false
-		state.openUntil = time.Time{}
-		if state.backoffCount > 0 {
-			state.backoffCount--
 		}
 		if l.narrator != nil {
 			l.narrator.HostCutOffLifted(participant, model, state.backoffCount)
 		}
 	case breakerCounts:
-		if now.Before(state.openUntil) {
-			return
-		}
-		state.consecutiveCutoffFaults++
-		if state.consecutiveCutoffFaults < int(l.cfg.AfterFailures) && !state.halfOpen {
+		if !state.recordCutoffFault(now, int(l.cfg.AfterFailures)) {
 			return
 		}
 		capped := min(time.Duration(float64(l.cfg.BaseOpen)*math.Pow(cutoffBackoffMultiplier, float64(state.backoffCount))), l.cfg.MaxOpen)
-		state.openUntil = now.Add(capped + l.jitter(capped))
-		if capped < l.cfg.MaxOpen {
-			state.backoffCount++
-		}
-		reason := cutoffReason(state.halfOpen)
-		state.halfOpen = false
-		state.consecutiveCutoffFaults = 0
+		reason := state.openBreaker(now.Add(capped+l.jitter(capped)), capped < l.cfg.MaxOpen)
 		if l.narrator != nil {
 			l.narrator.HostCutOff(participant, model, reason, state.backoffCount, state.openUntil.Sub(now))
 		}

@@ -374,3 +374,17 @@ func (c *raceCoordinator) release() bool {
 	c.handedOff = true
 	return true
 }
+
+func (attempt *liveAttempt) finishWith(event AttemptEvent, nonceFinished bool) {
+	attempt.markDone(event.At, nonceFinished)
+	attempt.outcome, attempt.lifecycle = event.Outcome, event.Lifecycle
+}
+
+func (attempt *liveAttempt) abandon(at time.Time, nonceFinished bool) {
+	attempt.markDone(at, nonceFinished)
+	attempt.abandoned = true
+}
+
+func (attempt *liveAttempt) markDone(at time.Time, nonceFinished bool) {
+	attempt.done, attempt.completed, attempt.nonceFinished = true, at, nonceFinished
+}

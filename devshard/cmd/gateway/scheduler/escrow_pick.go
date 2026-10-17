@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"errors"
 	"fmt"
 	"math"
 
@@ -15,17 +16,33 @@ const (
 	unboundedAttemptsToFund         = 2
 )
 
-// avoidReason is why one round of a pick steps over an escrow; only a busy one keeps the reserves shut.
+// avoidReason is why one round of a pick steps over an escrow; only one that could not pay opens the reserves.
 type avoidReason int
 
 const (
-	avoidedOutOfFunds avoidReason = iota + 1
+	avoidedNone avoidReason = iota
+	avoidedOutOfFunds
 	avoidedHostsBusy
 	avoidedQueueFull
 	avoidedRetired
+	avoidedAdvanceFailed
 )
 
 type avoidedEscrows map[string]avoidReason
+
+func (reason avoidReason) opensReserves() bool {
+	return reason == avoidedOutOfFunds
+}
+
+func (reason avoidReason) secondAnswerStands(retryErr error) bool {
+	switch reason {
+	case avoidedRetired:
+		return true
+	case avoidedAdvanceFailed:
+		return !errors.Is(retryErr, ErrNoEscrowCapacity)
+	}
+	return false
+}
 
 func (s *Scheduler) pickEscrow(profile RequestProfile, snapshot chain.PhaseSnapshot, queued *waiter, avoided avoidedEscrows) (Escrow, error) {
 	candidates := s.escrows.Candidates(profile.Model)
@@ -136,10 +153,10 @@ func (s *Scheduler) rankCandidates(candidates []Escrow, ranking escrowRanking, r
 		}
 		result.admitted++
 		if reason, avoided := ranking.avoided[candidate.ID]; avoided {
-			if reason == avoidedHostsBusy || reason == avoidedQueueFull || reason == avoidedRetired {
-				result.passedOverForHosts++
-			} else {
+			if reason.opensReserves() {
 				result.moneyDeclined = true
+			} else {
+				result.passedOverForHosts++
 			}
 			continue
 		}

@@ -21,6 +21,8 @@ var (
 
 	ErrEscrowGone = errors.New("pinned escrow gone")
 
+	ErrEscrowAdvanceFailed = errors.New("nonce advance failed")
+
 	ErrPinnedEscrowShort = errors.New("pinned escrow cannot pay this attempt")
 )
 
