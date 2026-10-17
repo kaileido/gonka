@@ -11,7 +11,7 @@ Everything a client sends is normalised here before it reaches a host, and every
 - `messages.go`, `messages_validate.go` — message hygiene, which is separate from parameter rules because a message is a nested document: one file rewrites the array, the other decides whether what is left is admissible.
 
 **The response side.**
-- `fold.go` — `BodyFolder` folds the host's SSE stream into one JSON body **as chunks arrive**, stripping the fields the client must not see before merging rather than after. A client that did not ask for logprobs never accumulates them.
+- `fold.go` — `BodyFolder` folds the host's SSE stream into one JSON body **as chunks arrive**, stripping the fields the client must not see before merging rather than after. A client that did not ask for logprobs never accumulates them. `fold_template.go` appends the text of a chunk that differs from the last merged one only in its content, without decoding it.
 - `stream.go`, `sse.go`, `stream_chunks.go` — the rewriter for a streaming client, which does the same strip per event on the way out, over the SSE framing primitives and the fold that serves a whole completion as chunks.
 - `response.go` — which fields are stripped, and which a client can ask back.
 - `cacheable.go` — the one walk that decides whether a reply may be stored: what it failed with, and whether its answer finished.
@@ -111,7 +111,7 @@ Collection rules:
 
 What the gateway forces, and what it strips:
 
-- `return_token_ids` → `true`, forced for validation and paired with a response-side strip, a pairing a test enforces.
+- `return_token_ids` is stripped: the executing host sets it itself (`common/completionapi.ModifyRequestBodyWithLogprobsMode`) and drops the token ids from its answer, and the response-side strip still removes any that arrive.
 - `logprobs` and `top_logprobs` are **carried, not forced**: a non-boolean or negative ask is rejected, and a width above `completionapi.ForcedTopLogprobs` is capped to it. The host re-pins that same constant on every executed request, so overwriting the client here would buy nothing and lose what it asked for. A narrower ask is accepted but not honoured — the host executes at the pinned width and the answer carries it.
 - `n` is replaced with `1` when present: the reservation budgets one `max_tokens` worth of output, and `n` choices can produce `n` times what it signed for.
 - Silently stripped: `service_tier`, `store`, `provider`, `plugins`, `prompt_cache_key`, `cache_key`, `extra_headers`, `thinking_config`, `think`, `stop_token_ids`.
@@ -346,6 +346,14 @@ Every host-controlled field is carried as a raw message. Decoding one into a typ
 `BodyFolder` is the incremental fold: it strips per event as chunks arrive, then merges, so a client that did not ask for logprobs never accumulates them. `assembleSSEBody` in `assemble.go` is the whole-body fold, the reference implementation the incremental one is verified against. Both share the merge.
 
 `Held()` reports what the folder is holding so a shared memory budget can watch it. Merging collapses what the events repeat, so the accumulated size is *measured* rather than summed. The trigger for a re-measure is bytes (`foldMeasureBytes`, 256 KiB) rather than events: one event can carry a megabyte, and a count-based interval would leave that much unaccounted while the cap and the shared budget read low. `measure` re-encodes the accumulator without finalising it, because finalising rewrites the deltas the fold is still appending to.
+
+### The content template
+
+A host restates every chunk whole, so consecutive plain chunks differ only in their content text. After each full merge the folder keeps the chunk's bytes on either side of its content literal (`fold_template.go`), and a later event that carries the same bytes around a single string literal appends that text to the merged delta without being decoded. That merge is the one the full path would have run: every other field restates what the merge already holds.
+
+The template is kept only when that holds: one choice with a numeric index, no accumulating field on it but `delta`, a delta of strings whose only growing text is `content`, no other growing text field that is not null, exactly one `content` key in the payload, escaped spellings included, and room left under `maxIndexedElements`. Anything else, a literal with escapes the standard decoder reads differently included, falls back to the full decode, so the template only skips work. `FuzzContentTemplateAgreesWithTheFullMerge` pins that against the same folder with the template cleared before every event.
+
+On a plain 512-chunk stream the fold drops from about 1.7 ms and 1.36 MB to about 83 µs and 42 KB (`BenchmarkBodyFolderPlainContentStream`). A stream whose chunks carry logprobs the client did not ask for never matches and pays the full decode. A host strips them before sending unless the client asked for them (`common/completionapi/responseprocessor.go`, `prepareBody`).
 
 ### What the fold returns
 

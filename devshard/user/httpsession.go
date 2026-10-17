@@ -50,7 +50,7 @@ type HTTPSessionConfig struct {
 	// receipt/Finish compose. Zero keeps the session default (5m). The
 	// gateway sets this from DEVSHARD_QUIET_SETTLE_DELAY (testenv: 5s).
 	QuietSettleDelay time.Duration
-	// ExtraClientConfig: only its HeightSync fields reach each host client.
+	// ExtraClientConfig: its HeightSync fields reach each host client; the whole config reaches SelectTransport.
 	ExtraClientConfig *transport.ClientConfig
 	// Heartbeat overlays compiled height-sync scheduling knobs. Nil keeps defaults.
 	Heartbeat *heightsync.HeartbeatConfig

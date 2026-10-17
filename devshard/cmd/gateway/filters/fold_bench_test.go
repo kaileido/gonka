@@ -27,6 +27,22 @@ func BenchmarkBodyFolderProductionStream(b *testing.B) {
 	}
 }
 
+func BenchmarkBodyFolderPlainContentStream(b *testing.B) {
+	events := plainContentStream(512)
+	b.ReportAllocs()
+	for b.Loop() {
+		folder := NewBodyFolder(LogprobIntent{})
+		for _, event := range events {
+			if _, err := folder.Write(event); err != nil {
+				b.Fatal(err)
+			}
+		}
+		if len(folder.Body()) == 0 {
+			b.Fatal("empty body")
+		}
+	}
+}
+
 func BenchmarkBodyFolderTestdataStreams(b *testing.B) {
 	entries, err := os.ReadDir(filepath.Join("testdata", "sse"))
 	if err != nil {

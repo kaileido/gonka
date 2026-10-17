@@ -478,13 +478,13 @@ func copySessionStorage(sourceDir, targetDir string) error {
 	return nil
 }
 
+const chatCompressMinBytes = 4 << 10
+
 func peerRPCClientConfig(clientConfig *transport.ClientConfig, adoption *transport.PeerRPCAdoption) *transport.ClientConfig {
-	if adoption == nil {
-		return clientConfig
-	}
 	if clientConfig == nil {
 		clientConfig = &transport.ClientConfig{}
 	}
 	clientConfig.RPCAdoption = adoption
+	clientConfig.ChatCompressMinBytes = chatCompressMinBytes
 	return clientConfig
 }

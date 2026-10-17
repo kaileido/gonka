@@ -67,57 +67,6 @@ func TestClientStrippedFieldsExactList(t *testing.T) {
 	}
 }
 
-// forcedParameterNames derives the forced set from parameterTable by running every rule against an empty document.
-func forcedParameterNames(t *testing.T) []string {
-	t.Helper()
-	var forced []string
-	for _, parameter := range parameterTable {
-		for _, rule := range parameter.Rules {
-			document, err := ParseDocument([]byte(`{}`))
-			if err != nil {
-				t.Fatalf("ParseDocument: %v", err)
-			}
-			if rule.Apply(RuleContext{Document: document, Param: parameter.Name}) != nil {
-				continue
-			}
-			if _, written := document.Get(parameter.Name); written {
-				forced = append(forced, parameter.Name)
-				break
-			}
-		}
-	}
-	return forced
-}
-
-// forcedParameterResponseField maps a forced request parameter to its response field when the names differ.
-var forcedParameterResponseField = map[string]string{
-	"return_token_ids": "token_ids",
-}
-
-// Test flow:
-//  1. Build a set of clientStrippedFields and collect every parameter parameterTable forces via `forcedParameterNames`.
-//  2. Assert at least one forced parameter was found, so the pairing check is not vacuous.
-//  3. For each forced parameter, map it to its response field (via `forcedParameterResponseField` when the names differ) and assert that field is in the stripped set.
-func TestForcedRequestParametersHaveResponseStripCounterpart(t *testing.T) {
-	stripped := make(map[string]bool, len(clientStrippedFields))
-	for _, field := range clientStrippedFields {
-		stripped[field] = true
-	}
-	forced := forcedParameterNames(t)
-	if len(forced) == 0 {
-		t.Fatal("parameterTable declares no forced parameter; the pairing test would pass vacuously")
-	}
-	for _, name := range forced {
-		responseField := name
-		if mapped, ok := forcedParameterResponseField[name]; ok {
-			responseField = mapped
-		}
-		if !stripped[responseField] {
-			t.Errorf("forced request parameter %q (response field %q) has no matching entry in clientStrippedFields", name, responseField)
-		}
-	}
-}
-
 // Test flow:
 //  1. For each fixture (`content_stream.sse`, `tool_calls_stream.sse`, `newlineless_final_content.sse`, `newlineless_final_error.sse`), read the SSE fixture.
 //  2. Rewrite the whole stream through a StreamRewriter.

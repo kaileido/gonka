@@ -115,7 +115,8 @@ type PeerConnConfig struct {
 	H2PingTimeout time.Duration
 	// GRPC uses connect.WithGRPC on the h2 origin only. HTTP/1.1 fallback
 	// stays Connect. Ignored when H2URL is empty.
-	GRPC bool
+	GRPC                 bool
+	ChatCompressMinBytes int
 }
 
 func (c PeerConnConfig) version() string {

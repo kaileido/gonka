@@ -10,6 +10,7 @@ func FuzzNormalizeRequestHoldsItsContract(f *testing.F) {
 		`{"model":"m","messages":[{"role":"user","content":"hi"}]}`,
 		`{"model":"m","messages":[],"stream":true,"max_tokens":10}`,
 		`{"model":"m","messages":[],"logprobs":false,"top_logprobs":0}`,
+		`{"model":"m","messages":[],"return_token_ids":false}`,
 		`{"model":"m","messages":[],"structured_outputs":{"regex":"a+"}}`,
 		`{"model":"m","messages":[],"n":3,"seed":9007199254740993}`,
 		`{"model":"m","messages":[],"chat_template_kwargs":{"chat_template":"{{evil}}"}}`,
@@ -33,10 +34,11 @@ func FuzzNormalizeRequestHoldsItsContract(f *testing.F) {
 		if err := json.Unmarshal(result.Body, &decoded); err != nil {
 			t.Fatalf("accepted body does not decode as an object: %s: %v", result.Body, err)
 		}
-		for field, forced := range map[string]any{"logprobs": true, "return_token_ids": true} {
-			if got, held := decoded[field]; held && got != forced {
-				t.Fatalf("client kept control of %q: got %v, want the forced %v, from %q", field, got, forced, body)
-			}
+		if got, held := decoded["logprobs"]; held && got != true {
+			t.Fatalf("client kept control of logprobs: got %v, want the forced true, from %q", got, body)
+		}
+		if got, held := decoded["return_token_ids"]; held {
+			t.Fatalf("return_token_ids %v reached the host, which sets it itself, from %q", got, body)
 		}
 	})
 }

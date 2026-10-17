@@ -32,7 +32,7 @@ Steps 4–6 run **after** normalisation because the model name is only known onc
 5. `decodeRequestView` — the typed view of what the client asked for.
 6. `applyOutputTokenLimits` — default and cap, per model.
 7. `decodeLogprobIntent` — **read here, before the next stage**, because `StagePostLimits` forces logprobs on and afterwards the document says what the gateway wants, not what the client asked.
-8. `applyStage(StagePostLimits)` — the forcing stage: `logprobs`, `top_logprobs`, `return_token_ids`, `n → 1`, and each model profile's own forces ([`filters/README.md`](../filters/README.md), "Model profiles").
+8. `applyStage(StagePostLimits)` — the forcing stage: `logprobs`, `top_logprobs`, `n → 1`, and each model profile's own forces ([`filters/README.md`](../filters/README.md), "Model profiles").
 9. `forceUpstreamStreaming` — unless `force_upstream_streaming` is off.
 10. `document.Marshal` → `Result`.
 
@@ -45,11 +45,10 @@ Steps 4–6 run **after** normalisation because the model name is only known onc
 | Forced regardless of the client | Why |
 | --- | --- |
 | `logprobs: true`, `top_logprobs: 5` | validators re-execute and compare distributions |
-| `return_token_ids: true` | the same comparison needs token ids |
 | `n: 1` when present | reservation budgets one `max_tokens` output; `n` choices can produce `n` times what was signed for |
 | `stream: true` | the gateway needs the stream to time the first token and spot a stall |
 
-The executor forces the first three itself (`common/completionapi.ModifyRequestBodyWithLogprobsMode`), so the gateway's copies are belt and braces on the committed payload rather than the only guard.
+The executor forces `logprobs` and `top_logprobs` itself, and `return_token_ids: true` beside them (`common/completionapi.ModifyRequestBodyWithLogprobsMode`), so the gateway's copies of `logprobs` and `top_logprobs` are belt and braces on the committed payload rather than the only guard. `return_token_ids` is the executor's alone: the gateway strips it from the client's request.
 
 ## Step 9 in detail: the race
 
@@ -112,6 +111,10 @@ The two 10 MiB bounds are not the same bound. A prompt travels base64 inside the
 **Step 3 reserves room for the catch-up rather than measuring the prompt alone.** The diffs are the gateway's own state and a client cannot be refused for them, so the check asks whether the prompt fits inside `MaxHostRequestBytes` *less* `hostCatchUpReserveBytes`. Measuring the prompt against the whole budget admits a body that leaves nothing for the backlog, and the refusal then lands at the send — after the nonce is committed, which spends the escrow's reserve on nobody, and the exemption ladder is what keeps it off the host's record ([race.md](./race.md), "The exemption ladder"). The reserve is a trade, and the numbers are worth stating: the prompt ceiling falls from about 7.86 MB to about 7.07 MB, which covers an ordinary backlog of a few thousand small diffs, while closing the hazard outright would mean reserving the full 4 MiB a backlog may ride inline and giving up roughly 40% of the usable prompt. What is left over is refused as the gateway's own limit rather than charged to a host.
 
 The last one exists because the request limiter does not stand in for it: with `max_concurrent_requests` unset the cap comes from network weight and admits thousands at a time. Past it, a request is refused 503; `devshard_gateway_buffered_response_bytes` is what is held right now.
+
+## Compression to the host
+
+A chat request is gzipped only from 4 KiB up (`app.chatCompressMinBytes`, carried to the transport as `transport.ClientConfig.ChatCompressMinBytes`). A typical request, prompt and catch-up together, is 1–3 KiB, where gzip saves about 1 KiB on the wire but costs about 28 µs and a fresh 814 KB `flate` writer: Connect pools its compressors in a `sync.Pool`, which garbage collection drains, so under load most messages build the writer again. Below the threshold the request goes out as it is, which the host's Connect handler accepts like any other; above it a long prompt or a large backlog is still compressed. Clients that leave the field at zero, hosts among them, gzip every request.
 
 ## Where to change what
 

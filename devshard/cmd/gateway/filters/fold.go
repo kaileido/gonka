@@ -11,6 +11,7 @@ type BodyFolder struct {
 	scanned      int
 	unframed     []byte
 	merged       map[string]any
+	template     *contentTemplate
 	complete     []byte
 	framed       bool
 	assembled    int
@@ -72,6 +73,10 @@ func (f *BodyFolder) fold(event []byte) {
 	if len(payload) == 0 || bytes.Equal(payload, sseDoneMarker) {
 		return
 	}
+	if f.template != nil && f.template.appendText(payload) {
+		f.countAssembled(payload)
+		return
+	}
 	decoded, parsed := decodeStreamedEvent(payload)
 	if !parsed {
 		return
@@ -90,6 +95,11 @@ func (f *BodyFolder) fold(event []byte) {
 		emptyTopLogprobs(decoded)
 	}
 	f.merged = mergeChunk(f.merged, decoded)
+	f.template = newContentTemplate(payload, decoded, f.merged)
+	f.countAssembled(payload)
+}
+
+func (f *BodyFolder) countAssembled(payload []byte) {
 	f.assembled++
 	f.sinceMeasure += int64(len(payload))
 	if f.sinceMeasure >= foldMeasureBytes {
@@ -137,6 +147,6 @@ func (f *BodyFolder) Held() int64 {
 }
 
 func (f *BodyFolder) Discard() {
-	f.carry, f.unframed, f.merged, f.complete = nil, nil, nil, nil
+	f.carry, f.unframed, f.merged, f.complete, f.template = nil, nil, nil, nil, nil
 	f.scanned, f.mergedBytes, f.sinceMeasure = 0, 0, 0
 }

@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"slices"
 	"testing"
+	"time"
 
 	"devshard/bridge"
 	"devshard/cmd/gateway/chain"
 	"devshard/cmd/gateway/env"
 	"devshard/cmd/gateway/store"
+	"devshard/transport"
 )
 
 // Test flow:
@@ -151,5 +153,21 @@ func TestTheCreationEpochPrefersTheStoredChainEpoch(t *testing.T) {
 				t.Fatalf("creationEpochOf(%s) = %d, %t with %d chain calls, want %d with %d", testCase.name, epoch, resolved, testCase.lookup.calls, testCase.want, testCase.wantCalls)
 			}
 		})
+	}
+}
+
+// Test flow:
+//  1. Build the peer client config with no courier and no adoption tracker, and with a courier and a tracker.
+//  2. Assert both carry the chat compression threshold, and the second keeps the courier's own fields and the tracker.
+func TestPeerRPCClientConfigCarriesTheChatCompressionThreshold(t *testing.T) {
+	bare := peerRPCClientConfig(nil, nil)
+	adoption := transport.NewPeerRPCAdoption(nil)
+	courier := peerRPCClientConfig(&transport.ClientConfig{QueryTimeout: time.Second}, adoption)
+
+	if bare == nil || bare.ChatCompressMinBytes != chatCompressMinBytes {
+		t.Fatalf("bare config = %+v, want the chat compression threshold %d", bare, chatCompressMinBytes)
+	}
+	if courier.ChatCompressMinBytes != chatCompressMinBytes || courier.QueryTimeout != time.Second || courier.RPCAdoption != adoption {
+		t.Fatalf("courier config = %+v, want its own fields, the tracker and the threshold %d", courier, chatCompressMinBytes)
 	}
 }

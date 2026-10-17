@@ -82,3 +82,32 @@ func TestTableForcesASingleChoice(t *testing.T) {
 		})
 	}
 }
+
+// Test flow:
+//  1. Normalize request bodies with return_token_ids set true, set false, and absent.
+//  2. Parse the normalized body back into a document.
+//  3. Assert return_token_ids is absent in every case: the executing host sets it itself.
+func TestTableLeavesTokenIdsToTheHost(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		body string
+	}{
+		{"asked true", `{"messages":[{"role":"user","content":"hi"}],"return_token_ids":true}`},
+		{"asked false", `{"messages":[{"role":"user","content":"hi"}],"return_token_ids":false}`},
+		{"absent", `{"messages":[{"role":"user","content":"hi"}]}`},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			result, err := NormalizeRequest([]byte(testCase.body), Options{DefaultMaxTokens: 3072, MaxTokensCap: 3072})
+			if err != nil {
+				t.Fatalf("NormalizeRequest() = %v, want acceptance", err)
+			}
+			document, err := ParseDocument(result.Body)
+			if err != nil {
+				t.Fatalf("ParseDocument(%s) = %v", result.Body, err)
+			}
+			if document.Has("return_token_ids") {
+				t.Errorf("return_token_ids reached the host: %s", result.Body)
+			}
+		})
+	}
+}

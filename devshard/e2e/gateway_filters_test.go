@@ -74,7 +74,7 @@ func TestE2E_GatewayCapsOutputTokensUntilTheAdminKeyLiftsIt(t *testing.T) {
 // Test flow:
 //  1. Start the three-host environment with every host echoing the request it received.
 //  2. Send one non-streaming completion asking for no logprobs.
-//  3. Assert the host was asked to stream, with usage, and with the logprobs validation needs.
+//  3. Assert the host was asked to stream, with usage, and with the logprobs validation needs, and was sent no return_token_ids, which it sets itself.
 func TestE2E_GatewayForcesTheUpstreamShapeEveryHostSees(t *testing.T) {
 	env, client := startGatewayEnv(t, e2eEnvOptions{hostEnvOverrides: testutil.EchoingHosts(e2eHostCount)})
 
@@ -87,13 +87,15 @@ func TestE2E_GatewayForcesTheUpstreamShapeEveryHostSees(t *testing.T) {
 	}{
 		{"stream", true},
 		{"logprobs", true},
-		{"return_token_ids", true},
 		{"top_logprobs", float64(completionapi.ForcedTopLogprobs)},
 	}
 	for _, expected := range forced {
 		if got := received[expected.field]; got != expected.want {
 			t.Errorf("host received %s = %v, want the forced %v", expected.field, got, expected.want)
 		}
+	}
+	if got, held := received["return_token_ids"]; held {
+		t.Errorf("host received return_token_ids = %v, want it absent: the host sets it itself", got)
 	}
 	options, ok := received["stream_options"].(map[string]any)
 	if !ok {

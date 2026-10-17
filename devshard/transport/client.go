@@ -158,7 +158,8 @@ type ClientConfig struct {
 	// DEVSHARD_RPC_MAX_CONNS_PER_PEER or DefaultRPCMaxConnsPerPeer.
 	RPCMaxConnsPerPeer int
 	// RPCAdoption is the gateway adoption tracker. Nil on hosts.
-	RPCAdoption *PeerRPCAdoption
+	RPCAdoption          *PeerRPCAdoption
+	ChatCompressMinBytes int
 }
 
 // RequestAdmissionController can reject participant-bound transport

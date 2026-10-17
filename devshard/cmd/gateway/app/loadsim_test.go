@@ -140,6 +140,25 @@ func (f *inProcessFleet) recordStep(step string, elapsed time.Duration) {
 	f.steps[step] = total
 }
 
+func (f *inProcessFleet) stepTotals() map[string]stepTotal {
+	f.stepsMu.Lock()
+	defer f.stepsMu.Unlock()
+	return maps.Clone(f.steps)
+}
+
+func stepMeansSince(previous, current map[string]stepTotal) string {
+	means := make([]string, 0, len(current))
+	for _, step := range slices.Sorted(maps.Keys(current)) {
+		count := current[step].count - previous[step].count
+		if count == 0 {
+			continue
+		}
+		mean := (current[step].elapsed - previous[step].elapsed) / time.Duration(count)
+		means = append(means, fmt.Sprintf("%s %s", step, mean.Round(time.Microsecond)))
+	}
+	return strings.Join(means, ", ")
+}
+
 func (f *inProcessFleet) reportSteps(t *testing.T) {
 	f.stepsMu.Lock()
 	defer f.stepsMu.Unlock()
@@ -309,6 +328,7 @@ func reportIntervals(ctx context.Context, t *testing.T, every time.Duration, out
 		return
 	}
 	previousAnswered, started := 0, time.Now()
+	previousSteps := fleet.stepTotals()
 	for {
 		select {
 		case <-ctx.Done():
@@ -327,7 +347,9 @@ func reportIntervals(ctx context.Context, t *testing.T, every time.Duration, out
 			time.Since(started).Round(time.Second), fleet.meanLiveInferences(), answered-previousAnswered,
 			100*cpuSeconds/every.Seconds(), 1000*cpuSeconds/requests,
 			float64(current.allocatedBytes-previous.allocatedBytes)/1e3/requests, current.gcCPUSeconds-previous.gcCPUSeconds)
-		previous, previousAnswered = current, answered
+		currentSteps := fleet.stepTotals()
+		t.Logf("at %s: step means over the interval: %s", time.Since(started).Round(time.Second), stepMeansSince(previousSteps, currentSteps))
+		previous, previousAnswered, previousSteps = current, answered, currentSteps
 	}
 }
 

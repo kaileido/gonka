@@ -42,7 +42,7 @@ With an empty map a nonce a host already receipted yields reason `refused`, and 
 
 ## 4. The SSE event cap below the body a host may send — closed
 
-**The failure.** A transport cap of 1 MiB on one SSE event ([`transport/client.go`](../../../transport/client.go), `DefaultMaxSSEEventBytes`) is below what a host may send. The gateway always asks for logprobs, `top_logprobs` and token ids, and a host that does not stream writes its whole answer as one event, so a few thousand tokens pass such a cap. The attempt is aborted as `response_too_large` after its nonce is committed, the honest host takes the perf sample, and the attempt's answer is lost.
+**The failure.** A transport cap of 1 MiB on one SSE event ([`transport/client.go`](../../../transport/client.go), `DefaultMaxSSEEventBytes`) is below what a host may send. Every request runs with logprobs, `top_logprobs` and token ids, and a host that returns them and does not stream writes its whole answer as one event, so a few thousand tokens pass such a cap. The attempt is aborted as `response_too_large` after its nonce is committed, the honest host takes the perf sample, and the attempt's answer is lost.
 
 **The rule.** The cap is `MaxJSONResponseBytes` (16 MiB), the largest body the JSON path already reads. See [`race.md`](./race.md), "Classification and reassembly", for why a complete event never reaches the attempt budget.
 

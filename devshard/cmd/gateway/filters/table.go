@@ -117,7 +117,7 @@ var (
 			{Stage: StagePreValidation, Apply: requireUint()},
 			{Stage: StagePostLimits, Apply: capUint(logprobsWidthCap)},
 		}},
-		spec("return_token_ids", StagePostLimits, forceLiteral(true)),
+		spec("return_token_ids", StagePreValidation, stripParameter()),
 		spec("service_tier", StagePreValidation, stripParameter()),
 		spec("store", StagePreValidation, stripParameter()),
 		spec("provider", StagePreValidation, stripParameter()),
