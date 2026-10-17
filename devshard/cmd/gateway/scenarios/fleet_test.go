@@ -542,7 +542,10 @@ func (c *fleetClient) VerifyTimeout(ctx context.Context, inferenceID uint64, rea
 		c.escrow.diffs.record(diffs)
 		verifier.ApplyCatchUpDiffs(diffs)
 	}
-	snapshot := verifier.SnapshotState()
+	snapshot, record, found := verifier.SnapshotForTimeout(inferenceID)
+	if !found || record == nil {
+		return false, nil, 0, nil, "", fmt.Errorf("inference %d not found", inferenceID)
+	}
 	mempool := verifier.MempoolTxs()
 	executor := c.executorFor(inferenceID)
 	nowUnix := time.Now().Unix()
@@ -550,9 +553,9 @@ func (c *fleetClient) VerifyTimeout(ctx context.Context, inferenceID uint64, rea
 	var err error
 	switch reason {
 	case types.TimeoutReason_TIMEOUT_REASON_REFUSED:
-		accept, err = host.VerifyRefusedTimeout(ctx, snapshot, inferenceID, payload, mempool, executor, verifier, verifier, snapshot.Config, nowUnix)
+		accept, err = host.VerifyRefusedTimeout(ctx, snapshot, inferenceID, record, payload, mempool, executor, verifier, verifier, snapshot.Config, nowUnix)
 	case types.TimeoutReason_TIMEOUT_REASON_EXECUTION:
-		accept, err = host.VerifyExecutionTimeout(ctx, snapshot, inferenceID, mempool, executor, verifier, verifier, snapshot.Config, nowUnix)
+		accept, err = host.VerifyExecutionTimeout(ctx, snapshot, inferenceID, record, mempool, executor, verifier, verifier, snapshot.Config, nowUnix)
 	default:
 		return false, nil, 0, nil, "", errReasonNotModelled
 	}
@@ -596,6 +599,22 @@ type executorAdapter struct {
 
 func (a executorAdapter) GetMempool(context.Context) ([]*types.DevshardTx, error) {
 	return a.executor.MempoolTxs(), nil
+}
+
+func (a executorAdapter) ChallengeCatchUp(ctx context.Context, inferenceID uint64, diffs []types.DiffWire, _ string) error {
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := a.executor.ChallengeReceiptWire(ctx, inferenceID, nil, diffs, nil)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-a.fleet.released:
+		return errParticipantStalled
+	}
 }
 
 func (a executorAdapter) ChallengeReceipt(ctx context.Context, inferenceID uint64, payload *host.InferencePayload, diffs []types.Diff) ([]byte, []*types.DevshardTx, error) {
