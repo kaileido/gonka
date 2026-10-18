@@ -43,6 +43,8 @@ type Manager struct {
 	chainFactsAfter  string
 	prunedCheckAfter string
 	settlements      inFlightSet
+	budgetedSettles  inFlightSet
+	urgentSettles    inFlightSet
 	checks           inFlightSet
 
 	depleted            depletionMarks
@@ -62,7 +64,6 @@ type Manager struct {
 	sweepRecorder  SweepRecorder
 	narrator       lifecycleNarrator
 	sweeping       atomic.Bool
-	settling       atomic.Bool
 	offTickWork    sync.WaitGroup
 	planner        fundingPlanner
 

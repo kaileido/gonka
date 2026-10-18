@@ -1,10 +1,13 @@
 package escrow
 
 import (
+	"math"
 	"sync"
 
 	"devshard/cmd/gateway/scheduler"
 )
+
+const unboundedInFlight = math.MaxInt
 
 // inFlightSet dedups concurrent operations by key. See README.md, "Keeping the request path off the chain".
 type inFlightSet struct {
@@ -13,20 +16,31 @@ type inFlightSet struct {
 }
 
 func (s *inFlightSet) enter(key string) (leave func(), busy bool) {
+	leave, admitted := s.enterWithin(key, unboundedInFlight)
+	return leave, !admitted
+}
+
+func (s *inFlightSet) enterWithin(key string, limit int) (leave func(), admitted bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.keys == nil {
 		s.keys = make(map[string]bool)
 	}
-	if s.keys[key] {
-		return nil, true
+	if s.keys[key] || len(s.keys) >= limit {
+		return nil, false
 	}
 	s.keys[key] = true
 	return func() {
 		s.mu.Lock()
 		delete(s.keys, key)
 		s.mu.Unlock()
-	}, false
+	}, true
+}
+
+func (s *inFlightSet) has(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.keys[key]
 }
 
 // markSet is the request-path-to-tick handoff. See README.md, "Keeping the request path off the chain".

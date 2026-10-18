@@ -138,7 +138,7 @@ Loops that spend money or memory per iteration carry an explicit bound, not a ho
 | the scheduler's drain | predicates frozen for the drain, a burn budget of `groupSize × (waiters + 1)` fixed at entry |
 | SSE reassembly | three budgets — per attempt, per participant, process-wide; the participant level stops one host that never terminates an event from starving every other host of classification |
 | the accounting ledger | rejects a zero on either retention axis, and sheds rows rather than blocking the response path |
-| settlement of parked escrows | `pendingSettleBudget` = 4 per tick |
+| settlement of parked escrows | `pendingSettleBudget` = 4 at once outside the margin, `urgentSettleBudget` = 8 at once inside it |
 | version polling | 16 ways, 2 s per fetch — a sequential pass over hundreds of miners exceeds the freshness window, which silently makes every node report as not validation-capable |
 | boot | escrow runtimes built under a semaphore whose depth is also the idle-connection pool size |
 

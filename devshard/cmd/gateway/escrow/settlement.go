@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"sync"
 	"time"
 
 	"devshard/cmd/gateway/chain"
@@ -24,8 +25,11 @@ var (
 	ErrEscrowPruned = errors.New("escrow pruned on chain")
 )
 
-// pendingSettleBudget bounds how many parked escrows one tick settles. See escrows.md, "Settlement and retirement".
-const pendingSettleBudget = 4
+// See escrows.md, "Settlement and retirement".
+const (
+	pendingSettleBudget = 4
+	urgentSettleBudget  = 8
+)
 
 // parkedToSettle is the settlement order: the nearest deadline first, then the escrow id.
 func (m *Manager) parkedToSettle(snapshot chain.PhaseSnapshot, devshards []store.DevshardRecord) []pendingSettle {
@@ -47,21 +51,50 @@ func (m *Manager) parkedToSettle(snapshot chain.PhaseSnapshot, devshards []store
 }
 
 func (m *Manager) settleParked(ctx context.Context, parked []pendingSettle) error {
-	var errs []error
-	attempted := 0
-	for _, pending := range parked {
-		urgent := pending.deadline.inMargin
-		if !urgent {
-			if attempted >= pendingSettleBudget {
-				continue
+	admitted := m.admitParked(parked)
+	var (
+		settling  sync.WaitGroup
+		collected sync.Mutex
+		failures  []error
+	)
+	for _, settle := range admitted {
+		settling.Go(func() {
+			defer settle.leave()
+			_, err := m.settleAndDrop(ctx, settle.record, settle.urgent)
+			if err == nil || errors.Is(err, ErrEscrowPruned) || errors.Is(err, store.ErrDevshardNotFound) {
+				return
 			}
-			attempted++
+			collected.Lock()
+			failures = append(failures, err)
+			collected.Unlock()
+		})
+	}
+	settling.Wait()
+	return errors.Join(failures...)
+}
+
+func (m *Manager) admitParked(parked []pendingSettle) []admittedSettle {
+	var admitted []admittedSettle
+	for _, pending := range parked {
+		if m.settlements.has(pending.record.EscrowID) {
+			continue
 		}
-		if _, err := m.settleAndDrop(ctx, pending.record, urgent); err != nil && !errors.Is(err, ErrEscrowPruned) {
-			errs = append(errs, err)
+		urgent := pending.deadline.inMargin
+		slots, limit := &m.budgetedSettles, pendingSettleBudget
+		if urgent {
+			slots, limit = &m.urgentSettles, urgentSettleBudget
+		}
+		if leave, entered := slots.enterWithin(pending.record.EscrowID, limit); entered {
+			admitted = append(admitted, admittedSettle{record: pending.record, urgent: urgent, leave: leave})
 		}
 	}
-	return errors.Join(errs...)
+	return admitted
+}
+
+type admittedSettle struct {
+	record store.DevshardRecord
+	urgent bool
+	leave  func()
 }
 
 type pendingSettle struct {
@@ -127,7 +160,10 @@ func (m *Manager) settle(ctx context.Context, record store.DevshardRecord, force
 		return chain.SettleEscrowResult{}, ErrSettlementInFlight
 	}
 	defer leave()
+	return m.settleEntered(ctx, record, force)
+}
 
+func (m *Manager) settleEntered(ctx context.Context, record store.DevshardRecord, force bool) (chain.SettleEscrowResult, error) {
 	// Parked before the reconciliation: the caller deletes the row on success, and a row that is gone can no longer un-publish the escrow.
 	if err := m.park(ctx, record.EscrowID); err != nil {
 		return chain.SettleEscrowResult{}, err
@@ -186,7 +222,12 @@ func (m *Manager) prunedOnChain(ctx context.Context, escrowID string) bool {
 
 // settleAndDrop drops the row once nothing is left to settle: after a confirmed settlement, or once the chain has pruned the escrow.
 func (m *Manager) settleAndDrop(ctx context.Context, record store.DevshardRecord, force bool) (chain.SettleEscrowResult, error) {
-	result, err := m.settle(ctx, record, force)
+	leave, busy := m.settlements.enter(record.EscrowID)
+	if busy {
+		return chain.SettleEscrowResult{}, ErrSettlementInFlight
+	}
+	defer leave()
+	result, err := m.settleEntered(ctx, record, force)
 	if err != nil && !errors.Is(err, ErrEscrowPruned) {
 		return result, err
 	}

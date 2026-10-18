@@ -374,13 +374,16 @@ func (f *fakeStore) SaveRotationStatus(ctx context.Context, s store.RotationStat
 }
 
 type fakeSignerSource struct {
+	mu           sync.Mutex
 	signer       *signing.Secp256k1Signer
 	err          error
 	requestedEnv string
 }
 
 func (f *fakeSignerSource) SignerFor(privateKeyEnv string) (*signing.Secp256k1Signer, error) {
+	f.mu.Lock()
 	f.requestedEnv = privateKeyEnv
+	f.mu.Unlock()
 	if f.err != nil {
 		return nil, f.err
 	}

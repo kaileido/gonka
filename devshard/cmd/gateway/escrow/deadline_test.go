@@ -220,24 +220,24 @@ func TestTheDeadlineNeedsChainFactsAndAnEpoch(t *testing.T) {
 	}
 }
 
-// orderedSettlementSource records which escrows reached Finalize, in order, and how often the busy check ran.
-type orderedSettlementSource struct {
+// recordingSettlementSource records which escrows reached Finalize and which the busy check was asked about.
+type recordingSettlementSource struct {
 	*fakeSettlementSource
-	mu        sync.Mutex
-	finalized []string
-	busyAsked int
+	mu          sync.Mutex
+	finalized   []string
+	busyAskedOf []string
 }
 
-func (source *orderedSettlementSource) Finalize(ctx context.Context, escrowID string) error {
+func (source *recordingSettlementSource) Finalize(ctx context.Context, escrowID string) error {
 	source.mu.Lock()
 	source.finalized = append(source.finalized, escrowID)
 	source.mu.Unlock()
 	return source.fakeSettlementSource.Finalize(ctx, escrowID)
 }
 
-func (source *orderedSettlementSource) IsBusy(escrowID string) bool {
+func (source *recordingSettlementSource) IsBusy(escrowID string) bool {
 	source.mu.Lock()
-	source.busyAsked++
+	source.busyAskedOf = append(source.busyAskedOf, escrowID)
 	source.mu.Unlock()
 	return source.fakeSettlementSource.IsBusy(escrowID)
 }
@@ -245,8 +245,8 @@ func (source *orderedSettlementSource) IsBusy(escrowID string) bool {
 // Test flow:
 //  1. Store five parked rows of chain epoch 8 outside any margin and two of chain epoch 7 inside the margin of the switch into epoch 9, every escrow still busy.
 //  2. Settle the pending rows once.
-//  3. Assert the two inside the margin were finalized first, in escrow-id order, despite being busy, and four of the other five were tried and deferred as busy: the budget counted only them.
-func TestPendingSettlesRunInDeadlineOrderWithTheMarginForcedAndUnbudgeted(t *testing.T) {
+//  3. Assert the two inside the margin were finalized despite being busy, and the four earliest of the other five by deadline order were tried and deferred as busy: the budget counted only them.
+func TestPendingSettlesRunWithTheMarginForcedAndUnbudgeted(t *testing.T) {
 	testStore := newFakeStore()
 	devshards := make([]store.DevshardRecord, 0, 7)
 	for _, escrowID := range []string{"10", "11", "12", "13", "14"} {
@@ -258,7 +258,7 @@ func TestPendingSettlesRunInDeadlineOrderWithTheMarginForcedAndUnbudgeted(t *tes
 	for _, record := range devshards {
 		testStore.devshards[record.EscrowID] = record
 	}
-	source := &orderedSettlementSource{fakeSettlementSource: &fakeSettlementSource{busy: true}}
+	source := &recordingSettlementSource{fakeSettlementSource: &fakeSettlementSource{busy: true}}
 	manager := &Manager{
 		tx:               settlingTxClient(),
 		store:            testStore,
@@ -268,18 +268,18 @@ func TestPendingSettlesRunInDeadlineOrderWithTheMarginForcedAndUnbudgeted(t *tes
 		chainFacts:       &fakeTxClient{},
 		now:              time.Now,
 	}
-	snapshot := chain.PhaseSnapshot{EpochIndex: 8, EffectiveEpochIndex: 8, BlockHeight: 2600, EpochSwitchBlockHeight: 3100}
-
-	err := manager.settlePending(context.Background(), snapshot, devshards)
+	err := manager.settlePending(context.Background(), snapshotBeforeTheSwitch, devshards)
 
 	if !errors.Is(err, ErrDevshardBusy) {
 		t.Fatalf("settlePending() = %v, want the deferred busy settles reported", err)
 	}
+	slices.Sort(source.finalized)
 	if !slices.Equal(source.finalized, []string{"30", "31"}) {
-		t.Fatalf("finalized %v, want [30 31]: the rows inside the margin, forced, in id order", source.finalized)
+		t.Fatalf("finalized %v, want [30 31]: the rows inside the margin, forced", source.finalized)
 	}
-	if source.busyAsked != pendingSettleBudget {
-		t.Fatalf("busy checks = %d, want %d: only rows outside the margin count against the budget", source.busyAsked, pendingSettleBudget)
+	slices.Sort(source.busyAskedOf)
+	if !slices.Equal(source.busyAskedOf, []string{"10", "11", "12", "13"}) {
+		t.Fatalf("busy checks for %v, want [10 11 12 13]: the budget goes to the rows outside the margin in deadline order, and only they count against it", source.busyAskedOf)
 	}
 }
 

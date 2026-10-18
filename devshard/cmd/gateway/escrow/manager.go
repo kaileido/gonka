@@ -120,11 +120,10 @@ func (m *Manager) Stop() {
 
 func (m *Manager) settleOffTick(ctx context.Context, snapshot chain.PhaseSnapshot, devshards []store.DevshardRecord) {
 	parked := m.parkedToSettle(snapshot, devshards)
-	if len(parked) == 0 || !m.settling.CompareAndSwap(false, true) {
+	if len(parked) == 0 {
 		return
 	}
 	m.offTickWork.Go(func() {
-		defer m.settling.Store(false)
 		if err := m.settleParked(ctx, parked); err != nil && m.narrator != nil {
 			m.narrator.EscrowTickFailed(err)
 		}
