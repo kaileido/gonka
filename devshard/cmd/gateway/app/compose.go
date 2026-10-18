@@ -382,6 +382,8 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 		StorageDir:   storageDir,
 		Version:      Version,
 		Now:          clock,
+
+		StopTokenVocabulary: stopTokenVocabulary(sources.ModelSnapshots, observer),
 	})
 	if err != nil {
 		return nil, err

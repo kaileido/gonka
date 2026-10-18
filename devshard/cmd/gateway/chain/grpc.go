@@ -293,3 +293,8 @@ func isNotFoundStatus(err error) bool {
 	}
 	return strings.Contains(strings.ToLower(err.Error()), "not found")
 }
+
+// EpochGroupData answers an epoch's model snapshot, which the stop-token vocabulary reads a model's pinned tokenizer from.
+func (g *GRPCChain) EpochGroupData(ctx context.Context, request *inferencetypes.QueryGetEpochGroupDataRequest, options ...grpc.CallOption) (*inferencetypes.QueryGetEpochGroupDataResponse, error) {
+	return g.client.InferenceQueryClient().EpochGroupData(ctx, request, options...)
+}

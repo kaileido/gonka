@@ -8,7 +8,7 @@ import (
 
 // Test flow:
 //  1. Assert glm53FlashProfile.Models lists only the GLM-5.3 Flash model ID.
-//  2. Assert every boolean hook (ForceZeroPenalties, RejectStructuredOutput, AllowSafetyIdentifier, KeepReasoningSplit, ThinkingTokenBudget, LiftNonPositiveOutputTokens) is false.
+//  2. Assert every boolean hook (ForceZeroPenalties, RejectStructuredOutput, AllowSafetyIdentifier, KeepReasoningSplit, ThinkingTokenBudget) is false and it declares no output token floor.
 //  3. Assert glm53FlashProfile.Thinking is ThinkingForceOn.
 func TestGLM53FlashProfileHooks(t *testing.T) {
 	require.Equal(t, []string{glm53FlashModelID}, glm53FlashProfile.Models)
@@ -22,11 +22,11 @@ func TestGLM53FlashProfileHooks(t *testing.T) {
 		{"AllowSafetyIdentifier", glm53FlashProfile.AllowSafetyIdentifier},
 		{"KeepReasoningSplit", glm53FlashProfile.KeepReasoningSplit},
 		{"ThinkingTokenBudget", glm53FlashProfile.ThinkingTokenBudget},
-		{"LiftNonPositiveOutputTokens", glm53FlashProfile.LiftNonPositiveOutputTokens},
 	}
 	for _, hook := range boolHooks {
 		require.Falsef(t, hook.got, "glm53FlashProfile.%s", hook.name)
 	}
+	require.Zero(t, glm53FlashProfile.OutputTokensFloor)
 	require.Equal(t, ThinkingForceOn, glm53FlashProfile.Thinking)
 }
 

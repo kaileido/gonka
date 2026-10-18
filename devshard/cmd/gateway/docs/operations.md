@@ -439,6 +439,10 @@ What to watch:
 | `devshard_gateway_planner_ignored_marks_total{model,reason}` | balance marks dropped by design; a rising `balance_floor` count is routing reporting what the planner already plans for |
 | `devshard_gateway_escrow_deadline_unsettled_total{model,reason}` | 0; any `deadline_passed` is money lost |
 
+## Stop token ids
+
+A request's `stop_token_ids` are checked against the vocabulary the chain pins for the routed model in the current epoch, the same size the executor and the validator bound token ids by (`app/stop_token_vocabulary.go`). The gateway reads the model's Hugging Face repo and commit from the epoch's model snapshot on chain and the `vocab_size` from that commit's `config.json` on the Hugging Face hub, so a gateway that accepts `stop_token_ids` needs egress to `huggingface.co`. A resolved size is cached for good, since a pinned commit never changes. The first request for a model in an epoch waits for the lookup, up to 10 seconds; a failed lookup is retried after 10 minutes, and until then every request with `stop_token_ids` for that model is refused. The gateway looks the size up only for a model one of its escrows serves (`api/routes.go`, `servedModelVocabulary`), so a client naming arbitrary models cannot grow the cache or reach the chain; for any other model the field is refused like an unknown size. Until the first epoch is known, or while the size cannot be resolved, a request carrying `stop_token_ids` is refused with a 400 rather than forwarded with an id nobody proved safe. A request without them never triggers the lookup. See [`filters/README.md`](../filters/README.md), "Stop token ids".
+
 ## Where to change what
 
 | To change | Go to |

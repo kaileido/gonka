@@ -56,11 +56,37 @@ func TestTheForcedStreamingSwitchReachesTheFilters(t *testing.T) {
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
-			options := filterOptions(config.Limits{ForceUpstreamStreaming: testCase.forceUpstream}, false)
+			options := filterOptions(config.Limits{ForceUpstreamStreaming: testCase.forceUpstream}, false, nil)
 
 			if options.KeepClientStream != testCase.wantKeepClientStream {
 				t.Errorf("KeepClientStream = %v, want %v", options.KeepClientStream, testCase.wantKeepClientStream)
 			}
 		})
+	}
+}
+
+// Test flow:
+//  1. Wire a vocabulary that answers 1000 and records every model it is asked about.
+//  2. Send a chat request with stop_token_ids for the served model, then one for a model no escrow serves.
+//  3. Assert the served request passes with one lookup for its model, and the unserved one is refused without a lookup: the lookup can reach the chain and caches per model.
+func TestTheStopTokenVocabularyIsAskedOnlyForAServedModel(t *testing.T) {
+	live := newHarness(t)
+	var askedModels []string
+	live.server.stopTokenVocabulary = func(model string) int {
+		askedModels = append(askedModels, model)
+		return 1000
+	}
+
+	served := live.request(t, http.MethodPost, "/v1/chat/completions", `{"model":"qwen","messages":[{"role":"user","content":"hi"}],"stop_token_ids":[7]}`, nil)
+	unserved := live.request(t, http.MethodPost, "/v1/chat/completions", `{"model":"no-such-model","messages":[{"role":"user","content":"hi"}],"stop_token_ids":[7]}`, nil)
+
+	if served.Code != http.StatusOK {
+		t.Errorf("served model status = %d, want %d: %s", served.Code, http.StatusOK, served.Body.String())
+	}
+	if unserved.Code == http.StatusOK {
+		t.Errorf("unserved model status = %d, want a refusal", unserved.Code)
+	}
+	if len(askedModels) != 1 || askedModels[0] != "qwen" {
+		t.Errorf("vocabulary asked for %v, want only [qwen]", askedModels)
 	}
 }

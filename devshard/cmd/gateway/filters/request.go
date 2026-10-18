@@ -2,13 +2,17 @@ package filters
 
 // Options carries NormalizeRequest's per-call configuration. See README.md, "Output token limits".
 type Options struct {
-	Admin            bool
-	KeepClientStream bool
-	DefaultMaxTokens uint64
-	MaxTokensCap     uint64
-	RoutedModel      string
-	ModelTokenLimits func(model string) (defaultMaxTokens, maxTokensCap uint64)
+	Admin               bool
+	KeepClientStream    bool
+	DefaultMaxTokens    uint64
+	MaxTokensCap        uint64
+	RoutedModel         string
+	ModelTokenLimits    func(model string) (defaultMaxTokens, maxTokensCap uint64)
+	StopTokenVocabulary func(model string) int
 }
+
+// VocabularySizeUnknown is what Options.StopTokenVocabulary answers for a model whose vocabulary it cannot resolve.
+const VocabularySizeUnknown = 0
 
 // Result is the normalized body plus the typed fields callers need without re-parsing it.
 type Result struct {

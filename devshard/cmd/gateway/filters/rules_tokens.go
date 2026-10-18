@@ -139,10 +139,9 @@ func applyOutputTokenLimits(document *Document, view *requestView, options Optio
 	default:
 		resolved = capOutputTokens(0, options.Admin, limits)
 	}
-	resolved = max(resolved, completionapi.MinTokensFloor)
 	document.Set("max_tokens", resolved)
 	view.MaxTokens = resolved
-	document.Set("min_tokens", floorMinTokens(document, resolved))
+	keepCallerMinTokens(document, resolved)
 	if hasMaxCompletionTokens {
 		document.Set("max_completion_tokens", resolved)
 		view.MaxCompletionTokens = resolved
@@ -151,25 +150,30 @@ func applyOutputTokenLimits(document *Document, view *requestView, options Optio
 	}
 }
 
-func floorMinTokens(document *Document, maxTokens uint64) uint64 {
-	requested, _ := document.Uint("min_tokens")
-	return min(max(requested, completionapi.MinTokensFloor), maxTokens)
+// keepCallerMinTokens forwards only a min_tokens the client sent, clamped to max_tokens, and none on a grammar-constrained request. See README.md, "Output token limits".
+func keepCallerMinTokens(document *Document, maxTokens uint64) {
+	requested, sent := document.Uint("min_tokens")
+	if !sent || requested == 0 || completionapi.GrammarConstrained(document.Raw()) {
+		document.Delete("min_tokens")
+		return
+	}
+	document.Set("min_tokens", min(requested, maxTokens))
 }
 
-// liftNonPositiveOutputTokens raises a zero budget to the shared floor for the profile that asks for it, ahead of the refusal below.
-func liftNonPositiveOutputTokens() RuleFunc {
+// raiseOutputTokensToProfileFloor raises a budget under the profile's own floor to it, ahead of the refusal below. See README.md, "Output token limits".
+func raiseOutputTokensToProfileFloor() RuleFunc {
 	return func(ctx RuleContext) error {
-		if ctx.Profile == nil || !ctx.Profile.LiftNonPositiveOutputTokens {
+		if ctx.Profile == nil || ctx.Profile.OutputTokensFloor == outputTokensFloorNone {
 			return nil
 		}
 		raw, exists := ctx.Document.Get(ctx.Param)
 		if !exists {
 			return nil
 		}
-		if number, ok := devshard.JSONNumericFloat64(raw); !ok || number > 0 {
+		if number, ok := devshard.JSONNumericFloat64(raw); !ok || number >= float64(ctx.Profile.OutputTokensFloor) {
 			return nil
 		}
-		ctx.Document.Set(ctx.Param, uint64(completionapi.MinTokensFloor))
+		ctx.Document.Set(ctx.Param, ctx.Profile.OutputTokensFloor)
 		return nil
 	}
 }

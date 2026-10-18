@@ -3,16 +3,15 @@ package registry
 import (
 	"testing"
 
-	"common/completionapi"
-
 	"devshard/cmd/gateway/filters"
 	"devshard/cmd/gateway/scheduler"
+	"devshard/state"
 	"devshard/user"
 )
 
 // Test flow:
 //  1. For each of four request bodies (the table varies whether max_tokens, max_completion_tokens, or neither is set), normalize the request through `filters.NormalizeRequest`.
-//  2. Assert normalization succeeds and the resulting MaxTokens is at or above `completionapi.MinTokensFloor`.
+//  2. Assert normalization succeeds and the resulting MaxTokens is at or above `state.MinReservationTokens`, the chain's own floor.
 //  3. Advance a live stream, committing a nonce intent built from the normalized body.
 //  4. Assert the commit succeeds and a nonce was prepared.
 func TestWhatTheFiltersProduceTheChainAccepts(t *testing.T) {
@@ -31,8 +30,8 @@ func TestWhatTheFiltersProduceTheChainAccepts(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NormalizeRequest() = %v, want nil", err)
 			}
-			if normalized.MaxTokens < completionapi.MinTokensFloor {
-				t.Fatalf("MaxTokens = %d, under the floor %d before the chain ever sees it", normalized.MaxTokens, completionapi.MinTokensFloor)
+			if normalized.MaxTokens < state.MinReservationTokens {
+				t.Fatalf("MaxTokens = %d, under the chain's floor %d before the chain ever sees it", normalized.MaxTokens, state.MinReservationTokens)
 			}
 
 			stream, _, _ := newLiveStream(t, 1, 1, 1)

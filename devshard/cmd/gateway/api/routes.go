@@ -199,7 +199,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 		s.writeErrorFor(w, err)
 		return
 	}
-	normalized, err := filters.NormalizeRequest(body, filterOptions(configuration.Limits, identity.admin))
+	normalized, err := filters.NormalizeRequest(body, filterOptions(configuration.Limits, identity.admin, s.servedModelVocabulary))
 	if err != nil {
 		s.capture.filterRejected(r, requestID, body, err)
 		s.writeErrorFor(w, err)
@@ -279,6 +279,13 @@ func (s *Server) countCacheResult(model, refusal string) {
 		return
 	}
 	s.cacheResults.CacheResult(model, cmp.Or(refusal, cacheResultStored))
+}
+
+func (s *Server) servedModelVocabulary(model string) int {
+	if s.stopTokenVocabulary == nil || !s.escrows.Serves(model) {
+		return filters.VocabularySizeUnknown
+	}
+	return s.stopTokenVocabulary(model)
 }
 
 // routableModel refuses a model before it can take a limiter slot. See README.md, "The route table".

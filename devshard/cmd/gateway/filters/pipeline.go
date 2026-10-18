@@ -13,6 +13,9 @@ func runPipeline(document *Document, options Options) (Result, error) {
 	if err := applyStage(StagePreValidation, document, profile); err != nil {
 		return Result{}, err
 	}
+	if err := validateStopTokenIDs(document, options.StopTokenVocabulary, routedModel); err != nil {
+		return Result{}, err
+	}
 	if err := normalizeMessages(document); err != nil {
 		return Result{}, err
 	}

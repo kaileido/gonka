@@ -27,7 +27,7 @@ The only package that speaks HTTP to a client, and the one that decides what a f
 
 ## What the server is given
 
-`Deps` is everything the boundary reads or calls. `New` requires every field except `Version` and `RequestIDs`, which default to empty and to a random id generator.
+`Deps` is everything the boundary reads or calls. `New` requires every field except `Version`, `RequestIDs` and `StopTokenVocabulary`. The first two default to empty and to a random id generator; a nil `StopTokenVocabulary` refuses every request that carries `stop_token_ids`, since no id can be proven inside the model's vocabulary without it (see [`filters/README.md`](../filters/README.md), "Stop token ids").
 
 `Operations` holds the lifecycle actions the operator routes trigger. They span the chain client, the escrow manager and the registry, so the composition root implements them and this package only calls them.
 

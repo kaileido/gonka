@@ -63,6 +63,9 @@ type ModelParams struct {
 	MaxModelLen   uint64
 }
 
+// EpochIndexUnknown is the epoch of a snapshot taken before the chain reported one.
+const EpochIndexUnknown uint64 = 0
+
 // PhaseSnapshot is an immutable published view folded from raw chain inputs; the absent-value semantics of RequestsBlocked, Preserved and MaxNonce are load-bearing: see README.md, "What the chain observer provides".
 type PhaseSnapshot struct {
 	BlockHeight            int64

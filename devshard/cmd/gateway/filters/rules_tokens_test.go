@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
-
-	"common/completionapi"
 )
 
 // Test flow:
@@ -303,30 +301,47 @@ func TestTokensDecodeRequestViewTypeErrors(t *testing.T) {
 }
 
 // Test flow:
-//  1. Apply `liftNonPositiveOutputTokens()` under the kimi profile to a document with either max_tokens or max_completion_tokens set to 0.
-//  2. Assert the field is raised to `completionapi.MinTokensFloor`.
-func TestLiftNonPositiveOutputTokensRaisesAZeroToTheFloor(t *testing.T) {
+//  1. Apply `raiseOutputTokensToProfileFloor()` under the kimi profile to max_tokens and max_completion_tokens set to 0, 1 and 15.
+//  2. Assert each is raised to the profile's floor: below it Kimi-K2.6 emits only the closing think tag.
+func TestAKimiBudgetBelowItsFloorIsRaisedToIt(t *testing.T) {
 	for _, param := range []string{"max_tokens", "max_completion_tokens"} {
-		t.Run(param, func(t *testing.T) {
-			document := parseTestDocument(t, `{"`+param+`":0}`)
-			if err := liftNonPositiveOutputTokens()(RuleContext{Document: document, Param: param, Profile: kimiProfile}); err != nil {
-				t.Fatalf("liftNonPositiveOutputTokens() = %v, want nil", err)
-			}
-			if got, _ := document.Uint(param); got != completionapi.MinTokensFloor {
-				t.Errorf("%s = %d, want the floor %d", param, got, completionapi.MinTokensFloor)
-			}
-		})
+		for _, value := range []string{"0", "1", "15"} {
+			t.Run(param+"="+value, func(t *testing.T) {
+				document := parseTestDocument(t, `{"`+param+`":`+value+`}`)
+				if err := raiseOutputTokensToProfileFloor()(RuleContext{Document: document, Param: param, Profile: kimiProfile}); err != nil {
+					t.Fatalf("raiseOutputTokensToProfileFloor() = %v, want nil", err)
+				}
+				if got, _ := document.Uint(param); got != kimiOutputTokensFloor {
+					t.Errorf("%s = %d, want the kimi floor %d", param, got, kimiOutputTokensFloor)
+				}
+			})
+		}
 	}
 }
 
 // Test flow:
-//  1. Apply `liftNonPositiveOutputTokens()` to a document with max_tokens:0 under the default (nil), minimax, and deepseek profiles.
-//  2. Assert the value is left at 0 for every profile without the lift, leaving it for the downstream refusal.
-func TestLiftNonPositiveOutputTokensLeavesEveryOtherProfileToTheRefusal(t *testing.T) {
+//  1. Apply `raiseOutputTokensToProfileFloor()` under the kimi profile to a max_tokens at and above its floor.
+//  2. Assert the value is left as the client sent it.
+func TestAKimiBudgetAtOrAboveItsFloorIsKept(t *testing.T) {
+	for _, value := range []uint64{kimiOutputTokensFloor, 300} {
+		document := parseTestDocument(t, fmt.Sprintf(`{"max_tokens":%d}`, value))
+		if err := raiseOutputTokensToProfileFloor()(RuleContext{Document: document, Param: "max_tokens", Profile: kimiProfile}); err != nil {
+			t.Fatalf("raiseOutputTokensToProfileFloor() = %v, want nil", err)
+		}
+		if got, _ := document.Uint("max_tokens"); got != value {
+			t.Errorf("max_tokens = %d, want %d kept", got, value)
+		}
+	}
+}
+
+// Test flow:
+//  1. Apply `raiseOutputTokensToProfileFloor()` to a document with max_tokens:0 under the default (nil), minimax, and deepseek profiles.
+//  2. Assert the value is left at 0 for every profile without a floor, leaving it for the downstream refusal.
+func TestOnlyAProfileWithAFloorRaisesTheBudget(t *testing.T) {
 	for _, profile := range []*Profile{nil, minimaxProfile, deepseekProfile} {
 		document := parseTestDocument(t, `{"max_tokens":0}`)
-		if err := liftNonPositiveOutputTokens()(RuleContext{Document: document, Param: "max_tokens", Profile: profile}); err != nil {
-			t.Fatalf("liftNonPositiveOutputTokens() = %v, want nil", err)
+		if err := raiseOutputTokensToProfileFloor()(RuleContext{Document: document, Param: "max_tokens", Profile: profile}); err != nil {
+			t.Fatalf("raiseOutputTokensToProfileFloor() = %v, want nil", err)
 		}
 		if got, _ := document.Uint("max_tokens"); got != 0 {
 			t.Errorf("max_tokens = %d for profile %v, want the zero left for the refusal", got, profile)
@@ -336,7 +351,7 @@ func TestLiftNonPositiveOutputTokensLeavesEveryOtherProfileToTheRefusal(t *testi
 
 // Test flow:
 //  1. Apply `rejectNonPositiveOutputTokens()` to a document with max_tokens:0 under the default (nil), kimi, minimax, and deepseek profiles.
-//  2. Assert every profile is rejected, since the refusal stays absolute — a profile that wants its zero raised gets that from `liftNonPositiveOutputTokens` running ahead of it, because capOutputTokens would otherwise read the zero as "unset" and hand it the default rather than the floor.
+//  2. Assert every profile is rejected, since the refusal stays absolute — a profile with a floor gets its zero raised by `raiseOutputTokensToProfileFloor` running ahead of it, because capOutputTokens would otherwise read the zero as "unset" and hand it the default rather than the profile's floor.
 func TestRejectNonPositiveOutputTokensRejectsZeroOnEveryProfile(t *testing.T) {
 	for _, profile := range []*Profile{nil, kimiProfile, minimaxProfile, deepseekProfile} {
 		document := parseTestDocument(t, `{"max_tokens":0}`)
@@ -437,9 +452,9 @@ func TestTokensPerModelOverrideCapClampsTheRequestedValue(t *testing.T) {
 }
 
 // Test flow:
-//  1. Apply output-token limits for a model whose per-model cap is set below `completionapi.MinTokensFloor`.
-//  2. Assert MaxTokens is raised to the floor rather than clamped to the too-small cap, since a cap under the floor would buy a budget too small to reason in.
-func TestTokensCapBelowTheFloorLosesToIt(t *testing.T) {
+//  1. Apply output-token limits for a model whose per-model cap is 50.
+//  2. Assert MaxTokens is clamped to that cap: no shared floor outranks the operator's cap any more.
+func TestTokensASmallPerModelCapHolds(t *testing.T) {
 	options := Options{
 		DefaultMaxTokens: 1000,
 		MaxTokensCap:     2000,
@@ -448,24 +463,24 @@ func TestTokensCapBelowTheFloorLosesToIt(t *testing.T) {
 
 	_, view := applyLimits(t, `{"model":"qwen","max_tokens":1800}`, options)
 
-	if view.MaxTokens != completionapi.MinTokensFloor {
-		t.Errorf("max_tokens = %d, want the floor %d", view.MaxTokens, completionapi.MinTokensFloor)
+	if view.MaxTokens != 50 {
+		t.Errorf("max_tokens = %d, want the per-model cap 50", view.MaxTokens)
 	}
 }
 
 // Test flow:
-//  1. Normalize a below-floor request once per routed model: kimi, minimax, and a plain "Qwen/Test" model.
-//  2. Assert the declared MaxTokens is never below `completionapi.MinTokensFloor` for any route, not only for a profile that declares a floor of its own.
-func TestTokensFloorAppliesToEveryRoute(t *testing.T) {
-	for _, model := range []string{kimiModelID, minimaxModelID, "Qwen/Test"} {
+//  1. Normalize a request with max_tokens 8 once per routed model: kimi, minimax, and a plain "Qwen/Test" model.
+//  2. Assert the declared MaxTokens is 8 on minimax and the plain model, and Kimi's own floor on Kimi.
+func TestTokensOnlyKimiRaisesASmallBudget(t *testing.T) {
+	for model, want := range map[string]uint64{kimiModelID: kimiOutputTokensFloor, minimaxModelID: 8, "Qwen/Test": 8} {
 		t.Run(model, func(t *testing.T) {
 			result, err := NormalizeRequest([]byte(`{"messages":[{"role":"user","content":"x"}],"max_tokens":8}`),
 				Options{RoutedModel: model, DefaultMaxTokens: 3072, MaxTokensCap: 4096})
 			if err != nil {
 				t.Fatalf("NormalizeRequest() = %v, want nil", err)
 			}
-			if result.MaxTokens < completionapi.MinTokensFloor {
-				t.Errorf("MaxTokens = %d, below the floor %d the chain refuses", result.MaxTokens, completionapi.MinTokensFloor)
+			if result.MaxTokens != want {
+				t.Errorf("MaxTokens = %d, want %d", result.MaxTokens, want)
 			}
 		})
 	}

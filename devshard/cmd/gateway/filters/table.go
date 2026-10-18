@@ -79,11 +79,11 @@ var (
 		spec("model", StagePreValidation, validModelName(modelMaxLen)),
 		{Name: "stream"},
 		{Name: "max_tokens", Rules: []StagedRule{
-			{Stage: StagePreValidation, Apply: liftNonPositiveOutputTokens()},
+			{Stage: StagePreValidation, Apply: raiseOutputTokensToProfileFloor()},
 			{Stage: StagePreValidation, Apply: rejectNonPositiveOutputTokens()},
 		}},
 		{Name: "max_completion_tokens", Rules: []StagedRule{
-			{Stage: StagePreValidation, Apply: liftNonPositiveOutputTokens()},
+			{Stage: StagePreValidation, Apply: raiseOutputTokensToProfileFloor()},
 			{Stage: StagePreValidation, Apply: rejectNonPositiveOutputTokens()},
 		}},
 		spec("messages", StagePreValidation, validListLength(messagesMaxEntries, 0)),
@@ -128,7 +128,7 @@ var (
 			{Stage: StagePreValidation, Apply: requireStringElements()},
 			{Stage: StagePreValidation, Apply: validListLength(stopMaxEntries, stopMaxEntryLen)},
 		}},
-		spec("stop_token_ids", StagePreValidation, stripParameter()),
+		{Name: "stop_token_ids"},
 		{Name: "bad_words", Rules: []StagedRule{
 			{Stage: StagePreValidation, Apply: requireStringElements()},
 			{Stage: StagePreValidation, Apply: dropBlankStringListElements()},

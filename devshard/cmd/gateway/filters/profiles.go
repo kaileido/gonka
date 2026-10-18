@@ -23,15 +23,17 @@ type Profile struct {
 	KeepReasoningSplit     bool
 	ThinkingTokenBudget    bool
 
-	LiftNonPositiveOutputTokens bool
+	OutputTokensFloor uint64
 }
 
-// Exact routed-model identifiers the parameter table dispatches on.
+// Exact routed-model identifiers the parameter table dispatches on, and the floor of a profile that leaves a small output budget as the client sent it.
 const (
 	kimiModelID       = "moonshotai/Kimi-K2.6"
 	minimaxModelID    = "MiniMaxAI/MiniMax-M2.7"
 	deepseekModelID   = "deepseek-ai/DeepSeek-V4-Flash-0731"
 	glm53FlashModelID = "zai-org/GLM-5.3-Flash"
+
+	outputTokensFloorNone uint64 = 0
 )
 
 var registeredProfiles = []*Profile{kimiProfile, minimaxProfile, deepseekProfile, glm53FlashProfile}

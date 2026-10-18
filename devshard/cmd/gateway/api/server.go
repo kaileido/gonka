@@ -153,27 +153,28 @@ type RequestJournal interface {
 
 // Deps is everything the HTTP boundary reads or calls. See README.md, "What the server is given".
 type Deps struct {
-	Config       *config.Holder
-	Escrows      EscrowRegistry
-	Inference    InferenceEngine
-	Limiter      GatewayLimiter
-	Capacity     CapacityReader
-	Snapshots    SnapshotSource
-	Control      ControlStore
-	Accounting   RequestLedger
-	Operations   Operations
-	Suspicious   SuspiciousHosts
-	HostStates   HostStates
-	HostWindows  HostWindows
-	Telemetry    Telemetry
-	Buffers      *BufferBudget
-	Rejections   LimitRejections
-	CacheResults CacheResults
-	Journal      RequestJournal
-	StorageDir   string
-	Version      string
-	Now          func() time.Time
-	RequestIDs   func() string
+	Config              *config.Holder
+	Escrows             EscrowRegistry
+	Inference           InferenceEngine
+	Limiter             GatewayLimiter
+	Capacity            CapacityReader
+	Snapshots           SnapshotSource
+	Control             ControlStore
+	Accounting          RequestLedger
+	Operations          Operations
+	Suspicious          SuspiciousHosts
+	HostStates          HostStates
+	HostWindows         HostWindows
+	Telemetry           Telemetry
+	Buffers             *BufferBudget
+	Rejections          LimitRejections
+	CacheResults        CacheResults
+	Journal             RequestJournal
+	StorageDir          string
+	Version             string
+	Now                 func() time.Time
+	RequestIDs          func() string
+	StopTokenVocabulary func(model string) int
 }
 
 type Server struct {
@@ -200,6 +201,8 @@ type Server struct {
 	buffers      *BufferBudget
 	cache        *responseCache
 	capture      *requestCapture
+
+	stopTokenVocabulary func(model string) int
 
 	gates   atomic.Pointer[keyGates]
 	verify  func(authorization string) credentials
@@ -259,6 +262,8 @@ func New(deps Deps) (*Server, error) {
 		version:      deps.Version,
 		now:          deps.Now,
 		requestIDs:   deps.RequestIDs,
+
+		stopTokenVocabulary: deps.StopTokenVocabulary,
 	}
 	if server.requestIDs == nil {
 		server.requestIDs = randomRequestID

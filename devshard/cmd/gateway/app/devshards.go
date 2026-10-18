@@ -12,6 +12,7 @@ import (
 	"time"
 
 	commonchain "common/chain"
+	"common/vocabulary"
 	"golang.org/x/sync/errgroup"
 
 	"devshard/bridge"
@@ -61,6 +62,8 @@ func chainBackedSessions(records devshardLookup, storageDir string) sessionSourc
 			Transport:  grpcChain,
 			Heights:    follower,
 			Governance: governance,
+
+			ModelSnapshots: grpcChain,
 		}, nil
 	}
 }
@@ -294,13 +297,14 @@ type sessionSources func(endpoints config.Chain, heightSettings config.HeightSyn
 
 // chainSources is what one dial yields; Reader and Transport are interfaces so a test dials nothing.
 type chainSources struct {
-	Serving    registry.SessionFactory
-	ReadOnly   registry.SessionFactory
-	Reader     chain.Reader
-	Transport  chain.Transport
-	Heights    *heights.Oracle
-	Governance *runtimeParams
-	PublicAPI  *http.Client
+	Serving        registry.SessionFactory
+	ReadOnly       registry.SessionFactory
+	Reader         chain.Reader
+	Transport      chain.Transport
+	Heights        *heights.Oracle
+	Governance     *runtimeParams
+	PublicAPI      *http.Client
+	ModelSnapshots vocabulary.EpochGroupDataQuery
 }
 
 type seedDevshard struct {

@@ -114,7 +114,7 @@ What the gateway forces, and what it strips:
 - `return_token_ids` is stripped: the executing host sets it itself (`common/completionapi.ModifyRequestBodyWithLogprobsMode`) and drops the token ids from its answer, and the response-side strip still removes any that arrive.
 - `logprobs` and `top_logprobs` are **carried, not forced**: a non-boolean or negative ask is rejected, and a width above `completionapi.ForcedTopLogprobs` is capped to it. The host re-pins that same constant on every executed request, so overwriting the client here would buy nothing and lose what it asked for. A narrower ask is accepted but not honoured — the host executes at the pinned width and the answer carries it.
 - `n` is replaced with `1` when present: the reservation budgets one `max_tokens` worth of output, and `n` choices can produce `n` times what it signed for.
-- Silently stripped: `service_tier`, `store`, `provider`, `plugins`, `prompt_cache_key`, `cache_key`, `extra_headers`, `thinking_config`, `think`, `stop_token_ids`.
+- Silently stripped: `service_tier`, `store`, `provider`, `plugins`, `prompt_cache_key`, `cache_key`, `extra_headers`, `thinking_config`, `think`. `stop_token_ids` are checked, not stripped; see "Stop token ids".
 - `model` must match `^[A-Za-z0-9._/-]+$` and stay under 256 bytes; `user` and `safety_identifier` under 512.
 
 ## Output token limits
@@ -123,9 +123,15 @@ What the gateway forces, and what it strips:
 
 `capOutputTokens` treats zero as "the client named no budget": it returns the configured default, which the cap does not clamp. A nonzero value is clamped to the cap unless `Options.Admin` bypasses it. `MaxOutputTokens` (10 000 000) is above all of them: every path out of `capOutputTokens` clamps to it, the admin bypass included, and `config.Validate` refuses a `max_tokens_cap`, a `default_max_tokens` or a per-model override past it. A budget that cannot exceed the ceiling is a budget the host's output window can be priced from without the arithmetic leaving `int64` (see [`docs/capacity.md`](../docs/capacity.md), "The participant limiter: IOCW").
 
-`applyOutputTokenLimits` then resolves one number from whichever fields the client sent — the minimum of both when both are present — floors it at `completionapi.MinTokensFloor`, and writes it to `max_tokens`. It mirrors the result into `max_completion_tokens` only when the client sent that field, so the gateway does not introduce a field the request never carried. `min_tokens` is set to the requested value raised to the floor and capped at the resolved `max_tokens`.
+`applyOutputTokenLimits` then resolves one number from whichever fields the client sent — the minimum of both when both are present — and writes it to `max_tokens`. It mirrors the result into `max_completion_tokens` only when the client sent that field, so the gateway does not introduce a field the request never carried. No shared floor raises it: a short answer is a request the protocol prices and validates as it is, down to the chain's one-token reservation (`state.MinReservationTokens`; see `devshard/docs/proposals/short-output-validation.md`).
 
-`liftNonPositiveOutputTokens` runs first and raises a present, numeric, non-positive `max_tokens` or `max_completion_tokens` to `completionapi.MinTokensFloor` for a profile with `LiftNonPositiveOutputTokens`. It has to run before the refusal rather than fall through to the floor above, because `capOutputTokens` reads a zero as "the client named no budget" and would hand back the default instead. `rejectNonPositiveOutputTokens` then rejects whatever is left, on every profile: a zero output budget makes no answer, and the redundancy layer then waits out a winner that cannot come.
+`keepCallerMinTokens` forwards only a `min_tokens` the client sent, clamped to the resolved `max_tokens`. A zero, or a request decoding under a structured-output grammar (`completionapi.GrammarConstrained`: a `json_object`, `json_schema` or `structural_tag` response format, a `structured_outputs` constraint, a required or named tool choice), forwards none, because once the grammar allows only EOS, masking EOS leaves every logit at -inf. This is the rewrite `completionapi.EnforceTokenBudget` applies on the executor and on the validator's replay, so the three agree on the request they price and judge. The grammar check reads the body as it leaves the pipeline: a tool choice an earlier rule relaxed to `auto` no longer constrains it, on the host either.
+
+`raiseOutputTokensToProfileFloor` runs first and raises a present, numeric `max_tokens` or `max_completion_tokens` under the profile's own `OutputTokensFloor` to it. Only Kimi declares one, 16, because below it Kimi-K2.6 emits only its closing think tag. It has to run before the refusal, because `capOutputTokens` reads a zero as "the client named no budget" and would hand back the default instead. `rejectNonPositiveOutputTokens` then rejects whatever is left, on every profile: a zero output budget makes no answer, and the redundancy layer then waits out a winner that cannot come.
+
+## Stop token ids
+
+`stop_token_ids` reach the engine only when every id is an integer inside the routed model's vocabulary (`validateStopTokenIDs`, through `completionapi.ValidateStopTokenIDs`): an out-of-vocabulary id asserts on the node. The document decodes numbers as `json.Number`, so an id written with a fraction, even an integral one like `1.0`, is refused here although the host, decoding it as a float, would accept it. The size comes from `Options.StopTokenVocabulary`, which the package calls only when the request carries a non-empty list, since the lookup can block on the chain. An unknown size — no function wired, or one that answers 0 — refuses the field with a 400, because no id can be proven safe without it. The check runs after the pre-validation stage, so a request another field's rule refuses fails there first.
 
 ## Model profiles
 
@@ -133,7 +139,7 @@ A `*Profile` is one routed model's set of deltas from the default pipeline. A ni
 
 | Model | Deltas |
 | --- | --- |
-| `moonshotai/Kimi-K2.6` | Zero penalties forced, `structured_outputs` rejected, `safety_identifier` allowed, thinking mirrored into `chat_template_kwargs`, owns a `thinking_token_budget` resolution, a non-positive output budget lifted to the floor instead of refused. |
+| `moonshotai/Kimi-K2.6` | Zero penalties forced, `structured_outputs` rejected, `safety_identifier` allowed, thinking mirrored into `chat_template_kwargs`, owns a `thinking_token_budget` resolution, an output budget under 16 raised to its own floor (`OutputTokensFloor`) instead of refused. |
 | `MiniMaxAI/MiniMax-M2.7` | Thinking fields stripped, `reasoning_split` kept. |
 | `deepseek-ai/DeepSeek-V4-Flash-0731` | No deltas; registered so the routed model is recognised. |
 | `zai-org/GLM-5.3-Flash` | Thinking forced on in `chat_template_kwargs`. |
