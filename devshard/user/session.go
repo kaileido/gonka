@@ -328,7 +328,7 @@ type Session struct {
 	// from s.signatures. signaturesAtLocked reads those nonces from the store.
 	sigsTrimmedThrough uint64
 	// hostCatchUp holds one lock per host index for chunked catch-up.
-	hostCatchUp map[int]*sync.Mutex
+	hostCatchUp map[int]catchUpTurn
 	// catchingUp counts the chunked catch-ups running per host index. It is
 	// read without s.mu (the session picker's chooser runs under s.mu).
 	catchingUp []atomic.Int32
@@ -367,11 +367,6 @@ type Session struct {
 	signatureCollectMaxRetries  int
 	signatureCollectBaseDelay   time.Duration
 	signatureCollectHostTimeout time.Duration
-
-	// finalizeClients mirrors s.clients with admission control stripped.
-	// Built lazily on first CollectSignatures call so finalize catch-up
-	// can reach quarantined hosts.
-	finalizeClients []HostClient
 
 	heightSyncK     uint64
 	heightSyncSlots uint64
@@ -751,18 +746,18 @@ func (s *Session) inlineCatchUpLocked(hostIdx int, target uint64) (diffs []types
 }
 
 // hostCatchUpLock serializes chunked catch-up to one host.
-func (s *Session) hostCatchUpLock(hostIdx int) *sync.Mutex {
+func (s *Session) hostCatchUpLock(hostIdx int) catchUpTurn {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.hostCatchUp == nil {
-		s.hostCatchUp = make(map[int]*sync.Mutex)
+		s.hostCatchUp = make(map[int]catchUpTurn)
 	}
-	mu, ok := s.hostCatchUp[hostIdx]
+	turn, ok := s.hostCatchUp[hostIdx]
 	if !ok {
-		mu = &sync.Mutex{}
-		s.hostCatchUp[hostIdx] = mu
+		turn = make(catchUpTurn, 1)
+		s.hostCatchUp[hostIdx] = turn
 	}
-	return mu
+	return turn
 }
 
 // maxRetainedDiffs caps the diffs a session with a store holds in memory.
@@ -2205,7 +2200,9 @@ func (s *Session) drainOversizedBacklog(ctx context.Context, hostIdx int, catchU
 
 // sendCatchUp sends existing diffs to a host, admission-free: they are already signed by the group.
 func (s *Session) sendCatchUp(ctx context.Context, hostIdx int) error {
-	return s.sendCatchUpWith(ctx, hostIdx, s.getFinalizeClients()[hostIdx])
+	client, release := s.finalizeClient(hostIdx)
+	defer release()
+	return s.sendCatchUpWith(ctx, hostIdx, client)
 }
 
 // sendCatchUpWith sends existing diffs to a host using the provided client.
@@ -2341,7 +2338,8 @@ func (s *Session) CatchUpAllHosts(ctx context.Context) error {
 	}
 	hosts := s.uniquePhysicalHosts()
 	// Hosts are independent, so the group waits for the slowest one instead of the sum of them.
-	finalizeClients := s.getFinalizeClients()
+	finalizeClients, release := s.getFinalizeClients()
+	defer release()
 	perHost := make([]error, len(hosts))
 	var wg sync.WaitGroup
 	for i, target := range hosts {
@@ -3137,20 +3135,37 @@ func (s *Session) RewindHostCatchUp(hostIdx int, cause string) bool {
 // getFinalizeClients mirrors s.clients with admission control stripped, for the protocol paths that must
 // reach a host the participant budget would refuse. Rebuilt per call: s.clients is small, both callers
 // are network-bound, and a cache would have to be invalidated by anything that swaps a client.
-func (s *Session) getFinalizeClients() []HostClient {
-	type admissionBypasser interface {
-		WithoutAdmission() any
-	}
-	clients := make([]HostClient, len(s.clients))
+// Each stripped copy holds its escrow's door on the shared peer connection, so the caller runs release
+// once it is done with them; a copy left open keeps a closed escrow on that connection for good.
+func (s *Session) getFinalizeClients() (clients []HostClient, release func()) {
+	clients = make([]HostClient, len(s.clients))
+	copies := make([]HostClient, 0, len(s.clients))
 	for i, c := range s.clients {
 		clients[i] = c
-		if b, ok := c.(admissionBypasser); ok {
-			if hc, ok := b.WithoutAdmission().(HostClient); ok {
-				clients[i] = hc
-			}
+		if stripped, ok := withoutAdmission(c); ok {
+			clients[i] = stripped
+			copies = append(copies, stripped)
 		}
 	}
-	return clients
+	return clients, func() { closeHostClients(copies) }
+}
+
+// finalizeClient is getFinalizeClients for one host.
+func (s *Session) finalizeClient(hostIdx int) (client HostClient, release func()) {
+	client = s.clients[hostIdx]
+	if stripped, ok := withoutAdmission(client); ok {
+		return stripped, func() { releaseHostClient(stripped) }
+	}
+	return client, func() {}
+}
+
+func withoutAdmission(client HostClient) (HostClient, bool) {
+	bypasser, ok := client.(interface{ WithoutAdmission() any })
+	if !ok {
+		return nil, false
+	}
+	stripped, ok := bypasser.WithoutAdmission().(HostClient)
+	return stripped, ok
 }
 
 // fetchSignature tries to retrieve an already-stored signature from the host
@@ -3332,7 +3347,8 @@ func (s *Session) CollectSignatures(ctx context.Context, nonce uint64) (weight, 
 	logging.Info("collecting signatures", "subsystem", "finalize", "escrow", s.escrowID,
 		"nonce", nonce, "hosts", n, "threshold", threshold)
 
-	finClients := s.getFinalizeClients()
+	finClients, releaseFinClients := s.getFinalizeClients()
+	defer releaseFinClients()
 
 	type hostEntry struct {
 		idx  int
@@ -3569,7 +3585,8 @@ func (s *Session) sendPendingDiff(ctx context.Context, extraTxs []*types.Devshar
 	}
 	s.mu.Unlock()
 
-	finalizeClients := s.getFinalizeClients()
+	finalizeClients, release := s.getFinalizeClients()
+	defer release()
 	var lastErr error
 	for offset := 0; offset < len(finalizeClients); offset++ {
 		candidateIdx := (hostIdx + offset) % len(finalizeClients)
@@ -3738,7 +3755,8 @@ func (s *Session) dispatchDrainedDiffs(ctx context.Context, span []composedDiff)
 // way SendPendingDiff does, and it does not consult heartbeat backoff: a host
 // skipped for a quiet-session span must still accept this settlement.
 func (s *Session) sendDrainedDiff(ctx context.Context, item composedDiff) error {
-	finalizeClients := s.getFinalizeClients()
+	finalizeClients, release := s.getFinalizeClients()
+	defer release()
 	if len(finalizeClients) == 0 {
 		return fmt.Errorf("send drained diff nonce %d: no hosts", item.diff.Nonce)
 	}

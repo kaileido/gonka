@@ -79,6 +79,25 @@ func (s *Session) awaitHostCatchUp(ctx context.Context, hostIdx int, through uin
 	}
 }
 
+// catchUpTurn is one host's chunked catch-up lock. It is a channel rather than
+// a sync.Mutex so that a send waiting its turn is a durable block: inside a
+// synctest bubble a goroutine parked on a mutex stops the fake clock, and the
+// run holding the turn through a resend backoff would never wake.
+type catchUpTurn chan struct{}
+
+func (turn catchUpTurn) take() { turn <- struct{}{} }
+
+func (turn catchUpTurn) tryTake() bool {
+	select {
+	case turn <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (turn catchUpTurn) give() { <-turn }
+
 // hostCatchUpRun is one background catch-up of a host. err is set before done
 // is closed.
 type hostCatchUpRun struct {
@@ -118,14 +137,16 @@ func (s *Session) startHostCatchUp(hostIdx int, through uint64) *hostCatchUpRun 
 		defer s.sendCatchUps.Done()
 		defer s.noteCatchingUp(hostIdx, -1)
 		defer close(run.done)
-		hostMu := s.hostCatchUpLock(hostIdx)
-		hostMu.Lock()
-		defer hostMu.Unlock()
+		turn := s.hostCatchUpLock(hostIdx)
+		turn.take()
+		defer turn.give()
 		s.mu.Lock()
 		delete(s.sendCatchUpNext, hostIdx)
 		through := run.through
 		s.mu.Unlock()
-		run.err = s.sendCatchUpThrough(ctx, hostIdx, s.getFinalizeClients()[hostIdx], through)
+		client, release := s.finalizeClient(hostIdx)
+		defer release()
+		run.err = s.sendCatchUpThrough(ctx, hostIdx, client, through)
 		s.hostCatchUpRefusal(hostIdx).record(ctx, run.err, s.clock())
 	}()
 	return run
