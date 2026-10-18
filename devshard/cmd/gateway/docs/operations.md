@@ -29,7 +29,7 @@ The `/devshard/{id}/…` prefix pins a request to one escrow instead of letting 
 
 ### Who may call what
 
-`api/routes.go`, `authorizeModel`. Three tiers per model, from `limits.model_access`:
+`api/routes.go`, `authorizeModel`. Three tiers per model, from `limits.model_access`, which the admin override `model_access` sets:
 
 | Tier | Who |
 | --- | --- |
@@ -39,10 +39,10 @@ The `/devshard/{id}/…` prefix pins a request to one escrow instead of letting 
 
 **Two behaviours to know before editing it:**
 
-- An **empty** `model_access` map means every model is `open`. A **populated** one makes every model *not listed in it* `admin_only`. Adding your first entry silently closes every other model.
-- With `DEVSHARD_ADMIN_API_KEY` unset the whole admin surface answers **404, not 401** — the routes do not exist rather than rejecting the caller. A "route not found" on `/v1/admin/…` usually means the key is missing, not the path.
+- A model **not listed** in `model_access` is `admin_only`, an empty map included. A deployment starts with no entries, so until the operator names a model `open` or `api_key` only the admin reaches it, and setting `DEVSHARD_API_KEYS` alone opens nothing. While any model is `open` the gateway logs a warning naming it, at startup and after every admin override, since an open model spends the operator's escrows for any caller.
+- With `DEVSHARD_ADMIN_API_KEY` unset the whole admin surface answers **404, not 401** — the routes do not exist rather than rejecting the caller. A "route not found" on `/v1/admin/…` usually means the key is missing, not the path. Without it no one can set `model_access` either, so every model stays admin-only and the gateway serves no client.
 
-An admin key satisfies every tier, so admin calls never need a second key.
+An admin key satisfies every tier, so admin calls never need a second key. A settings write replaces the whole override set, so one that leaves out `model_access` closes every model to clients again; repeat the map in every write.
 
 `limits.model_access`, together with `limits.model_limits`, is also the list of models the gateway offers (`config.Limits.Offers`): a model named in either one answers 503 when nothing currently routes to it, and a model named in neither answers 400 while any model is routable — an empty registry answers 503 for every model instead.
 
@@ -294,6 +294,7 @@ The record carries no request or response body — capture files exist for that,
 | `host blocked for state divergence` (`journal/render_race.go`) | the block does not lift while the process runs and no metric exposes it — "why is this host never picked" is answerable only here |
 | `chain snapshot stale` / `chain snapshot recovered` | written on the **edge** only; a failed refresh keeps routing on the previous participants until the last poll that read the epoch and the participants passes `chain_snapshot_max_age_seconds`, after which requests are refused 503. The nonce-ceiling and preserved-set reads fall back within the poll and do not hold that clock back |
 | `chain epoch` / `chain blocked requests` / `chain unblocked requests` | written on the **edge** only: `phaseNarrator` (`app/observers.go`) decides the change and the journal writes it; a snapshot that carries no epoch — a first poll that failed — announces none |
+| `models are open` (`app/compose.go`) | written at boot and after every config change while any `model_access` entry is `open`; `open_models` names the models any caller reaches without a key, each spending the escrows that serve it |
 | `admin request failed` / `admin request refused` (`api/errors.go`) | the operator mutation lines are written on the successful path only, so a failed operator action would otherwise be invisible |
 
 `escrow` is always the escrow id as text. The chain carries the id behind `escrow created`, `escrow recovered from commitment` and `settle tx broadcast` as a number, and `escrow/` and `chain/` convert it to text before the journal writes it, because a JSON collector reads a number as a different type from every other line's `escrow`.
@@ -418,7 +419,7 @@ An escrow row in `GET /v1/admin/state` and `GET /v1/admin/devshards` carries, be
 | every request 429 | `limiter_queue_depth` and `effective_max_concurrent_requests` — the weight model may have scaled capacity to almost nothing after an epoch switch |
 | every request 503 with no model listed | the chain snapshot is stale, or the escrow set is empty — check `chain_snapshot_healthy` and `/v1/admin/devshards` |
 | 503 on a healthy-looking gateway | `buffered_response_bytes` at the ceiling: non-streaming replies are holding the whole budget |
-| a model returns 403 for everyone | `model_access` was populated and this model was not listed |
+| a model returns 401 to every caller but the admin | no `model_access` entry names it — set it through the `model_access` override |
 | the admin surface 404s | `DEVSHARD_ADMIN_API_KEY` is unset |
 | burns climbing | `ghost_nonces_burned_total` by reason — see [accounting.md](./accounting.md) |
 | shutdown reports "abandoned with work still running" | a host stopped answering and the drain hit the grace period; the votes it owed were not paid |

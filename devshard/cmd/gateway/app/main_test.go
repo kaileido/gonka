@@ -40,6 +40,8 @@ import (
 	"devshard/user"
 )
 
+const routeTestAdminKey = "route-test-admin-key"
+
 var errNoChainDialed = errors.New("the composed test gateway dials no chain")
 
 // TestMain ignores the goroutines that live for the process: database/sql's cleaner, the sqlite finalizer and the unclosable chain client.
@@ -273,14 +275,15 @@ func TestRunServesMetricsAndShutsDownGracefully(t *testing.T) {
 }
 
 // Test flow:
-//  1. Start run() in the background against a free port with a fake chain environment.
-//  2. Poll POST /v1/chat/completions with an unserved model until it responds.
+//  1. Start run() in the background against a free port with a fake chain environment and an admin key.
+//  2. Poll POST /v1/chat/completions, as the admin, with a model no escrow serves until it responds.
 //  3. Assert the status is 503 rather than 404, since 404 would mean main is serving the metrics mux instead of the api server's routes.
 //  4. Cancel the context and assert run() returns nil within 10s.
 func TestRunServesTheChatCompletionsRouteFromTheComposedServer(t *testing.T) {
 	port := freePort(t)
 	gatewayEnvironment(t)
 	t.Setenv("DEVSHARD_PORT", fmt.Sprintf("%d", port))
+	t.Setenv("DEVSHARD_ADMIN_API_KEY", routeTestAdminKey)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	runResult := make(chan error, 1)
@@ -290,8 +293,13 @@ func TestRunServesTheChatCompletionsRouteFromTheComposedServer(t *testing.T) {
 	var status int
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		response, err := http.Post(baseURL+"/v1/chat/completions", "application/json",
+		request, err := http.NewRequest(http.MethodPost, baseURL+"/v1/chat/completions",
 			strings.NewReader(`{"model":"nobody-serves-this","messages":[{"role":"user","content":"hi"}]}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Authorization", "Bearer "+routeTestAdminKey)
+		response, err := http.DefaultClient.Do(request)
 		if err == nil {
 			response.Body.Close()
 			status = response.StatusCode

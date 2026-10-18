@@ -382,6 +382,7 @@ func newHarness(t *testing.T, tune ...func(*config.Config)) *harness {
 	configuration.Server.StorageDir = storageDir
 	configuration.Server.AdminAPIKey = adminKey
 	configuration.Server.APIKeys = []string{clientKey}
+	configuration.Limits.ModelAccess = map[string]string{"qwen": config.ModelAccessOpen}
 	for _, adjust := range tune {
 		adjust(&configuration)
 	}

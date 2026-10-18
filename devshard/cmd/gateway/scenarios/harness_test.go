@@ -285,6 +285,14 @@ func printCapturedLogTail(t *testing.T, logged *logcapture.Recorder) {
 	}
 }
 
+func openModelAccess(models []modelSpec) map[string]string {
+	access := make(map[string]string, len(models))
+	for _, model := range models {
+		access[model.id] = config.ModelAccessOpen
+	}
+	return access
+}
+
 func setGatewayEnvironment(t *testing.T, spec testSpec, creator *signing.Secp256k1Signer) {
 	t.Helper()
 	for name, value := range map[string]string{
@@ -357,6 +365,9 @@ func (h *gatewayHarness) start() {
 	gatewayStore, err := store.Open(storageDir)
 	if err != nil {
 		h.t.Fatalf("store.Open() = %v, want nil", err)
+	}
+	if err := gatewayStore.SaveOverrides(context.Background(), config.Overrides{ModelAccess: openModelAccess(h.spec.allModels())}); err != nil {
+		h.t.Fatalf("SaveOverrides() = %v, want nil", err)
 	}
 	for index, escrowID := range h.seededIDs {
 		seeded := h.spec.seeded[index]

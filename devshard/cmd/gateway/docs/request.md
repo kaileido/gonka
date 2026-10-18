@@ -11,8 +11,8 @@ One `POST /v1/chat/completions`, from the socket to the settled nonce. Every ste
 | 1 | read the body, capped at 10 MiB | `readBody`, `chatIngestLimit` = `filters.MaxBodyBytes` | 413 |
 | 2 | normalise the request | `filters.NormalizeRequest`, options from `filterOptions` | 400 |
 | 3 | will it fit a host-bound body once encoded | inline in `chat`: `transport.PromptWireBytes` + `hostCatchUpReserveBytes` against `transport.MaxHostRequestBytes` | 413 |
-| 4 | authorise the model for this caller | `authorizeModel` | 401 / 403 |
-| 5 | is the model routable at all | `routableModel` | 503 when not ready or an offered model has nothing routable; 400 for a model nobody offers |
+| 4 | authorise the model for this caller | `authorizeModel` | 400 when the model is absent; 401 |
+| 5 | is the model routable at all | `routableModel`, for a caller step 4 admitted | 503 when not ready or an offered model has nothing routable; 400 for a model nobody offers |
 | 6 | does the chain phase admit new work | `admission`, on `snapshots.Snapshot()` | 503, except a refusal that is proof-of-compute alone, which waits for step 7 |
 | 7 | cache lookup | `cacheKeyFor` → `cache.get` | — (hit returns here); a miss behind a proof-of-compute refusal answers that 503 |
 | 8 | take an admission slot and token budget | `limiter.AcquireForModel` | 429 |

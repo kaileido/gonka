@@ -125,6 +125,7 @@ const (
 	Promoted        = "promoted"
 	Recorded        = "recorded"
 	Used            = "used"
+	OpenModels      = "open_models"
 	InFlight        = "in_flight"
 	Attempts        = "attempts"
 	EscrowBuilders  = "escrow_builders"

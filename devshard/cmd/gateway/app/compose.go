@@ -72,6 +72,13 @@ func applyContentionProfiles(enabled *bool) {
 		logkey.Subsystem, "gateway", logkey.Used, "DEVSHARD_ENABLE_CONTENTION_PROFILES")
 }
 
+func warnOpenModels(configured config.Limits) {
+	if open := configured.OpenModels(); len(open) > 0 {
+		logging.Warn("models are open: any caller reaches them without a key and spends the escrows serving them",
+			logkey.Subsystem, "gateway", logkey.OpenModels, open)
+	}
+}
+
 // applyDialGuard arms the dial-time SSRF guard before anything can dial. See ../docs/operations.md.
 func applyDialGuard() {
 	allowed := env.AllowPrivateAddresses()
@@ -147,6 +154,7 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 	if err != nil {
 		return nil, err
 	}
+	warnOpenModels(configuration.Limits)
 	configHolder := config.NewHolder(configuration)
 	clock := time.Now
 
@@ -216,6 +224,7 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 		gatewayLimiter.Reconfigure(limits.GatewayConfigFromLimits(next.Limits))
 		participants.Reconfigure(limits.ParticipantConfigFromConfig(next))
 		buffers.Retune(next.Limits.MaxBufferedResponseBytes)
+		warnOpenModels(next.Limits)
 	})
 	hosts := perf.NewTracker(configHolder, clock)
 	hosts.SetNarrator(events)

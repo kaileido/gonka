@@ -19,14 +19,14 @@ import (
 )
 
 // Test flow:
-//  1. POST a chat completion naming a model nobody serves.
+//  1. POST, as the admin, a chat completion naming a model nobody serves.
 //  2. Assert the response is 400 and names the model in its message.
 //  3. Assert no limiter slots, token budget, or races were consumed.
 //  4. Assert the response carries no Retry-After header.
 func TestAnUnroutableModelIsRejectedBeforeTheLimiterAndTheRace(t *testing.T) {
 	live := newHarness(t)
 	recorder := live.request(t, http.MethodPost, "/v1/chat/completions",
-		`{"model":"not-served","messages":[{"role":"user","content":"hi"}]}`, nil)
+		`{"model":"not-served","messages":[{"role":"user","content":"hi"}]}`, adminHeaders())
 
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status: got %d (%s), want 400", recorder.Code, recorder.Body.String())
@@ -77,14 +77,14 @@ func TestAModelOfferedThroughAccessAnswersUnavailableWithTheEscrowTick(t *testin
 
 // Test flow:
 //  1. Configure `limits.model_limits` alone to offer a model nothing routes to.
-//  2. POST a chat completion for that model.
+//  2. POST, as the admin, a chat completion for that model: without an access entry it is admin-only.
 //  3. Assert the response is 503 with Retry-After set to the escrow tick interval.
 func TestAModelOfferedOnlyThroughModelLimitsAnswersUnavailable(t *testing.T) {
 	live := newHarness(t, func(configuration *config.Config) {
 		configuration.Limits.ModelLimits = map[string]config.ModelLimits{"offered-model": {}}
 	})
 	recorder := live.request(t, http.MethodPost, "/v1/chat/completions",
-		`{"model":"offered-model","messages":[{"role":"user","content":"hi"}]}`, nil)
+		`{"model":"offered-model","messages":[{"role":"user","content":"hi"}]}`, adminHeaders())
 
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status: got %d (%s), want 503 — model_limits alone still offers the model", recorder.Code, recorder.Body.String())
@@ -92,6 +92,53 @@ func TestAModelOfferedOnlyThroughModelLimitsAnswersUnavailable(t *testing.T) {
 	want := strconv.Itoa(int(escrow.TickInterval.Seconds()))
 	if got := recorder.Header().Get("Retry-After"); got != want {
 		t.Fatalf("Retry-After: got %q, want %q (the escrow tick interval)", got, want)
+	}
+}
+
+// Test flow:
+//  1. Clear `limits.model_access`, as every deployment starts, with API keys configured.
+//  2. POST a chat completion for the served model without credentials, and with a client API key.
+//  3. Assert each is refused 401 before any limiter slot or race: a model no entry opens is admin-only.
+func TestAModelNoAccessEntryOpensIsRefusedToAnonymousAndAPIKeyCallers(t *testing.T) {
+	for _, testCase := range []struct {
+		name    string
+		headers map[string]string
+	}{
+		{"anonymous", nil},
+		{"api key", map[string]string{"Authorization": "Bearer " + clientKey}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			live := newHarness(t, func(configuration *config.Config) { configuration.Limits.ModelAccess = nil })
+
+			recorder := live.request(t, http.MethodPost, "/v1/chat/completions", chatBody, testCase.headers)
+
+			if recorder.Code != http.StatusUnauthorized {
+				t.Fatalf("status %d (%s), want 401", recorder.Code, recorder.Body.String())
+			}
+			if got := live.limiter.acquires.Load(); got != 0 {
+				t.Fatalf("limiter slots taken: got %d, want 0", got)
+			}
+			if got := live.inference.runs.Load(); got != 0 {
+				t.Fatalf("races started: got %d, want 0 — a refused caller must not spend an escrow", got)
+			}
+		})
+	}
+}
+
+// Test flow:
+//  1. Clear `limits.model_access`, as every deployment starts.
+//  2. POST a chat completion for the served model with the admin key.
+//  3. Assert it is served and races once: the admin reaches every model, listed or not.
+func TestTheAdminReachesAModelNoAccessEntryOpens(t *testing.T) {
+	live := newHarness(t, func(configuration *config.Config) { configuration.Limits.ModelAccess = nil })
+
+	recorder := live.request(t, http.MethodPost, "/v1/chat/completions", chatBody, adminHeaders())
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status %d (%s), want 200", recorder.Code, recorder.Body.String())
+	}
+	if got := live.inference.runs.Load(); got != 1 {
+		t.Fatalf("races started: got %d, want 1", got)
 	}
 }
 

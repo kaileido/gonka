@@ -290,9 +290,6 @@ func (s *Server) servedModelVocabulary(model string) int {
 
 // routableModel refuses a model before it can take a limiter slot. See README.md, "The route table".
 func (s *Server) routableModel(configured config.Limits, model string) error {
-	if model == "" {
-		return filters.Reject("model is required")
-	}
 	served := s.escrows.Models()
 	if len(served) == 0 {
 		return &ModelUnavailableError{Model: model}
@@ -307,6 +304,9 @@ func (s *Server) routableModel(configured config.Limits, model string) error {
 }
 
 func authorizeModel(configured config.Limits, model string, identity credentials) error {
+	if model == "" {
+		return filters.Reject("model is required")
+	}
 	if identity.admin {
 		return nil
 	}

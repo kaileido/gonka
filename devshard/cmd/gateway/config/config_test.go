@@ -2,6 +2,7 @@ package config
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -332,15 +333,16 @@ func TestAdminEnabledDistinguishesUnsetFromConfigured(t *testing.T) {
 
 // Test flow:
 //  1. Table-driven: each case builds a `Limits.ModelAccess` policy and asks `AccessFor` about a model that is unconfigured, listed in the policy, or outside an existing policy.
-//  2. Assert `AccessFor` returns open access when no policy exists, the model's own tier when listed, and admin-only for a model outside an existing policy.
-func TestAccessForFailsClosedOnceAPolicyExists(t *testing.T) {
+//  2. Assert `AccessFor` returns the model's own tier when listed and admin-only for any other model, an empty policy included: a deployment starts with no entries, and an open default would hand every model to anonymous callers.
+func TestAccessForFailsClosed(t *testing.T) {
 	tests := []struct {
 		name   string
 		access map[string]string
 		model  string
 		want   string
 	}{
-		{"no policy configured leaves every model open", nil, "model-a", ModelAccessOpen},
+		{"no policy configured leaves the model admin-only", nil, "model-a", ModelAccessAdminOnly},
+		{"an emptied policy leaves the model admin-only", map[string]string{}, "model-a", ModelAccessAdminOnly},
 		{"model listed in the policy keeps its tier", map[string]string{"model-a": ModelAccessAPIKey}, "model-a", ModelAccessAPIKey},
 		{"model outside an existing policy is admin-only", map[string]string{"model-a": ModelAccessOpen}, "model-b", ModelAccessAdminOnly},
 	}
@@ -350,6 +352,20 @@ func TestAccessForFailsClosedOnceAPolicyExists(t *testing.T) {
 				t.Fatalf("AccessFor(%q) = %q, want %q", testCase.model, got, testCase.want)
 			}
 		})
+	}
+}
+
+// Test flow:
+//  1. Ask OpenModels about a policy with two open models listed out of order, an api_key one and an admin_only one, and about an empty policy.
+//  2. Assert it names the two open models sorted, and none for the empty policy, which leaves every model admin-only.
+func TestOpenModelsNamesOnlyTheModelsAnyCallerReaches(t *testing.T) {
+	limits := Limits{ModelAccess: map[string]string{"zeta": ModelAccessOpen, "keyed": ModelAccessAPIKey, "alpha": ModelAccessOpen, "closed": ModelAccessAdminOnly}}
+
+	if got := limits.OpenModels(); !slices.Equal(got, []string{"alpha", "zeta"}) {
+		t.Errorf("OpenModels() = %v, want [alpha zeta]", got)
+	}
+	if got := (Limits{}).OpenModels(); len(got) != 0 {
+		t.Errorf("OpenModels() with no policy = %v, want none", got)
 	}
 }
 

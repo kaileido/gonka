@@ -3,6 +3,8 @@
 package config
 
 import (
+	"slices"
+
 	"devshard/cmd/gateway/chain"
 	"devshard/cmd/gateway/env"
 	"devshard/cmd/gateway/filters"
@@ -247,9 +249,6 @@ func (s Server) AdminEnabled() bool { return s.AdminAPIKey != "" }
 
 // AccessFor resolves a model's access tier. See operations.md, "Who may call what".
 func (l Limits) AccessFor(model string) string {
-	if len(l.ModelAccess) == 0 {
-		return ModelAccessOpen
-	}
 	if access, ok := l.ModelAccess[model]; ok {
 		return access
 	}
@@ -270,6 +269,18 @@ func (l Limits) ContextLength(model string, governedMaxModelLen uint64) uint64 {
 // RetirementReserve is what an escrow of the model must still afford, in the chain's reserve units: its context length as prompt bytes, never less than one capped answer. See capacity.md, "The balance floor".
 func (l Limits) RetirementReserve(model string, governedMaxModelLen uint64) uint64 {
 	return max(uint64(max(l.MaxTokensCap, 0)), filters.PromptBytesPerToken*l.ContextLength(model, governedMaxModelLen))
+}
+
+// OpenModels lists, sorted, the models any caller may reach without a key. See operations.md, "Who may call what".
+func (l Limits) OpenModels() []string {
+	var open []string
+	for model, access := range l.ModelAccess {
+		if access == ModelAccessOpen {
+			open = append(open, model)
+		}
+	}
+	slices.Sort(open)
+	return open
 }
 
 // Offers reports whether the operator names the model in ModelAccess or ModelLimits. See operations.md, "Who may call what".
