@@ -4,6 +4,8 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -52,6 +54,7 @@ type loadSimulationSettings struct {
 	warmup            time.Duration
 	duration          time.Duration
 	inferenceLatency  time.Duration
+	streamTokens      int
 	maxInFlight       int
 	reportEvery       time.Duration
 	profileDir        string
@@ -67,6 +70,17 @@ func loadSimulationSettingsFromEnv(t *testing.T) loadSimulationSettings {
 		value, err := strconv.Atoi(raw)
 		if err != nil || value < 1 {
 			t.Fatalf("%s=%q must be a positive integer", name, raw)
+		}
+		return value
+	}
+	readCount := func(name string) int {
+		raw := os.Getenv(name)
+		if raw == "" {
+			return 0
+		}
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 0 {
+			t.Fatalf("%s=%q must be a non-negative integer", name, raw)
 		}
 		return value
 	}
@@ -88,6 +102,7 @@ func loadSimulationSettingsFromEnv(t *testing.T) loadSimulationSettings {
 		warmup:            readDuration("LOADSIM_WARMUP", 5*time.Second),
 		duration:          readDuration("LOADSIM_DURATION", 30*time.Second),
 		inferenceLatency:  readDuration("LOADSIM_INFERENCE_LATENCY", 2*time.Second),
+		streamTokens:      readCount("LOADSIM_STREAM_TOKENS"),
 		maxInFlight:       readInt("LOADSIM_MAX_IN_FLIGHT", 512),
 		reportEvery:       readDuration("LOADSIM_REPORT_EVERY", time.Minute),
 		profileDir:        os.Getenv("LOADSIM_PROFILE_DIR"),
@@ -113,6 +128,76 @@ func (e delayedEngine) Execute(ctx context.Context, request devshardpkg.ExecuteR
 		return nil, ctx.Err()
 	}
 	return e.answer.Execute(ctx, request)
+}
+
+// streamingEngine streams one delta event per token, spread over the latency, and stores the stream as the envelope
+// a real host keeps, so the gateway parses, folds and forwards an answer event by event the way it does on a stand.
+type streamingEngine struct {
+	latency      time.Duration
+	lines        []string
+	body         []byte
+	responseHash []byte
+	servedHash   []byte
+	outputTokens uint64
+}
+
+const (
+	streamedDeltaLine = `data: {"id":"loadsim","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"t"}}]}`
+	streamedDoneLine  = "data: [DONE]"
+)
+
+func newStreamingEngine(t *testing.T, latency time.Duration, tokens int) streamingEngine {
+	t.Helper()
+	lines := make([]string, 0, tokens+2)
+	for range tokens {
+		lines = append(lines, streamedDeltaLine)
+	}
+	lines = append(lines,
+		fmt.Sprintf(`data: {"id":"loadsim","object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":80,"completion_tokens":%d}}`, tokens),
+		streamedDoneLine)
+	body, err := json.Marshal(struct {
+		Events []string `json:"events"`
+	}{Events: lines})
+	if err != nil {
+		t.Fatalf("encoding the streamed envelope: %v", err)
+	}
+	served, err := stub.HashServedView(body)
+	if err != nil {
+		t.Fatalf("hashing the streamed envelope: %v", err)
+	}
+	responseHash := sha256.Sum256(body)
+	return streamingEngine{latency: latency, lines: lines, body: body, responseHash: responseHash[:], servedHash: served, outputTokens: uint64(tokens)}
+}
+
+func (e streamingEngine) Execute(ctx context.Context, request devshardpkg.ExecuteRequest) (*devshardpkg.ExecuteResult, error) {
+	if request.Recovery == devshardpkg.RecoveryStoredOnly {
+		return nil, devshardpkg.ErrNoStoredResponse
+	}
+	interval := e.latency / time.Duration(len(e.lines))
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+	flusher, flushes := request.ResponseWriter.(http.Flusher)
+	for _, line := range e.lines {
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		timer.Reset(interval)
+		if request.ResponseWriter != nil {
+			_, _ = io.WriteString(request.ResponseWriter, line+"\n\n")
+			if flushes {
+				flusher.Flush()
+			}
+		}
+	}
+	return &devshardpkg.ExecuteResult{
+		ResponseHash: e.responseHash,
+		ServedHash:   e.servedHash,
+		InputTokens:  80,
+		OutputTokens: e.outputTokens,
+		ResponseBody: e.body,
+	}, nil
 }
 
 // inProcessFleet serves every escrow from real hosts living in this process, so the gateway dials no network.
@@ -195,7 +280,10 @@ func newInProcessFleet(t *testing.T, settings loadSimulationSettings, escrowIDs 
 		clients := make([]user.HostClient, len(signers))
 		for index, signer := range signers {
 			hostMachine := statetest.MustStateMachine(t, escrowID, configuration, group, 1<<50, creator.Address(), verifier)
-			engine := delayedEngine{answer: stub.NewInferenceEngine(), latency: settings.inferenceLatency}
+			var engine devshardpkg.InferenceEngine = delayedEngine{answer: stub.NewInferenceEngine(), latency: settings.inferenceLatency}
+			if settings.streamTokens > 0 {
+				engine = newStreamingEngine(t, settings.inferenceLatency, settings.streamTokens)
+			}
 			hostNode, err := host.NewHost(hostMachine, signer, engine, escrowID, group, nil, host.WithGrace(100))
 			if err != nil {
 				t.Fatalf("building host %d of %s: %v", index, escrowID, err)

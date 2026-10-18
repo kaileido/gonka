@@ -27,7 +27,7 @@ func runPipeline(document *Document, options Options) (Result, error) {
 		return Result{}, err
 	}
 	applyOutputTokenLimits(document, &view, options, routedModel)
-	// Read before StagePostLimits: that stage forces logprobs on, overwriting what the client asked for.
+	// Read before StagePostLimits: that stage caps top_logprobs, and the intent is what the client asked for.
 	logprobs := decodeLogprobIntent(document)
 	if err := applyStage(StagePostLimits, document, profile); err != nil {
 		return Result{}, err

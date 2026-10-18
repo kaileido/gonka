@@ -246,7 +246,7 @@ Content is accepted as a non-blank string, or as a non-empty array of `{type: "t
 - A client that asked for logprobs loses only `alwaysStrippedFields`, which is *derived* by subtracting `requestableFields` from the full list. A hand-written second list can omit a field the full list gained, which exposes `top_logprobs`.
 - A client that asked for logprobs but not alternatives keeps the key with an empty array: that is the shape OpenAI returns. Leaving the forced alternatives in would hand the client a request it never made, and removing the key would drop a field its schema expects to be present.
 
-`decodeLogprobIntent` is lenient: only an explicit `true` counts as a request, so a value of the wrong shape reads as "not asked" rather than rejecting a request the gateway would otherwise have accepted — the force rules overwrite both fields regardless of type.
+`decodeLogprobIntent` is lenient: only an explicit `true` counts as a request, so a value of the wrong shape reads as "not asked". The gateway forwards both fields as the client sent them, `top_logprobs` capped at `completionapi.ForcedTopLogprobs`; the host pins both on for the engine, since validation needs them, and forwards the logprob family back only to a client that asked.
 
 ### Non-finite barewords
 
@@ -333,9 +333,19 @@ A lower bound is enough for the race: it only asks whether the request could fit
 
 ### Rewriting an event
 
-`rewriteEvent` takes every decision on the decoded payload, never on the event's raw bytes. A host controls those bytes: it can spell a key with a `\u` escape, or split one object across two data lines, and either defeats a byte-wise check while the client's own decoder reads the object whole.
+`rewriteEvent` forwards only what the decoded payload says the client may see. A host controls the event's raw bytes: it can spell a key with a `\u` escape, repeat a key, or split one object across two data lines, and each defeats a naive byte-wise check while the client's own decoder reads the object whole. The two byte-level paths below are held to the decoded answer and decline every one of those spellings.
 
 Most events need no decision at all: a host strips the logprob family before sending when the client asked for none, so a plain content chunk carries nothing to remove. `carriesNothingToRewrite` proves that without decoding, for a client that asked for no logprobs and an event on one data line. It walks the payload's keys at every depth, unescapes a key that carries a `\` escape before comparing it, compares without regard to case, and only then checks that the whole payload is one valid object. Any key in `clientStrippedFields`, `message`, or `usage` when the client did not ask for it sends the event through the full decode. So does anything that fails the check. A spelling the check might misread costs a decode, never a leak, and `FuzzFastPathAgreesWithTheFullRewrite` holds it to forwarding only what the full rewrite would forward byte for byte.
+
+### Stripping without decoding
+
+A host forwards the logprob family to a client that asked for logprobs, so every one-token chunk carries several hundred bytes of it. The rewriter still has work on such a chunk, removing what the client must not see and emptying `top_logprobs` when it asked for logprobs without alternatives, and decoding the chunk into `map[string]any` for that, deleting fields and encoding it again was its largest cost per chunk.
+
+`stripMembersWithoutDecoding` (`strip_members.go`) applies `stripDecodedFields` to the bytes instead: it copies the payload member by member, skips every member the intent hides, and writes `[]` for `top_logprobs` when the client kept logprobs but not their alternatives. It runs only on a payload `encoding/json` accepts whole, and declines a key carrying a `\` escape and a key repeated within one object, the two spellings whose decoded reading differs from their bytes; a declined payload takes the decoding path. The output keeps the host's key order and number spellings where the decoding path re-encodes them sorted, so the bytes differ while every decoder reads the same value.
+
+The rewriter uses it for an event on one data line unless the event carries `usage` it must drop or a `message` it must convert, both of which reshape the event (`stripWithoutDecoding`).
+
+`TestStrippingWithoutDecodingMatchesDecoding` and `FuzzStrippingWithoutDecodingMatchesDecoding` hold it, for every logprob intent, to decoding to exactly what decoding and `stripDecodedFields` produce and to reporting a change exactly when they change the value. `BenchmarkStreamRewriterStandStream` measures it on a stand-shaped stream for every intent: one decode and one encode per chunk become one validation and one copy.
 
 A payload that opens as an object and does not parse is dropped rather than forwarded — a host sending something no client can read would otherwise carry along whatever it hides. A payload that is not object-shaped passes through untouched.
 
@@ -361,7 +371,9 @@ A host restates every chunk whole, so consecutive plain chunks differ only in th
 
 The template is kept only when that holds: one choice with a numeric index, no accumulating field on it but `delta`, a delta of strings whose only growing text is `content`, no other growing text field that is not null, exactly one `content` key in the payload, escaped spellings included, and room left under `maxIndexedElements`. Anything else, a literal with escapes the standard decoder reads differently included, falls back to the full decode, so the template only skips work. `FuzzContentTemplateAgreesWithTheFullMerge` pins that against the same folder with the template cleared before every event.
 
-On a plain 512-chunk stream the fold drops from about 1.7 ms and 1.36 MB to about 83 µs and 42 KB (`BenchmarkBodyFolderPlainContentStream`). A stream whose chunks carry logprobs the client did not ask for never matches and pays the full decode. A host strips them before sending unless the client asked for them (`common/completionapi/responseprocessor.go`, `prepareBody`).
+On a plain 512-chunk stream the fold drops from about 1.7 ms and 1.36 MB to about 83 µs and 42 KB (`BenchmarkBodyFolderPlainContentStream`). A host strips the logprob family before sending unless the client asked for it or its logprobs optimization is off (`common/completionapi/responseprocessor.go`, `prepareBody`).
+
+A client that asked for logprobs receives them on every chunk, so the template also covers a chunk whose choice carries `logprobs` holding nothing but a `content` array: the payload then has exactly two `content` keys, the delta's string and, after it, that array, and the template keeps the bytes before the string, between the two, and after the array. It forms only once the merged entries are non-empty and do not lead with an `index`: the full merge appends entries after such a first one, and merges indexed entries into one another, which raw entries cannot join. A matching event appends its text as above and its entries to the merged `logprobs.content` as raw JSON, after `stripMembersWithoutDecoding` applies the client's intent to each, without decoding them (`canonicalEntries` in `fold_logprobs_entries.go`). An entry is kept raw only when it is spelled as `encodeCompact` would spell its decoded value — no whitespace, keys in ascending order, strings without escapes, control bytes or the two line separators it always escapes — so the folded body stays byte for byte what the full merge encodes; any other entry sends the event through the full decode. `TestLogprobsTemplateFoldsWhatTheFullMergeWould` and `FuzzContentTemplateAgreesWithTheFullMerge` pin that for every logprob intent. `BenchmarkBodyFolderStandStream` measures it on a stand-shaped stream for every intent: a chunk's decode becomes a scan and a copy of its entries, while the periodic `measure` re-encode, which still encodes every raw entry, makes a long answer cost more per chunk.
 
 ### What the fold returns
 

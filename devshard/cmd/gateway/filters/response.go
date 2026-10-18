@@ -48,7 +48,7 @@ const (
 	stripRewritten
 )
 
-// LogprobIntent is what the client asked for, read before the force rules overwrite it. See README.md, "Response stripping".
+// LogprobIntent is what the client asked for; the host pins both logprob fields on before the engine reads them. See README.md, "Response stripping".
 type LogprobIntent struct {
 	Keep    bool
 	KeepTop bool

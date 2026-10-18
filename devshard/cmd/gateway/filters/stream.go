@@ -37,6 +37,9 @@ var (
 
 	ErrStreamCarryOverflow  = errors.New("sse event exceeds carry limit")
 	ErrStreamTruncatedEvent = errors.New("sse stream ended mid-event")
+
+	usageKey   = []byte("usage")
+	messageKey = []byte("message")
 )
 
 // StreamRewriter strips the hidden fields from an SSE stream, emitting complete events only.
@@ -99,16 +102,34 @@ func (r *StreamRewriter) Close() ([]byte, error) {
 	return final, nil
 }
 
-// rewriteEvent returns the event as the client must read it, deciding on the decoded payload and never on the host-controlled raw bytes. See README.md, "Rewriting an event".
+// rewriteEvent returns the event as the client must read it, forwarding only what the decoded payload allows. See README.md, "Rewriting an event".
 func rewriteEvent(event []byte, intent LogprobIntent, keepUsage bool) (rewritten []byte, malformed bool) {
 	dataLines, payload, held := eventPayload(event)
 	if !held {
 		return event, false
 	}
-	if dataLines == 1 && !intent.Keep && carriesNothingToRewrite(payload, keepUsage) {
-		return event, false
+	if dataLines == 1 {
+		if !intent.Keep && carriesNothingToRewrite(payload, keepUsage) {
+			return event, false
+		}
+		if stripped, changed, handled := stripWithoutDecoding(payload, intent, keepUsage); handled {
+			if !changed {
+				return event, false
+			}
+			return rebuildEvent(event, stripped), false
+		}
 	}
 	return rewriteDecodedEvent(event, dataLines, payload, intent, keepUsage)
+}
+
+func stripWithoutDecoding(payload []byte, intent LogprobIntent, keepUsage bool) (stripped []byte, changed, handled bool) {
+	reshaped := anyKeyMatches(payload, func(name []byte, _ int) bool {
+		return (!keepUsage && bytes.EqualFold(name, usageKey)) || bytes.EqualFold(name, messageKey)
+	})
+	if reshaped {
+		return nil, false, false
+	}
+	return stripMembersWithoutDecoding(payload, intent)
 }
 
 func rewriteDecodedEvent(event []byte, dataLines int, payload []byte, intent LogprobIntent, keepUsage bool) (rewritten []byte, malformed bool) {
@@ -158,7 +179,7 @@ func carriesNothingToRewrite(payload []byte, keepUsage bool) bool {
 		return false
 	}
 	triggered := anyKeyMatches(payload, func(name []byte, _ int) bool {
-		if !keepUsage && bytes.EqualFold(name, []byte("usage")) {
+		if !keepUsage && bytes.EqualFold(name, usageKey) {
 			return true
 		}
 		return slices.ContainsFunc(rewriteTriggers, func(trigger string) bool { return bytes.EqualFold(name, []byte(trigger)) })

@@ -73,7 +73,7 @@ func (f *BodyFolder) fold(event []byte) {
 	if len(payload) == 0 || bytes.Equal(payload, sseDoneMarker) {
 		return
 	}
-	if f.template != nil && f.template.appendText(payload) {
+	if f.template != nil && f.template.appendChunk(payload) {
 		f.countAssembled(payload)
 		return
 	}
@@ -95,7 +95,7 @@ func (f *BodyFolder) fold(event []byte) {
 		emptyTopLogprobs(decoded)
 	}
 	f.merged = mergeChunk(f.merged, decoded)
-	f.template = newContentTemplate(payload, decoded, f.merged)
+	f.template = newContentTemplate(payload, decoded, f.merged, f.intent)
 	f.countAssembled(payload)
 }
 
