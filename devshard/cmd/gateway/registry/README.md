@@ -69,7 +69,7 @@ Each transition above — published, retired idle or draining, a drained escrow 
 
 `ServingSessions` opens a chain-backed session with host clients (`user.NewHTTPSession`) — the only kind that can dispatch. `ReadOnlySessions` rehydrates from local storage alone (`user.NewLocalSession`): no chain, no host clients, so it can build a settlement but can neither serve nor finalize.
 
-Both rebuild the session through `user.RecoverSession`, which reads the escrow's journal 1024 diffs at a time for the replay, the backfill, the applied-transaction keys and the validation-observability rebuild (`storage.RebuildValidationObs`), and keeps only the newest 1024 to 2047 diffs in memory, so reopening an escrow at its nonce ceiling holds one page of its journal rather than all of it ([request.md](../docs/request.md), "A session keeps only the newest diffs in memory").
+Both rebuild the session through `user.RecoverSession`, which reads the escrow's journal in pages of at most 64 nonces or 8 MiB (`storage.ReadDiffPages`) for the replay, the backfill, the applied-transaction keys and the validation-observability rebuild (`storage.RebuildValidationObsFromJournal`), and trims what it holds to the newest 256 diffs as it goes, so reopening an escrow at its nonce ceiling holds one page of its journal rather than all of it ([request.md](../docs/request.md), "A session keeps only the newest diffs in memory").
 
 A factory handed an escrow with no record must fail with an error wrapping `escrow.ErrUnknownEscrow`. Callers tell that apart from a load failure to answer 404 rather than 502, and a factory that returns its own error for a missing escrow turns "no such escrow" into "the gateway is broken".
 

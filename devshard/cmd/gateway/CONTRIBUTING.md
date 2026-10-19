@@ -50,6 +50,7 @@ go tool pprof -top -cum -nodecount=40 /tmp/loadsim/cpu.pprof
 | `LOADSIM_WARMUP` | 5s | traffic before measuring, so the scheduler and the ledger reach steady state |
 | `LOADSIM_DURATION` | 30s | the measured window |
 | `LOADSIM_INFERENCE_LATENCY` | 2s | how long each host takes to answer, which is what fills the in-flight windows |
+| `LOADSIM_STREAM_TOKENS` | 0 | when set, each host streams that many content chunks spread over `LOADSIM_INFERENCE_LATENCY`, then a usage chunk, instead of answering from `stub` in one piece |
 | `LOADSIM_MAX_IN_FLIGHT` | 512 | requests open at once; an arrival past it is counted as shed, not sent |
 | `LOADSIM_REPORT_EVERY` | 1m | how often the run logs the last interval's cost beside the escrows' mean live-inference count |
 | `LOADSIM_PROFILE_DIR` | a temporary directory | where `cpu`, `mutex`, `block` and `heap` profiles land |
@@ -78,7 +79,7 @@ What it does not measure:
 
 - Top to bottom: package doc, imports, constants, variables, types, constructors, methods, helpers.
 - Imports in three groups — standard library, third-party including `common/...`, then `devshard/...` — which `gci` enforces.
-- A Go source file other than a test past about four hundred lines is split along the seam its declarations already have. A test file follows the file it tests. Markdown and other docs carry no line limit.
+- A Go source file other than a test past five hundred lines is split along the seam its declarations already have. A test file follows the file it tests. Markdown and other docs carry no line limit.
 
 ## Naming
 

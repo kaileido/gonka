@@ -4,7 +4,7 @@ The only package that knows Prometheus exists.
 
 ## What it owns
 
-- **The registry** (`metrics.go`) and every collector: limits, capacity, perf, registry, chain, funding (`funding_collector.go`: per-model escrow money, counts, planner decisions and guarantee, read from plain `FundingModel` values), cache, capture, transport, accounting, journal.
+- **The registry** (`metrics.go`) and every collector: limits, capacity, perf, registry, chain, funding (`funding_collector.go`: per-model escrow money, counts, planner decisions and guarantee, read from plain `FundingModel` values), cache, capture, transport, accounting, journal, nonce ledger.
 - **Recorders** (`race.go`, `dispatch_recorder.go`, `limit_recorder.go`) — the write side, called by the subsystems that produce the facts.
 - **Label discipline** (`labels.go`) — what may become a label and what may not.
 
@@ -21,7 +21,7 @@ The five places an unbounded label could get in, and what stops it:
 - **The route label is a pattern, never a raw path.** `InstrumentRoute` takes the pattern (`/devshard/{id}/v1/status`) as a fixed string; passing `r.URL.Path` would mint a series per request.
 - **The method label is folded to a known set.** `net/http` hands the handler any RFC 7230 token the client sent, so labelling with `r.Method` directly would let one unauthenticated caller mint a permanent series per probe. Anything outside the seven standard methods becomes `other`.
 - **Escrow series are deleted when the escrow retires.** Escrow ids are monotonic and never reused, so without `EscrowRetired` each rotation would leave one nonce-holds series, one budget series and one ghost series per reason, permanently. The sibling registry collector avoids the same growth differently — it rebuilds from the live escrow set on every scrape, so it has nothing to delete.
-- **Participant series age out.** Participants and models churn with the network, so the race recorder deletes a pair's series from all fourteen participant-labelled families once nothing has written the pair for `perf_host_staleness_seconds`, sweeping at most once per tenth of that window from the write path itself (`race.go`, `RaceRecorder.markSeen`). A write that lands later — a timeout vote settled after its host went quiet — brings the pair back, and it ages out again. A pair is marked under the aging lock before its series are written, and a sweep deletes under the same lock, so a sweep never removes a series a concurrent write is about to add.
+- **Participant series age out.** Participants and models churn with the network, so the race recorder deletes a pair's series from all fifteen participant-labelled families once nothing has written the pair for `perf_host_staleness_seconds`, sweeping at most once per tenth of that window from the write path itself (`race.go`, `RaceRecorder.markSeen`). A write that lands later — a timeout vote settled after its host went quiet — brings the pair back, and it ages out again. A pair is marked under the aging lock before its series are written, and a sweep deletes under the same lock, so a sweep never removes a series a concurrent write is about to add.
 
 - **Host RPC series go with the last escrow that binds the host.** `devshard_gateway_host_rpc{peer,mode}` is keyed by host, so it would grow with the fleet's churn; `transport.PeerRPCAdoption` deletes a host's series when `ReleaseEscrow` drops the last escrow binding it. The label is `peer`: the participant and its route prefix.
 
@@ -52,4 +52,4 @@ The response writer that records a status also forwards `Flush`, so streaming ha
 
 ## Read next
 
-- [`docs/operations.md`](../docs/operations.md), "Metrics" — every family and what it means.
+- [`docs/operations.md`](../docs/operations.md), "Metrics" — the families by the question they answer, and the ones no longer emitted.

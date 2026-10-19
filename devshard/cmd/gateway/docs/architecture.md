@@ -67,7 +67,7 @@ graph TD
 
 `filters` depends on nothing: it is pure, and its behaviour is pinned byte-for-byte against goldens. `env` is read once at startup and never again. Everything else reads an immutable `config` snapshot that is swapped whole on reconfiguration.
 
-The graph shows the layer packages, so the composition root, `app`, is not on it: `app/compose.go` imports every box above, and the four adapters that hand one event to two readers — a race outcome to the metrics recorder and the nonce ledger, a warmup's vote to that same recorder without a race's line, a burn to its log line, its metric and the ledger, a phase poll to a line only when something changed — live in `app/observers.go` rather than in a layer package. See the root [`README.md`](../README.md), "Two readers of one fact".
+The graph shows the layer packages, so the composition root, `app`, is not on it: `app` imports every box above and `app/compose.go` wires them, and the four adapters that hand one event to two readers — a race outcome to the metrics recorder and the nonce ledger, a warmup's vote to that same recorder without a race's line, a burn to its log line, its metric and the ledger, a phase poll to a line only when something changed — live in `app/observers.go` rather than in a layer package. See the root [`README.md`](../README.md), "Two readers of one fact".
 
 ## One request
 
@@ -137,4 +137,4 @@ Three places, each with its own guard:
 
 ## What runs in the background
 
-Beyond the request path, the process runs: the chain phase observer, the escrow lifecycle manager (rotation, depletion, settlement), the nonce ledger's sweep, and the escrow warmup. Each is started by the composition root and stopped by it in order — the race's drain barrier last, because it is the one that can still owe the chain something.
+Beyond the request path, the process runs: the chain phase observer, the escrow lifecycle manager (rotation, depletion, settlement), the nonce ledger's sweep, the escrow warmup, the host pings, the runtime-params feed and, when it is on, the height follower. Each is started by the composition root and stopped by it in order — the race's drain barrier right after the HTTP server, before anything it may still need to pay the chain what it owes ([`operations.md`](./operations.md), "Shutdown").

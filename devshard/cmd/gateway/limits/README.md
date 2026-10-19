@@ -10,7 +10,7 @@ Three limiters, each answering a different question.
 
 ## Boundaries
 
-- **Zero means unlimited**, for both the concurrency cap and the token budget. With `max_concurrent_requests` unset, the effective cap comes from the per-10 000-weight rate instead.
+- **Zero means unlimited**, for both the concurrency cap and the token budget. With `max_concurrent_requests` at 0 (unset, it is 2 048), the effective cap comes from the per-10 000-weight rate instead.
 - **Only host-attributable verdicts move a window.** A model refusal or a burn-empty is what the model produced, not what the host failed to carry, and narrowing for it would penalise the wrong party. An empty answer is the host's: it narrows both windows, and one that left its nonce open narrows them harder and counts towards the cut-off.
 - **A busy host and a broken one are different answers.** Congestion narrows a window; a transport fault moves no window at all and counts towards the cut-off instead, because a host that cannot be reached is not a host with no room.
 - **A lease is the only way tokens come back.** `Acquire` returns the closure that releases exactly what it took and does so once; the package exposes no release keyed by participant, so nothing can give back what it never took.

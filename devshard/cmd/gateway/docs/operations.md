@@ -151,14 +151,14 @@ Parse failures are accumulated, so a boot reports **every** misconfigured variab
 
 ### Variable names
 
-Each variable is read under one name only. `DEVSHARD_CHAIN_GRPC` and `DEVSHARD_CHAIN_RPC` fall back to `NODE_GRPC_URL` and `NODE_RPC_URL`. Two grammars apply. The lenient one covers every `DEVSHARD_*` variable and six `GATEWAY_*` limits — `GATEWAY_DEFAULT_MAX_TOKENS`, `GATEWAY_MAX_TOKENS_CAP`, `GATEWAY_MAX_CONCURRENT_REQUESTS`, the two `_PER_10000_WEIGHT` limits and `GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT`. It reads booleans in devshard's shared grammar (`on`, `off`, `yes`, `no` as well as `true` and `false`), except the two height-sync switches, which keep their own spellings: `DEVSHARD_GATEWAY_CHAIN_ORACLE` is on only for `true`, `1` or `on`, and `DEVSHARD_REQUIRE_HEIGHT_SEED` is off only for `0`, `false`, `off` or `no`; `DEVSHARD_GATEWAY_HOST_PING_INTERVAL`, `_TIMEOUT` and `DEVSHARD_QUIET_SETTLE_DELAY` as durations (`15s`); `DEVSHARD_POC_REQUEST_MODE` in any letter case. A lenient value that is unparsable, negative, or zero where zero means the default (`GATEWAY_DEFAULT_MAX_TOKENS`, `GATEWAY_MAX_TOKENS_CAP`, the two `_PER_10000_WEIGHT` limits, the transaction, cache, port and snapshot settings) is ignored with a warning naming the variable, so the default applies. A `GATEWAY_MAX_CONCURRENT_REQUESTS_PER_10000_WEIGHT` set alone also sets the PoC limit unless it equals the default. Every other `GATEWAY_*` variable is strict and refuses a bad value at boot. An **empty** value counts as unset.
+Each variable is read under one name only. `DEVSHARD_CHAIN_GRPC` and `DEVSHARD_CHAIN_RPC` fall back to `NODE_GRPC_URL` and `NODE_RPC_URL`. Two grammars apply. The lenient one covers every `DEVSHARD_*` variable and six `GATEWAY_*` limits — `GATEWAY_DEFAULT_MAX_TOKENS`, `GATEWAY_MAX_TOKENS_CAP`, `GATEWAY_MAX_CONCURRENT_REQUESTS`, the two `_PER_10000_WEIGHT` limits and `GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT`. It reads booleans in devshard's shared grammar (`on`, `off`, `yes`, `no` as well as `true` and `false`), except the three height-sync switches, which keep their own spellings: `DEVSHARD_GATEWAY_CHAIN_ORACLE` and `DEVSHARD_HEIGHTSYNC_HEARTBEAT` are on only for `true`, `1` or `on`, and `DEVSHARD_REQUIRE_HEIGHT_SEED` is off only for `0`, `false`, `off` or `no`; `DEVSHARD_GATEWAY_HOST_PING_INTERVAL`, `_TIMEOUT` and `DEVSHARD_QUIET_SETTLE_DELAY` as durations (`15s`); `DEVSHARD_POC_REQUEST_MODE` in any letter case. A lenient value that is unparsable, negative, or zero where zero means the default (`GATEWAY_DEFAULT_MAX_TOKENS`, `GATEWAY_MAX_TOKENS_CAP`, the two `_PER_10000_WEIGHT` limits, the transaction, cache, port and snapshot settings, `DEVSHARD_MAX_CONCURRENT_RUNTIME_BUILDS` and `DEVSHARD_GATEWAY_HOST_PING_CONCURRENCY`) is ignored with a warning naming the variable, so the default applies. A `GATEWAY_MAX_CONCURRENT_REQUESTS_PER_10000_WEIGHT` set alone also sets the PoC limit unless it equals the default. Every other `GATEWAY_*` variable is strict and refuses a bad value at boot. An **empty** value counts as unset.
 
 Four defaults shape a first deployment: the nonce ledger (`DEVSHARD_STATS_ENABLED`) is off, `DEVSHARD_POC_REQUEST_MODE` is `relaxed`, `DEVSHARD_LOG_FORMAT` is `json`, and `GATEWAY_MAX_CONCURRENT_REQUESTS` is 2048. These variables are not read, and setting one has no effect:
 
 - `DEVSHARD_CAPACITY_AWARE_LIMITS` — the weight model is always on;
 - `DEVSHARD_ROUTE_PREFIX` — a prefix is set per escrow, through `route_prefix` in `DEVSHARDS_JSON`;
 - `DEVSHARD_ESCROW_ID`, `DEVSHARD_MODEL`, `DEVSHARD_STORAGE_PATH` and a raw `DEVSHARD_PRIVATE_KEY` — escrows come from `DEVSHARDS_JSON`, whose entries also need `model` and `private_key_env`;
-- `DEVSHARD_LOG_LEVEL`, `DEVSHARD_HEIGHTSYNC_PROBE_INTERVAL`, `DEVSHARD_GATEWAY_HEIGHTSYNC_PEER_MATRIX`, `DEVSHARD_META_DRAIN_TIMEOUT_SECONDS`, `DEVSHARD_CAPTURE_SHORT_CONTENT_*`;
+- `LOG_FORMAT` (only `DEVSHARD_LOG_FORMAT` is), `DEVSHARD_LOG_LEVEL`, `DEVSHARD_HEIGHTSYNC_PROBE_INTERVAL`, `DEVSHARD_GATEWAY_HEIGHTSYNC_PEER_MATRIX`, `DEVSHARD_META_DRAIN_TIMEOUT_SECONDS`, `DEVSHARD_CAPTURE_SHORT_CONTENT_*`;
 - `GATEWAY_AGGREGATE_*`, `GATEWAY_CLASSIFY_*` and `GATEWAY_ERROR_STREAM_MAX_ATTEMPT_BYTES` — buffered replies are bounded by `GATEWAY_MAX_BUFFERED_RESPONSE_BYTES`.
 
 `DEVSHARD_PUBLIC_API=none` is refused: the phase observer needs the public API.
@@ -173,7 +173,7 @@ Signing keys are addressed **by the name of the variable that holds them**, neve
 | `DEVSHARD_CHAIN_ID` | empty | the chain id the gateway signs its transactions for; empty asks the node over `DEVSHARD_CHAIN_GRPC`, and a configured value wins over the node |
 | `DEVSHARD_STORAGE_DIR` | `$HOME/.cache/gonka-gateway` | where `gateway.db` and the escrow storage live |
 | `DEVSHARD_SESSION_RETENTION_EPOCHS` | 2 | how many epochs before the effective one an escrow's session directory stays on disk; `0` keeps every one, and `1` is raised to 2, the hosts' own horizon ("Session storage" below) |
-| `GATEWAY_MAX_CONCURRENT_REQUESTS` | 2048 | the hard admission ceiling; unset lets the weight model decide |
+| `GATEWAY_MAX_CONCURRENT_REQUESTS` | 2048 | the hard admission ceiling; `0` sets no static cap and lets the weight model decide alone |
 | `GATEWAY_ADMISSION_QUEUE_WAIT_MS` | 300000 | how long a request waits for a slot before 429 |
 | `GATEWAY_ADMISSION_QUEUE_PER_SLOT` | 4 | how deep the queue is allowed to grow per slot |
 | `GATEWAY_MAX_BUFFERED_RESPONSE_BYTES` | 512 MiB | **every** non-streaming reply being assembled, at once |
@@ -223,9 +223,14 @@ These are read the same way and rarely need changing. Where a knob has a longer 
 
 | Variable | Default | What it decides |
 | --- | --- | --- |
+| `DEVSHARD_GATEWAY_DISABLED` | false | the kill switch ("The kill switch" above) |
 | `DEVSHARD_GATEWAY_DISABLED_MESSAGE` | empty | the text of the 503 a disabled gateway answers ("The kill switch" above) |
 | `DEVSHARD_ENABLE_CONTENTION_PROFILES` | false | whether lock contention and blocking are sampled, so `/debug/pprof/mutex` and `/debug/pprof/block` hold data; it costs a little on every contended lock, so it stays off outside a diagnosis, and turning it on is logged |
 | `DEVSHARD_GATEWAY_DISABLED_NEW_URL` | empty | the URL a disabled gateway redirects to with 308; empty means 503 |
+| `DEVSHARD_API_KEYS` / `DEVSHARD_ADMIN_API_KEY` | empty / empty | the client keys an `api_key` model accepts and the admin key; an admin key shorter than 16 characters is refused, and an empty one leaves the admin surface unrouted ("Who may call what" above) |
+| `DEVSHARDS_JSON` | empty | the escrows seeded into the store at boot, each naming its `model` and `private_key_env` ("Boot" below) |
+| `DEVSHARD_CHAIN_GRPC` / `DEVSHARD_CHAIN_RPC` | `localhost:9090` / empty | the chain's gRPC endpoint, and the CometBFT RPC its queries fall back to; an empty RPC endpoint is derived from the gRPC host at the standard port ([`README.md`](../README.md), "Escrow sessions and the chain connection") |
+| `DEVSHARD_PUBLIC_API` | `http://localhost:9000` | the public API the phase observer polls; it must be an absolute URL |
 | `DEVSHARD_MAX_CONCURRENT_RUNTIME_BUILDS` | 16 | escrow sessions opened at once while the boot publishes the active escrows ("Boot" below) |
 | `DEVSHARD_TX_FEE_DENOM` / `DEVSHARD_TX_FEE_AMOUNT` | `ngonka` / 1 000 000 | the fee every chain transaction of the gateway carries; a fee in `ngonka` is added to what an escrow create must find in the wallet |
 | `DEVSHARD_TX_GAS_LIMIT` | 700 000 | the gas limit of those transactions |
@@ -368,7 +373,7 @@ The record carries no request or response body — capture files exist for that,
 | `commitment cleared` | a creation intent was abandoned, with the reason — one of which (`transaction created no escrow`) means the transaction *did* commit |
 | `escrow gone from chain, taken out of service` | `escrow retired` also fires for settlement parking, so this is the only line carrying the cause; it also fires for a row already out of service whose escrow the chain pruned past its settle deadline, which leaves the unsettled count with it |
 | `escrow chain epoch and amount unresolved` | the row's `chain_epoch` and `amount` could not be read, with the reason; written once per row until it resolves, so the row's `chain_epoch: 0` in the admin JSON is the only sign it is still unresolved. A row out of service past its settle deadline whose escrow the chain pruned is marked gone from chain, and leaves this line for good |
-| `escrow depleted with no replacement configured` | capacity left the fleet and nothing replaces it |
+| `escrow marked for replacement` | **Warn** — an escrow reached its nonce cap and is marked for the next escrow tick, with the `reason`; written once per escrow. A balance mark writes no line, since nothing replaces it: the funding planner's lines below say what happens to the money |
 | `regular escrows promoted to temp` | the bridge funded fewer temps than `temp_count` — no room under `max_unsettled`, a model the network does not serve, or a failed create — so the regulars keep serving as temps instead of being retired; `rotation_status.create_error` names the cause (`bridge funded fewer temps than temp_count` for a partial fill) |
 | `escrow parked at its settlement deadline` / `escrow deadline passes unsettled` / `settle margin shorter than two settle windows` / `escrow deadlines read past a stale chain height` | an escrow came within `rotation.settle_margin_blocks` of `settle_by`, the switch block by which its chain epoch must settle, and was parked; a row inside its margin that nothing is allowed to settle, or whose deadline has passed (Error, with `reason`: `settlement_disabled`, `operator_deactivated`, `key_missing`, `deadline_passed`; once per row while it lasts; `settle_by` is left out once the switch block is no longer known, as on `deadline_passed`), a margin shorter than two settle windows at the measured block time, and a chain snapshot older than `chain_snapshot_max_age_seconds` whose deadlines are read at `projected_height` (`height` plus `stale_for_ms` over the measured block time, or one block a second), once per episode |
 | `escrow funding planned` / `funding guarantee broken` / `model amount cannot fund a full escrow` / `escrow budget reached` | the funding planner's decision for a model and the start of each episode. Progress lane, so a backlog may drop them |
@@ -376,8 +381,8 @@ The record carries no request or response body — capture files exist for that,
 | `a host stopped mid-answer: reply served, not cached` (`journal/render_request.go`) | the reply reached the client whole and never reached a terminal `finish_reason`, so nothing replays it. The gateway writes the SSE terminator itself, so nothing else names a truncated answer — but only a reply the cache would otherwise have stored gets here: with `chat_cache_max_bytes` at 0, for a body past the per-entry bound, or when the client had already left, a truncated answer still passes unnamed |
 | `escrow stopped burning nonces at its budget` | the escrow now queues callers rather than spending on requests it cannot serve |
 | `escrow warmed` / `escrow warmup voted on its unfinished nonce` | a new escrow's group was taught the escrow, and the probe's own nonce was settled; the vote line is **Warn** when the vote failed, and `catch_up_error` appears only when the catch-up failed |
-| `catch_up_store_read_failed` / `state_root_store_read_failed` (`user/session.go`) | a host behind the session's in-memory window could not be taught its gap, or a response's root could not be checked, because the escrow's store read failed; nothing was sent, and the next request to that host retries |
-| `heartbeat host dead` (`user/heartbeat.go`) | a heartbeat did not reach the host; `backoff` is how long the host is skipped for, doubling per failure up to eight intervals and cleared by any answer ([escrows.md](./escrows.md), "Height sync") |
+| `read trimmed diffs from store` (`user/session.go`) | a host behind the diffs the session holds in memory could not be taught its gap, because the escrow's store read failed; nothing was sent, and the next request to that host retries |
+| `heartbeat send failed` (`user/heartbeat.go`) | a heartbeat did not reach the host; `backoff` is how long the host is skipped for, doubling per failure up to eight intervals and cleared by any answer ([escrows.md](./escrows.md), "Height sync") |
 | `host blocked for state divergence` (`journal/render_race.go`) | the block does not lift while the process runs and no metric exposes it — "why is this host never picked" is answerable only here |
 | `chain snapshot stale` / `chain snapshot recovered` | written on the **edge** only; a failed refresh keeps routing on the previous participants until the last poll that read the epoch and the participants passes `chain_snapshot_max_age_seconds`, after which requests are refused 503. The nonce-ceiling and preserved-set reads fall back within the poll and do not hold that clock back |
 | `chain epoch` / `chain blocked requests` / `chain unblocked requests` | written on the **edge** only: `phaseNarrator` (`app/observers.go`) decides the change and the journal writes it; a snapshot that carries no epoch — a first poll that failed — announces none |
@@ -390,7 +395,7 @@ Admin lines carry the action and its subject, **never the request body** — an 
 
 ## Metrics
 
-`/metrics`, Prometheus: 95 gateway families beside the Go runtime and process collectors. The nonce ledger adds one, the facts it dropped for an escrow it does not hold; everything else it knows is served by its own JSON API (see [accounting.md](./accounting.md)). Grouped by the question they answer:
+`/metrics`, Prometheus: 95 gateway families beside the Go runtime and process collectors. One of them is the nonce ledger's, the facts it dropped for an escrow it does not hold; everything else it knows is served by its own JSON API (see [accounting.md](./accounting.md)). Grouped by the question they answer:
 
 | Question | Series |
 | --- | --- |
@@ -433,7 +438,7 @@ An escrow hands out nonces one at a time, so its throughput is the inverse of th
 
 ### Cardinality rules
 
-Route labels are **templated** (`/devshard/{id}/…`), never per-escrow, so cardinality does not grow with the escrow set. `/v1/admin/devshards/import` reports under the `/v1/admin/devshards/{id}` label so it lands in the same panel. A recorder keeps every label value it writes non-empty (`metrics/labels.go`, `metricLabel`): an empty label silently merges unrelated series, and a status with no recoverable code reports as `0` (`metrics/race.go`, `statusNoCode`) rather than as blank. A collector, by contrast, passes its source's values through unchanged, empty ones included.
+Route labels are **templated** (`/devshard/{id}/…`), never per-escrow, so cardinality does not grow with the escrow set. `/v1/admin/devshards/import` reports under the `/v1/admin/devshards/{id}` label so it lands in the same panel. A recorder keeps every label value it writes non-empty (`metrics/labels.go`, `metricLabel`): an empty label silently merges unrelated series, and a status with no recoverable code reports as `0` (`metrics/vocabulary.go`, `statusNoCode`) rather than as blank. A collector, by contrast, passes its source's values through unchanged, empty ones included.
 
 ### Metric changes
 

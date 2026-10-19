@@ -93,7 +93,7 @@ The credit is returned to a participant that served since it was taken — but o
 | `ErrHostsBusy` | every host is unusable right now for a reason that clears on its own: windows full, cut off, or owing proof-of-compute — distinct from a host excluded or taken out of routing, and a client retries the two differently | yes |
 | `ErrAllowlistUnreachable` | no escrow this gateway serves holds a participant the allowlist admits; the operator narrowed routing to participants none of these escrow groups contains | no |
 | `ErrNoEscrowCapacity` | every candidate escrow is at zero spare weight; it names no host | — |
-| `EscrowsOutOfFunds` | every escrow the walk asked refused to pay for this request; it counts them and wraps both `ErrNoEscrowCapacity` and `ErrInsufficientBalance` | a replacement escrow or a settling inference |
+| `EscrowsOutOfFundsError` | every escrow the walk asked refused to pay for this request; it counts them and wraps both `ErrNoEscrowCapacity` and `ErrInsufficientBalance` | a replacement escrow or a settling inference |
 | `ErrEscrowBusy` | every candidate escrow's dispatch queue is full (a pinned request: its escrow's): the escrows are sound, the caller arrived faster than they can serve | yes |
 | `ErrDispatcherStopped` | the escrow's dispatcher shut down before the request was assigned a nonce; retryable | yes |
 | `ErrEscrowGone` | a request's pinned escrow no longer accepts new inferences | no |
