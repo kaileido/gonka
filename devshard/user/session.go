@@ -1933,7 +1933,7 @@ func (s *Session) SendOnly(ctx context.Context, p *PreparedInference, stream io.
 		Payload:                      p.Payload(),
 		LogprobsOptimizationOverride: p.params.LogprobsOptimizationOverride,
 	}, stream, func(partial *host.HostResponse) {
-		s.confirmStartOnReceipt(p.diff.Nonce, partial)
+		s.confirmStartOnReceipt(p.hostIdx, p.diff.Nonce, partial)
 		if receiptHandler != nil {
 			receiptHandler()
 		}
@@ -1948,12 +1948,16 @@ func (s *Session) SendOnly(ctx context.Context, p *PreparedInference, stream io.
 // ends. A host that holds an empty stream open can outlast every other nonce on the escrow, and the
 // receipt is only carried to the chain by the next diff: queued late, it can find no diff left to ride,
 // and the nonce stays Pending forever, which is the one state its execution timeout cannot be voted in.
-func (s *Session) confirmStartOnReceipt(inferenceNonce uint64, resp *host.HostResponse) {
-	if resp == nil || len(resp.Receipt) == 0 {
+func (s *Session) confirmStartOnReceipt(hostIdx int, inferenceNonce uint64, resp *host.HostResponse) {
+	if resp == nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.advanceCursorOnReceiptLocked(hostIdx, resp)
+	if len(resp.Receipt) == 0 {
+		return
+	}
 	s.acceptConfirmStartLocked(-1, nil, "receipt", &types.MsgConfirmStart{
 		InferenceId:       inferenceNonce,
 		ExecutorSig:       resp.Receipt,
@@ -1961,6 +1965,21 @@ func (s *Session) confirmStartOnReceipt(inferenceNonce uint64, resp *host.HostRe
 		ObservedHeight:    resp.ObservedHeight,
 		ObservedBlockHash: resp.ObservedBlockHash,
 	})
+}
+
+// advanceCursorOnReceiptLocked moves a host's catch-up cursor to the nonce its receipt reports, when the
+// receipt's state root matches ours there: the host applied that far, so a stream that stays open does not
+// leave the next request to it resending diffs it holds. Caller holds s.mu.
+func (s *Session) advanceCursorOnReceiptLocked(hostIdx int, resp *host.HostResponse) {
+	if hostIdx < 0 || hostIdx >= len(s.group) || resp.Nonce == 0 || resp.Nonce > s.nonce || resp.Nonce <= s.hostSyncNonce[hostIdx] || len(resp.StateHash) == 0 {
+		return
+	}
+	expected, err := s.expectedStateRootLocked(resp.Nonce)
+	if err != nil || !bytes.Equal(expected, resp.StateHash) {
+		return
+	}
+	s.hostSyncNonce[hostIdx] = resp.Nonce
+	s.dropDiffPrefixLocked()
 }
 
 // acceptConfirmStartLocked queues msg only when it is the assigned executor's signature over a

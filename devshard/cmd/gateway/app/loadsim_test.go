@@ -532,6 +532,9 @@ func TestLoadSimulation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("store.Open() = %v, want nil", err)
 	}
+	if err := gatewayStore.SaveOverrides(t.Context(), config.Overrides{ModelAccess: map[string]string{loadSimulationModel: config.ModelAccessOpen}}); err != nil {
+		t.Fatalf("SaveOverrides() = %v, want nil", err)
+	}
 	escrowIDs := make([]string, 0, settings.escrows)
 	for index := range settings.escrows {
 		escrowID := strconv.Itoa(1000 + index)
