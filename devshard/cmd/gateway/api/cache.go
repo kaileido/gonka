@@ -30,6 +30,8 @@ type cacheKey struct {
 	logprobs filters.LogprobIntent
 	stream   bool
 	usage    bool
+
+	emptyAnswerCountsTokens bool
 }
 
 type cachedResponse struct {
@@ -83,16 +85,18 @@ func newResponseCache(maxBytes int64) *responseCache {
 
 // The key carries everything that varies the answer, including what the normalised body no longer
 // states. See README.md, "The response cache".
-func cacheKeyFor(r *http.Request, model string, body []byte, logprobs filters.LogprobIntent, stream, usage bool) cacheKey {
+func cacheKeyFor(r *http.Request, normalized filters.Result) cacheKey {
 	caller, _ := bearerKey(r.Header.Get("Authorization"))
 	return cacheKey{
 		caller:   sha256.Sum256([]byte(caller)),
-		body:     sha256.Sum256(body),
+		body:     sha256.Sum256(normalized.Body),
 		escrow:   r.PathValue("id"),
-		model:    strings.TrimSpace(model),
-		logprobs: logprobs,
-		stream:   stream,
-		usage:    usage,
+		model:    strings.TrimSpace(normalized.Model),
+		logprobs: normalized.Logprobs,
+		stream:   normalized.ClientStream,
+		usage:    normalized.ClientUsage,
+
+		emptyAnswerCountsTokens: normalized.EmptyAnswerCountsTokens,
 	}
 }
 

@@ -68,6 +68,7 @@ func benchServer(b *testing.B, chunks []string) *Server {
 	configuration.Server.StorageDir = b.TempDir()
 	configuration.Server.AdminAPIKey = adminKey
 	configuration.Server.APIKeys = []string{clientKey, "second-key", "third-key"}
+	configuration.Limits.ModelAccess = map[string]string{"qwen": config.ModelAccessOpen}
 	escrows := &fakeRegistry{
 		models:   []string{"qwen"},
 		sessions: map[string]registry.EscrowSession{},
@@ -77,24 +78,25 @@ func benchServer(b *testing.B, chunks []string) *Server {
 	events := journal.New(journal.Settings{Lines: quietLogger{}})
 	b.Cleanup(func() { _ = events.Close() })
 	server, err := New(Deps{
-		Config:     config.NewHolder(&configuration),
-		Escrows:    escrows,
-		Inference:  &fakeEngine{chunks: chunks, outcome: benchOutcome()},
-		Limiter:    &countingLimiter{},
-		Capacity:   &fakeCapacity{capacity: limits.ModelCapacity{ScaleFactor: 1}},
-		Snapshots:  benchSnapshots{},
-		Control:    &fakeControl{},
-		Accounting: &fakeAccounting{rows: map[string]store.RequestRecord{}},
-		Operations: &fakeOperations{},
-		Suspicious: &fakeSuspicious{},
-		Telemetry:  &fakeTelemetry{},
-		Rejections: &spyRejections{},
-		Journal:    events,
-		Buffers:    NewBufferBudget(1 << 30),
-		StorageDir: configuration.Server.StorageDir,
-		Version:    "bench",
-		Now:        func() time.Time { return harnessClock },
-		RequestIDs: func() string { return "request-1" },
+		Config:       config.NewHolder(&configuration),
+		Escrows:      escrows,
+		Inference:    &fakeEngine{chunks: chunks, outcome: benchOutcome()},
+		Limiter:      &countingLimiter{},
+		Capacity:     &fakeCapacity{capacity: limits.ModelCapacity{ScaleFactor: 1}},
+		Snapshots:    benchSnapshots{},
+		Control:      &fakeControl{},
+		Accounting:   &fakeAccounting{rows: map[string]store.RequestRecord{}},
+		Operations:   &fakeOperations{},
+		Suspicious:   &fakeSuspicious{},
+		ModelFilters: newFakeModelFilters(),
+		Telemetry:    &fakeTelemetry{},
+		Rejections:   &spyRejections{},
+		Journal:      events,
+		Buffers:      NewBufferBudget(1 << 30),
+		StorageDir:   configuration.Server.StorageDir,
+		Version:      "bench",
+		Now:          func() time.Time { return harnessClock },
+		RequestIDs:   func() string { return "request-1" },
 	})
 	if err != nil {
 		b.Fatalf("New: %v", err)
@@ -219,7 +221,7 @@ func BenchmarkCacheKeyFor(b *testing.B) {
 
 	b.ReportAllocs()
 	for b.Loop() {
-		cacheKeyFor(request, "qwen", body, filters.LogprobIntent{}, false, false)
+		cacheKeyFor(request, filters.Result{Model: "qwen", Body: body})
 	}
 }
 

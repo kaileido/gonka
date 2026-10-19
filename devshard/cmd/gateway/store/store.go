@@ -102,6 +102,12 @@ var migrations = []string{
 	`ALTER TABLE devshards ADD COLUMN chain_epoch INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE devshards ADD COLUMN amount INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE devshards ADD COLUMN gone_from_chain INTEGER NOT NULL DEFAULT 0`,
+	`CREATE TABLE IF NOT EXISTS model_filters (
+		model TEXT PRIMARY KEY,
+		preset TEXT NOT NULL,
+		filters_json TEXT NOT NULL,
+		updated_at TEXT NOT NULL
+	);`,
 }
 
 // ErrLegacyDatabase reports a gateway.db this gateway did not create, and legacyOnlyTables are the tables that prove it; both are kept out of the migrations block. See README.md, "The legacy-database guard".

@@ -132,6 +132,19 @@ These keys are fixed: an escrow is `id` in `/v1/status`, `/v1/admin/state` and t
 
 `capacityStatus` carries each weight under two names with one value (`current_weight` and `total_weight`, `baseline_weight` and `full_weight`, `scale_factor` and `limit_share`) — see `operations.md`, "Reading the gateway's state".
 
+## Model filters
+
+`/v1/admin/filters/{model...}` is the operator's per-model filter setting (`admin_filters.go`). The wildcard takes the slashes a model id carries, and the literal `/v1/admin/filters/presets` beats it, so no model can be named `presets`; the metric label is the template, so model ids never reach a label.
+
+- **A PUT decodes strictly** (`decodeAdminBodyStrictly`, `strictjson.DecodeKnownFields`): an unknown key, at the top or inside `filters`, and anything after the first JSON value are a 400, and a body that names neither a preset nor a filter is a 400 rather than a stored no-op. Key names match case-insensitively and a repeated key keeps its last value, as the standard library decoder does; the stored rows are read back through the same decoder.
+- **An entry is built from one `ModelFilters.Snapshot`**, so its stored `filters` and its `effective` profile always come from the same write. A row the gateway could not read at boot is listed as `source: unreadable` with its `problem` and is not applied. `warnings` names the settings limits that override the filters (`limitWarnings`).
+- **The response cache key carries the empty-answer exemption** (`cacheKeyFor` takes the whole `filters.Result`): it is the one filter that changes classification without changing the body.
+- **`effective` is `Profile.Knobs`**: the model's filters written as the same object a PUT carries, so a field rename inside `filters.Profile` never changes the answer.
+- **The chain check reads the cached snapshot**: no chain call on the admin path. It runs on PUT only, unless `allow_off_chain` is set — and always for a setting whose composed profile `RequiresRegisteredModel`; reads and DELETE never need the chain.
+- **`limits` in an entry is read-only**: the model's token limits from `/v1/admin/settings`, shown so everything about a model is in one answer.
+- **`ModelFilters.Put` composes before it stores**, so a setting the filters refuse never reaches the database (`app/model_filters.go`).
+- **The chat path reads `ModelFilters.Profiles()` once per request** and passes it to the filters in `filters.Options`; the resolved thinking-budget flag goes on to the engine with the request.
+
 ## The operator and recovery surface
 
 `auditAdmin` records an operator action that changed state the gateway serves or settles from. It carries the action and its subject, never the body: an override payload can hold the admin key.

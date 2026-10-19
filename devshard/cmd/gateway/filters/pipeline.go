@@ -4,7 +4,7 @@ import "strings"
 
 func runPipeline(document *Document, options Options) (Result, error) {
 	routedModel := resolveRoutedModel(document, options.RoutedModel)
-	profile := ProfileFor(routedModel)
+	profile := options.Profiles.For(routedModel)
 
 	unwrapExtraBody(document)
 	if err := rejectUnknownParameters(document); err != nil {
@@ -26,7 +26,7 @@ func runPipeline(document *Document, options Options) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	applyOutputTokenLimits(document, &view, options, routedModel)
+	applyOutputTokenLimits(document, &view, options, routedModel, profile)
 	// Read before StagePostLimits: that stage caps top_logprobs, and the intent is what the client asked for.
 	logprobs := decodeLogprobIntent(document)
 	if err := applyStage(StagePostLimits, document, profile); err != nil {
@@ -44,13 +44,14 @@ func runPipeline(document *Document, options Options) (Result, error) {
 		return Result{}, err
 	}
 	return Result{
-		Body:                body,
-		Model:               view.Model,
-		ClientStream:        view.Stream,
-		ClientUsage:         usage,
-		MaxTokens:           view.MaxTokens,
-		MaxCompletionTokens: view.MaxCompletionTokens,
-		Logprobs:            logprobs,
+		Body:                    body,
+		Model:                   view.Model,
+		ClientStream:            view.Stream,
+		ClientUsage:             usage,
+		MaxTokens:               view.MaxTokens,
+		MaxCompletionTokens:     view.MaxCompletionTokens,
+		Logprobs:                logprobs,
+		EmptyAnswerCountsTokens: profile.emptyAnswerCountsTokens(),
 	}, nil
 }
 

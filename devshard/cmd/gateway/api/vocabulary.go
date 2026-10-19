@@ -53,3 +53,29 @@ const (
 	phaseNameSettlement = "settlement"
 	phaseNameUnknown    = "unknown"
 )
+
+type (
+	filterSource string
+	limitsSource string
+)
+
+// Where a model filter entry's profile comes from, and where its read-only limits come from.
+const (
+	filterSourceStored     filterSource = "stored"
+	filterSourceBuiltIn    filterSource = "built_in"
+	filterSourceDefault    filterSource = "default"
+	filterSourceUnreadable filterSource = "unreadable"
+	limitsSourceModel      limitsSource = "model_limits"
+	limitsSourceGlobal     limitsSource = "global"
+)
+
+// The model-filter routes' error codes and the query parameter that skips the chain check.
+const (
+	errorCodeModelNotOnChain        = "model_not_on_chain"
+	errorCodeChainModelsUnavailable = "chain_models_unavailable"
+	allowOffChainParameter          = "allow_off_chain"
+	allowOffChainAbsent             = ""
+)
+
+// A stored filter row the gateway read without a problem.
+const problemNone = ""

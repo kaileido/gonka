@@ -68,7 +68,7 @@ func validStructuredOutputs(bounds structuredOutputsBounds) RuleFunc {
 		if !exists {
 			return nil
 		}
-		if ctx.Profile != nil && ctx.Profile.RejectStructuredOutput {
+		if ctx.Profile.rejectsStructuredOutputs() {
 			return Reject("structured_outputs: not supported on this model — use response_format instead")
 		}
 		object, ok := raw.(map[string]any)

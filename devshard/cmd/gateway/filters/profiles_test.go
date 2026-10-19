@@ -1,31 +1,34 @@
 package filters
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // Test flow:
-//  1. Look up the profile for kimiModelID.
+//  1. Look up the built-in profile for kimiModelID.
 //  2. Assert it equals kimiProfile.
-func TestProfileForMatchesKimi(t *testing.T) {
-	profile := ProfileFor(kimiModelID)
+func TestBuiltInProfileForMatchesKimi(t *testing.T) {
+	profile := BuiltInProfileFor(kimiModelID)
 	if profile != kimiProfile {
-		t.Fatalf("ProfileFor(%q) = %v, want kimiProfile", kimiModelID, profile)
+		t.Fatalf("BuiltInProfileFor(%q) = %v, want kimiProfile", kimiModelID, profile)
 	}
 }
 
 // Test flow:
-//  1. Look up the profile for minimaxModelID.
+//  1. Look up the built-in profile for minimaxModelID.
 //  2. Assert it equals minimaxProfile.
-func TestProfileForMatchesMinimax(t *testing.T) {
-	profile := ProfileFor(minimaxModelID)
+func TestBuiltInProfileForMatchesMinimax(t *testing.T) {
+	profile := BuiltInProfileFor(minimaxModelID)
 	if profile != minimaxProfile {
-		t.Fatalf("ProfileFor(%q) = %v, want minimaxProfile", minimaxModelID, profile)
+		t.Fatalf("BuiltInProfileFor(%q) = %v, want minimaxProfile", minimaxModelID, profile)
 	}
 }
 
 // Test flow:
-//  1. Look up the profile for a table of routed model names: the default qwen model, an empty string, near-miss version strings for kimi, minimax and glm, and a kimi ID with leading whitespace.
-//  2. Assert ProfileFor returns nil for every case.
-func TestProfileForUnknownModelReturnsNil(t *testing.T) {
+//  1. Look up the built-in profile for a table of routed model names: the default qwen model, an empty string, near-miss version strings for kimi, minimax and glm, and a kimi ID with leading whitespace.
+//  2. Assert BuiltInProfileFor returns nil for every case.
+func TestBuiltInProfileForUnknownModelReturnsNil(t *testing.T) {
 	tests := []struct {
 		name        string
 		routedModel string
@@ -39,24 +42,44 @@ func TestProfileForUnknownModelReturnsNil(t *testing.T) {
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
-			if profile := ProfileFor(testCase.routedModel); profile != nil {
-				t.Errorf("ProfileFor(%q) = %v, want nil", testCase.routedModel, profile)
+			if profile := BuiltInProfileFor(testCase.routedModel); profile != nil {
+				t.Errorf("BuiltInProfileFor(%q) = %v, want nil", testCase.routedModel, profile)
 			}
 		})
 	}
 }
 
 // Test flow:
-//  1. Compare kimiModelID, minimaxModelID and glm53FlashModelID against their expected literal strings.
-//  2. Assert each constant equals its expected value.
-func TestModelIDLiterals(t *testing.T) {
-	if kimiModelID != "moonshotai/Kimi-K2.6" {
-		t.Errorf("kimiModelID = %q, want %q", kimiModelID, "moonshotai/Kimi-K2.6")
+//  1. List the built-in models and look each one's preset up.
+//  2. Assert the three bound models are listed in order with their presets, and an unbound model has none.
+func TestBuiltInBindingsByPreset(t *testing.T) {
+	want := map[string]PresetName{glm53FlashModelID: presetGLMFlashForTest, kimiModelID: presetKimiForTest, minimaxModelID: presetMinimaxForTest}
+	models := BuiltInModels()
+	if len(models) != len(want) || models[0] != minimaxModelID || models[1] != kimiModelID || models[2] != glm53FlashModelID {
+		t.Fatalf("BuiltInModels() = %v, want the three bound models in byte order", models)
 	}
-	if minimaxModelID != "MiniMaxAI/MiniMax-M2.7" {
-		t.Errorf("minimaxModelID = %q, want %q", minimaxModelID, "MiniMaxAI/MiniMax-M2.7")
+	for model, preset := range want {
+		if got, bound := BuiltInPresetFor(model); !bound || got != preset {
+			t.Errorf("BuiltInPresetFor(%q) = %q, %v; want %q", model, got, bound, preset)
+		}
 	}
-	if glm53FlashModelID != "zai-org/GLM-5.3-Flash" {
-		t.Errorf("glm53FlashModelID = %q, want %q", glm53FlashModelID, "zai-org/GLM-5.3-Flash")
+	if _, bound := BuiltInPresetFor("Qwen/Qwen3-235B-A22B-Instruct-2507-FP8"); bound {
+		t.Error("Qwen has a built-in preset")
+	}
+}
+
+// Test flow:
+//  1. Check model names the chat path would accept and ones it would refuse.
+//  2. Assert IsValidModelName agrees with the request rule.
+func TestIsValidModelName(t *testing.T) {
+	for _, valid := range []string{kimiModelID, "qwen", "a.b_c-d/e"} {
+		if !IsValidModelName(valid) {
+			t.Errorf("IsValidModelName(%q) = false", valid)
+		}
+	}
+	for _, invalid := range []string{"", " ", "bad model", strings.Repeat("a", modelMaxLen+1), "model?"} {
+		if IsValidModelName(invalid) {
+			t.Errorf("IsValidModelName(%q) = true", invalid)
+		}
 	}
 }

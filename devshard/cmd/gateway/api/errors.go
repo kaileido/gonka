@@ -194,6 +194,10 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, errorEnvelope{Error: errorDetail{Message: message}})
 }
 
+func writeCodedError(w http.ResponseWriter, status int, code, message string) {
+	writeJSON(w, status, errorEnvelope{Error: errorDetail{Message: message, Code: code}})
+}
+
 // writeControlFailure is deliberately not writeErrorFor: 502 is wrong for a store this process owns.
 func writeControlFailure(w http.ResponseWriter, err error) bool {
 	if err == nil {

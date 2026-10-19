@@ -1,13 +1,13 @@
 package filters
 
-import "devshard"
+import (
+	"slices"
+	"strings"
 
-// Clamps applied to the thinking_token_budget a profile keeps.
-const (
-	thinkingBudgetAbsoluteMax     uint64 = 96_000
-	thinkingBudgetContentHeadroom uint64 = 64
-	thinkingBudgetDivisor         uint64 = 2
+	"devshard"
 )
+
+const thinkingBudgetSilenced uint64 = 0
 
 var allowedReasoningEffortValues = map[string]struct{}{
 	"none": {}, "minimal": {}, "low": {}, "medium": {}, "high": {}, "xhigh": {}, "max": {},
@@ -52,6 +52,14 @@ func reasoningEffortValidate() RuleFunc {
 		if _, allowed := allowedReasoningEffortValues[value]; !allowed {
 			return Reject("reasoning_effort: unsupported value: got %q", value)
 		}
+		policy := ctx.Profile.reasoningEffortPolicy()
+		if policy.Mode == ReasoningEffortStrip {
+			ctx.Document.Delete("reasoning_effort")
+			return nil
+		}
+		if len(policy.Allowed) > 0 && !slices.Contains(policy.Allowed, value) {
+			return Reject("reasoning_effort: %q is not supported by this model; supported: %s", value, strings.Join(policy.Allowed, ", "))
+		}
 		return nil
 	}
 }
@@ -71,7 +79,7 @@ func enableThinking() RuleFunc {
 		if !ok {
 			return Reject("enable_thinking: must be a boolean: got %T", raw)
 		}
-		return mirrorFieldIntoKwargs(ctx.Document, "enable_thinking", value)
+		return mirrorFieldIntoKwargs(ctx.Document, enableThinkingKwargKey, enableThinkingKwargKey, value)
 	}
 }
 
@@ -102,8 +110,8 @@ func thinking() RuleFunc {
 		if !ok {
 			return Reject("thinking.type: must be \"enabled\", \"disabled\", \"adaptive\", or \"auto\": got %q", typeValue)
 		}
-		if ctx.Profile != nil && ctx.Profile.Thinking == ThinkingMirrorToKwargs {
-			return mirrorFieldIntoKwargs(ctx.Document, "thinking", enabled)
+		if ctx.Profile.thinkingDisposition() == ThinkingMirrorToKwargs {
+			return mirrorFieldIntoKwargs(ctx.Document, "thinking", ctx.Profile.thinkingTemplateKey(), enabled)
 		}
 		if enabled {
 			wrapper["type"] = "enabled"
@@ -142,41 +150,41 @@ func getOrCreateChatTemplateKwargs(document *Document) (map[string]any, error) {
 	return kwargs, nil
 }
 
-// mirrorFieldIntoKwargs moves a top-level bool into kwargs[field], preserving a value already nested there.
-func mirrorFieldIntoKwargs(document *Document, field string, value bool) error {
+// mirrorFieldIntoKwargs moves a top-level bool into kwargs[key], preserving a value already nested there.
+func mirrorFieldIntoKwargs(document *Document, field, key string, value bool) error {
 	kwargs, err := getOrCreateChatTemplateKwargs(document)
 	if err != nil {
 		return err
 	}
 	document.Delete(field)
-	if _, exists := kwargs[field]; exists {
+	if _, exists := kwargs[key]; exists {
 		return nil
 	}
-	kwargs[field] = value
+	kwargs[key] = value
 	return nil
 }
 
 // silenceThinkingInKwargs overrules the caller: a request that cannot afford thinking cannot afford it in the template.
-func silenceThinkingInKwargs(document *Document) error {
+func silenceThinkingInKwargs(document *Document, key string) error {
 	kwargs, err := getOrCreateChatTemplateKwargs(document)
 	if err != nil {
 		return err
 	}
-	kwargs["thinking"] = false
+	kwargs[key] = false
 	return nil
 }
 
 // forceThinkingOn overrules the caller's thinking switches for a ThinkingForceOn profile. See README.md, "Reasoning and thinking".
 func forceThinkingOn() RuleFunc {
 	return func(ctx RuleContext) error {
-		if ctx.Profile == nil || ctx.Profile.Thinking != ThinkingForceOn {
+		if ctx.Profile.thinkingDisposition() != ThinkingForceOn {
 			return nil
 		}
 		kwargs, err := getOrCreateChatTemplateKwargs(ctx.Document)
 		if err != nil {
 			return err
 		}
-		kwargs["enable_thinking"] = true
+		kwargs[ctx.Profile.thinkingTemplateKey()] = true
 		return nil
 	}
 }
@@ -184,6 +192,11 @@ func forceThinkingOn() RuleFunc {
 // thinkingTokenBudgetResolve clamps any budget so content keeps room. See README.md, "Reasoning and thinking".
 func thinkingTokenBudgetResolve() RuleFunc {
 	return func(ctx RuleContext) error {
+		resolution := ctx.Profile.thinkingBudget()
+		if resolution == nil {
+			ctx.Document.Delete("thinking_token_budget")
+			return nil
+		}
 		maxTokensRaw, exists := ctx.Document.Get("max_tokens")
 		if !exists {
 			return nil
@@ -192,36 +205,32 @@ func thinkingTokenBudgetResolve() RuleFunc {
 		if !ok || maxTokens == 0 {
 			return nil
 		}
-		// Only a profile that declares the budget gets one invented: the V2 model runner rejects the field outright.
-		if ctx.Profile != nil && ctx.Profile.ThinkingTokenBudget {
-			if maxTokens < kimiThinkingBudgetForceZeroBelow {
-				ctx.Document.Set("thinking_token_budget", uint64(0))
-				// Overwrites rather than fills: the budget alone is a logits processor speculative decoding discards. See README.md, "Silencing Kimi's reasoning".
-				return silenceThinkingInKwargs(ctx.Document)
-			}
-			if !ctx.Document.Has("thinking_token_budget") {
-				ctx.Document.Set("thinking_token_budget", maxTokens/thinkingBudgetDivisor)
-			}
+		if maxTokens < resolution.ForceZeroBelow {
+			ctx.Document.Set("thinking_token_budget", thinkingBudgetSilenced)
+			return silenceThinkingInKwargs(ctx.Document, ctx.Profile.thinkingTemplateKey())
+		}
+		invented := !ctx.Document.Has("thinking_token_budget")
+		if invented {
+			ctx.Document.Set("thinking_token_budget", maxTokens/resolution.DefaultDivisor)
 		}
 		budgetRaw, exists := ctx.Document.Get("thinking_token_budget")
 		if !exists {
 			return nil
 		}
-		budget, ok := devshard.JSONNumericUint64(budgetRaw)
+		requested, ok := devshard.JSONNumericUint64(budgetRaw)
 		if !ok {
 			return nil
 		}
-		if budget > thinkingBudgetAbsoluteMax {
-			budget = thinkingBudgetAbsoluteMax
-		}
+		budget := min(requested, resolution.AbsoluteMax)
 		var headroomCap uint64
-		if maxTokens > thinkingBudgetContentHeadroom {
-			headroomCap = maxTokens - thinkingBudgetContentHeadroom
+		if maxTokens > resolution.ContentHeadroom {
+			headroomCap = maxTokens - resolution.ContentHeadroom
 		}
-		if budget > headroomCap {
-			budget = headroomCap
-		}
+		budget = min(budget, headroomCap)
 		ctx.Document.Set("thinking_token_budget", budget)
+		if budget == thinkingBudgetSilenced && (invented || requested != thinkingBudgetSilenced) {
+			return silenceThinkingInKwargs(ctx.Document, ctx.Profile.thinkingTemplateKey())
+		}
 		return nil
 	}
 }
@@ -230,7 +239,7 @@ func thinkingTokenBudgetResolve() RuleFunc {
 func thinkingTokenBudgetScope() RuleFunc {
 	validate := requireUint()
 	return func(ctx RuleContext) error {
-		if ctx.Profile == nil || !ctx.Profile.ThinkingTokenBudget {
+		if ctx.Profile.thinkingBudget() == nil {
 			ctx.Document.Delete(ctx.Param)
 			return nil
 		}
@@ -242,7 +251,7 @@ func thinkingTokenBudgetScope() RuleFunc {
 func safetyIdentifier() RuleFunc {
 	validate := requireString(safetyIdentifierMaxLen)
 	return func(ctx RuleContext) error {
-		if ctx.Profile == nil || !ctx.Profile.AllowSafetyIdentifier {
+		if !ctx.Profile.allowsSafetyIdentifier() {
 			ctx.Document.Delete(ctx.Param)
 			return nil
 		}
@@ -253,12 +262,15 @@ func safetyIdentifier() RuleFunc {
 // reasoningSplit passes the field through on the profile that can serve it and strips it elsewhere; an absent one stays absent.
 func reasoningSplit() RuleFunc {
 	return func(ctx RuleContext) error {
-		if ctx.Profile == nil || !ctx.Profile.KeepReasoningSplit {
+		if !ctx.Profile.keepsReasoningSplit() {
 			ctx.Document.Delete(ctx.Param)
 			return nil
 		}
 		raw, exists := ctx.Document.Get(ctx.Param)
 		if !exists {
+			if fallback := ctx.Profile.defaultReasoningSplit(); fallback != nil {
+				ctx.Document.Set(ctx.Param, *fallback)
+			}
 			return nil
 		}
 		if _, ok := raw.(bool); !ok {
@@ -271,7 +283,7 @@ func reasoningSplit() RuleFunc {
 // forceZeroPenalty overwrites ctx.Param to 0 for ForceZeroPenalties profiles, but only when already present.
 func forceZeroPenalty() RuleFunc {
 	return func(ctx RuleContext) error {
-		if ctx.Profile == nil || !ctx.Profile.ForceZeroPenalties {
+		if !ctx.Profile.forcesZeroPenalties() {
 			return nil
 		}
 		if !ctx.Document.Has(ctx.Param) {

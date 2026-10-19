@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -19,6 +20,7 @@ import (
 	"devshard/cmd/gateway/config"
 	"devshard/cmd/gateway/engine"
 	"devshard/cmd/gateway/escrow"
+	"devshard/cmd/gateway/filters"
 	"devshard/cmd/gateway/journal"
 	"devshard/cmd/gateway/limits"
 	"devshard/cmd/gateway/perf"
@@ -381,6 +383,7 @@ type harness struct {
 	accounting  *fakeAccounting
 	operations  *fakeOperations
 	suspicious  *fakeSuspicious
+	filters     *fakeModelFilters
 	telemetry   *fakeTelemetry
 	rejections  *spyRejections
 	hosts       *fakeHosts
@@ -417,6 +420,7 @@ func newHarness(t *testing.T, tune ...func(*config.Config)) *harness {
 		accounting: &fakeAccounting{rows: map[string]store.RequestRecord{}},
 		operations: &fakeOperations{},
 		suspicious: &fakeSuspicious{},
+		filters:    newFakeModelFilters(),
 		hosts:      &fakeHosts{},
 		telemetry:  &fakeTelemetry{},
 		events:     journal.New(journal.Settings{}),
@@ -436,6 +440,7 @@ func newHarness(t *testing.T, tune ...func(*config.Config)) *harness {
 		Accounting:   live.accounting,
 		Operations:   live.operations,
 		Suspicious:   live.suspicious,
+		ModelFilters: live.filters,
 		HostStates:   live.hosts,
 		HostWindows:  fakeHostWindows{hosts: live.hosts},
 		Telemetry:    live.telemetry,
@@ -759,3 +764,53 @@ func (f *fakeHosts) Capability(string, string) (uint64, uint64, uint64, uint64) 
 type fakeHostWindows struct{ hosts *fakeHosts }
 
 func (f fakeHostWindows) Snapshot() []limits.HostWindow { return f.hosts.windows }
+
+type fakeModelFilters struct {
+	mu       sync.Mutex
+	records  map[string]ModelFilterRecord
+	byModel  map[string]*filters.Profile
+	profiles *filters.ProfileSet
+}
+
+func newFakeModelFilters() *fakeModelFilters {
+	return &fakeModelFilters{records: map[string]ModelFilterRecord{}, byModel: map[string]*filters.Profile{}}
+}
+
+func (f *fakeModelFilters) Profiles() *filters.ProfileSet {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.profiles
+}
+
+func (f *fakeModelFilters) Snapshot() (map[string]ModelFilterRecord, *filters.ProfileSet) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return maps.Clone(f.records), f.profiles
+}
+
+func (f *fakeModelFilters) Records() map[string]ModelFilterRecord {
+	records, _ := f.Snapshot()
+	return records
+}
+
+func (f *fakeModelFilters) Put(_ context.Context, model string, setting filters.ModelSetting) error {
+	profile, err := filters.ComposeProfile(model, setting)
+	if err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.records[model] = ModelFilterRecord{Setting: setting, UpdatedAt: harnessClock.UTC().Format(time.RFC3339)}
+	f.byModel[model] = profile
+	f.profiles = filters.NewProfileSet(f.byModel)
+	return nil
+}
+
+func (f *fakeModelFilters) Delete(_ context.Context, model string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.records, model)
+	delete(f.byModel, model)
+	f.profiles = filters.NewProfileSet(f.byModel)
+	return nil
+}

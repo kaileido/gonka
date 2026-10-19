@@ -2,6 +2,7 @@
 package strictjson
 
 import (
+	"bytes"
 	stdjson "encoding/json"
 	"errors"
 
@@ -17,4 +18,14 @@ func Unmarshal(data []byte, target any) error {
 		return ErrInvalid
 	}
 	return json.Unmarshal(data, target)
+}
+
+// DecodeKnownFields decodes exactly one JSON value into target and refuses any key target does not declare.
+func DecodeKnownFields(data []byte, target any) error {
+	if !stdjson.Valid(data) {
+		return ErrInvalid
+	}
+	decoder := stdjson.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	return decoder.Decode(target)
 }

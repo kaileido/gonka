@@ -86,13 +86,14 @@ type Deps struct {
 
 // Request is one client request as a race sees it; OnEscrow fires at the last moment a header can still be set.
 type Request struct {
-	RequestID    string
-	Model        string
-	Escrow       string
-	InputTokens  uint64
-	InputBytes   uint64
-	OutputTokens uint64
-	ClientStream bool
+	RequestID               string
+	Model                   string
+	Escrow                  string
+	InputTokens             uint64
+	InputBytes              uint64
+	OutputTokens            uint64
+	ClientStream            bool
+	EmptyAnswerCountsTokens bool
 
 	Params any
 
@@ -264,7 +265,7 @@ func (e *Engine) raceDeps(settings *config.Config, request Request, registration
 		Policy:       e.policy(settings.Engine),
 		Modes:        settings.Modes,
 		DrainTimeout: DrainTimeoutFromConfig(settings.Stream),
-		Classify:     e.classify(request.Model),
+		Classify:     e.classify(request.Model, request.EmptyAnswerCountsTokens),
 		PrefixBudget: e.prefixBudget,
 		Fleet:        e.fleets.forModel(request.Model),
 		Now:          e.deps.Now,
@@ -292,9 +293,9 @@ func (g suspicionGate) Observe(participant, model string, contentless bool) {
 	g.strikes.Observe(participant, model, contentless)
 }
 
-func (e *Engine) classify(model string) func(string) streamClassifier {
+func (e *Engine) classify(model string, emptyAnswerCountsTokens bool) func(string) streamClassifier {
 	return func(participant string) streamClassifier {
-		return newSSEClassifier(e.carry, participant, model, func() {
+		return newSSEClassifier(e.carry, participant, emptyAnswerCountsTokens, func() {
 			if e.deps.Metrics != nil {
 				e.deps.Metrics.RecordClassifyOverflow(participant, model)
 			}

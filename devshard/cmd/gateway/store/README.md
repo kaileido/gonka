@@ -10,6 +10,7 @@ One SQLite database at `<storageDir>/gateway.db`, holding what must survive a re
 | `overrides.go` | the operator's runtime configuration overrides |
 | `commitments.go`, `rotation_status.go` | rotation intent recorded before the transaction, and where each rotation got to |
 | `suspicious.go` | hosts the operator pinned as suspect |
+| `model_filters.go` | the operator's per-model filter settings, one row per model, so a settings write never touches them |
 | `accounting.go` | the asynchronous per-request ledger, with its own retention |
 | `retry.go` | the retry policy for a locked database |
 

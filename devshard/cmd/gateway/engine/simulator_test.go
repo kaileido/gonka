@@ -274,19 +274,20 @@ func (p *simPoster) settled() []uint64 {
 
 // simulator wires an Engine to test doubles for each of its dependencies.
 type simulator struct {
-	engine    *Engine
-	picker    *stubPicker
-	target    *simTargets
-	perf      *simTracker
-	windows   *simWindows
-	metrics   *simMetrics
-	ledger    *simLedger
-	poster    *simPoster
-	snapshots *simSnapshots
-	clock     *virtualTime
-	client    *recordingSink
-	model     string
-	pinned    map[string]bool
+	engine                  *Engine
+	picker                  *stubPicker
+	target                  *simTargets
+	perf                    *simTracker
+	windows                 *simWindows
+	metrics                 *simMetrics
+	ledger                  *simLedger
+	poster                  *simPoster
+	snapshots               *simSnapshots
+	clock                   *virtualTime
+	client                  *recordingSink
+	model                   string
+	emptyAnswerCountsTokens bool
+	pinned                  map[string]bool
 }
 
 func engineSettings(policy EscalationPolicy, modes config.Modes) *config.Config {
@@ -378,11 +379,12 @@ func (s *simulator) host(nonce uint64, hostIdx int, participant string, script *
 
 func (s *simulator) profile() Request {
 	return Request{
-		RequestID:    "request-1",
-		Model:        s.model,
-		InputTokens:  1_000,
-		OutputTokens: 256,
-		Params:       simDispatchParams{prompt: "hello"},
+		RequestID:               "request-1",
+		Model:                   s.model,
+		EmptyAnswerCountsTokens: s.emptyAnswerCountsTokens,
+		InputTokens:             1_000,
+		OutputTokens:            256,
+		Params:                  simDispatchParams{prompt: "hello"},
 	}
 }
 
@@ -1094,25 +1096,34 @@ func TestSimulatorAHostCutAtTheBackstopAnswersForIt(t *testing.T) {
 // Test flow:
 //  1. Script host-0 to answer with a completion-tokens-only chunk that carries no content, for a model that varies across the case table.
 //  2. Run the race and assert it fails with ErrEmptyStream.
-//  3. Assert the attempt's terminal, crowning denial, and window verdict match the case's model: a thinking-budget route (kimiModel) reads as TerminalBurnEmpty/ModelOutcome without denying crowning, while any other route (qwenModel) reads as TerminalEmptyStream/EmptyAnswer and denies crowning.
+//  3. Assert the attempt's terminal, crowning denial, and window verdict match the request's thinking-budget flag, never the model name: a flagged request reads as TerminalBurnEmpty/ModelOutcome without denying crowning, while an unflagged one, Kimi included, reads as TerminalEmptyStream/EmptyAnswer and denies crowning.
 func TestSimulatorBurnEmptyIsAModelOutcomeAndPlainEmptyIsNot(t *testing.T) {
 	burnStream := `data: {"choices":[{"delta":{}}],"usage":{"completion_tokens":90}}` + "\n\n"
 	cases := []struct {
-		name         string
-		model        string
-		wantTerminal Terminal
-		wantDenied   bool
-		wantVerdict  limits.Verdict
+		name                    string
+		model                   string
+		emptyAnswerCountsTokens bool
+		wantTerminal            Terminal
+		wantDenied              bool
+		wantVerdict             limits.Verdict
 	}{
 		{
-			name:         "thinking_budget_route_burned_the_tokens",
-			model:        kimiModel,
-			wantTerminal: TerminalBurnEmpty,
-			wantVerdict:  limits.ModelOutcome,
+			name:                    "thinking_budget_route_burned_the_tokens",
+			model:                   kimiModel,
+			emptyAnswerCountsTokens: true,
+			wantTerminal:            TerminalBurnEmpty,
+			wantVerdict:             limits.ModelOutcome,
 		},
 		{
 			name:         "any_other_route_answered_with_nothing",
 			model:        qwenModel,
+			wantTerminal: TerminalEmptyStream,
+			wantDenied:   true,
+			wantVerdict:  limits.EmptyAnswer,
+		},
+		{
+			name:         "a_thinking_model_without_the_request_flag_answered_with_nothing",
+			model:        kimiModel,
 			wantTerminal: TerminalEmptyStream,
 			wantDenied:   true,
 			wantVerdict:  limits.EmptyAnswer,
@@ -1122,6 +1133,7 @@ func TestSimulatorBurnEmptyIsAModelOutcomeAndPlainEmptyIsNot(t *testing.T) {
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			sim := newSimulator(t, settledPolicy(), 1, testCase.model)
+			sim.emptyAnswerCountsTokens = testCase.emptyAnswerCountsTokens
 			sim.host(10, 0, "host-0", &hostScript{receipt: true, chunks: []string{burnStream}, finished: true})
 
 			if _, err := sim.run(context.Background()); !errors.Is(err, ErrEmptyStream) {

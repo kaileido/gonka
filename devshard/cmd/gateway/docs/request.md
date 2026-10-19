@@ -41,7 +41,7 @@ Steps 4–6 run **after** normalisation because the model name is only known onc
 
 ### The rule table
 
-`filters/table.go` is one row per top-level parameter: name, stage, rule. Per-model divergences live in `filters/profile_*.go` next to the rule they change.
+`filters/table.go` is one row per top-level parameter: name, stage, rule. Per-model divergences live in `filters/presets/<name>.json`; an operator binds a model to a preset, or sets knobs over its own, through `/v1/admin/filters` ([`filters/README.md`](../filters/README.md), "Model profiles").
 
 | Forced regardless of the client | Why |
 | --- | --- |
@@ -122,7 +122,7 @@ A chat request is gzipped only from 4 KiB up (`app.chatCompressMinBytes`, carrie
 | To change | Go to |
 | --- | --- |
 | a parameter's validation or default | `filters/table.go`, and `filters/rules_*.go` for the rule body |
-| how one model differs | `filters/profile_<model>.go` |
+| how one model differs | `filters/presets/<name>.json` |
 | what a client may see back | `filters/response.go`, `clientStrippedFields` / `requestableFields` |
 | the status a failure gets | `api/errors.go`, `statusForError` |
 | when a second attempt starts | `engine/escalation.go` |

@@ -51,8 +51,9 @@ type modelTopProvider struct {
 }
 
 // filterOptions expresses forcing as its opposite, so an Options built without it keeps forcing.
-func filterOptions(limits config.Limits, admin bool, stopTokenVocabulary func(model string) int) filters.Options {
+func filterOptions(limits config.Limits, admin bool, stopTokenVocabulary func(model string) int, profiles *filters.ProfileSet) filters.Options {
 	return filters.Options{
+		Profiles:            profiles,
 		Admin:               admin,
 		KeepClientStream:    !limits.ForceUpstreamStreaming,
 		DefaultMaxTokens:    uint64(limits.DefaultMaxTokens),

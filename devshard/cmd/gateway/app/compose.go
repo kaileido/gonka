@@ -320,6 +320,10 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 	if err != nil {
 		return nil, err
 	}
+	modelFilterSettings, err := newModelFilters(ctx, gatewayStore, clock)
+	if err != nil {
+		return nil, err
+	}
 
 	sessions := api.NewSessions(escrows)
 	raceObserver := nonceAccountedRaces{recorder: raceRecorder, events: events}
@@ -390,6 +394,7 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 			nonces:       recorder,
 		},
 		Suspicious:   suspicious,
+		ModelFilters: modelFilterSettings,
 		HostStates:   hosts,
 		HostWindows:  participants,
 		Telemetry:    telemetry,

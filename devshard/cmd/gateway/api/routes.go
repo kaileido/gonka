@@ -66,6 +66,9 @@ func (s *Server) routes() []route {
 		{pattern: "/v1/admin/devshards/{id}/participants", label: "/v1/admin/devshards/{id}/participants", admin: true, alwaysOn: true, handler: s.handleAdminDevshardParticipants},
 		{pattern: "/v1/admin/escrows", label: "/v1/admin/escrows", admin: true, alwaysOn: true, handler: s.handleAdminEscrows},
 		{pattern: "/v1/admin/suspicious-hosts", label: "/v1/admin/suspicious-hosts", admin: true, alwaysOn: true, handler: s.handleAdminSuspiciousHosts},
+		{pattern: "/v1/admin/filters", label: "/v1/admin/filters", admin: true, alwaysOn: true, handler: s.handleAdminFilters},
+		{pattern: "/v1/admin/filters/presets", label: "/v1/admin/filters/presets", admin: true, alwaysOn: true, handler: s.handleAdminFilterPresets},
+		{pattern: "/v1/admin/filters/{model...}", label: "/v1/admin/filters/{model}", admin: true, alwaysOn: true, handler: s.handleAdminModelFilter},
 		{pattern: "/v1/admin/hosts", label: "/v1/admin/hosts", admin: true, alwaysOn: true, handler: s.handleAdminHosts},
 		{pattern: "/v1/admin/participants/unquarantine", label: "/v1/admin/participants/unquarantine", admin: true, alwaysOn: true, handler: s.handleAdminUnquarantine},
 		{pattern: "/v1/admin/accounting/reset/{epoch}", label: "/v1/admin/accounting/reset/{epoch}", admin: true, alwaysOn: true, handler: s.handleAdminResetAccountingEpoch},
@@ -199,7 +202,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 		s.writeErrorFor(w, err)
 		return
 	}
-	normalized, err := filters.NormalizeRequest(body, filterOptions(configuration.Limits, identity.admin, s.servedModelVocabulary))
+	normalized, err := filters.NormalizeRequest(body, filterOptions(configuration.Limits, identity.admin, s.servedModelVocabulary, s.modelFilters.Profiles()))
 	if err != nil {
 		s.capture.filterRejected(r, requestID, body, err)
 		s.writeErrorFor(w, err)
@@ -225,7 +228,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 
 	var key cacheKey
 	if s.cache != nil {
-		key = cacheKeyFor(r, normalized.Model, normalized.Body, normalized.Logprobs, normalized.ClientStream, normalized.ClientUsage)
+		key = cacheKeyFor(r, normalized)
 		if entry, hit := s.cache.get(key, s.now()); hit {
 			written := serveCached(w, requestID, entry)
 			s.events.RequestFinished(journal.RequestLine{
@@ -337,14 +340,15 @@ func (s *Server) race(w http.ResponseWriter, r *http.Request, requestID string, 
 	defer client.discard()
 	outputTokens := outputTokenBudget(normalized)
 	outcome, err := s.inference.Run(r.Context(), engine.Request{
-		RequestID:    requestID,
-		Model:        normalized.Model,
-		Escrow:       escrowPin,
-		InputTokens:  inputTokens,
-		InputBytes:   uint64(len(normalized.Body)),
-		OutputTokens: outputTokens,
-		ClientStream: normalized.ClientStream,
-		OnEscrow:     func(escrowID string) { client.Header().Set(EscrowHeader, escrowID) },
+		RequestID:               requestID,
+		Model:                   normalized.Model,
+		Escrow:                  escrowPin,
+		InputTokens:             inputTokens,
+		InputBytes:              uint64(len(normalized.Body)),
+		OutputTokens:            outputTokens,
+		ClientStream:            normalized.ClientStream,
+		EmptyAnswerCountsTokens: normalized.EmptyAnswerCountsTokens,
+		OnEscrow:                func(escrowID string) { client.Header().Set(EscrowHeader, escrowID) },
 
 		Params: user.InferenceParams{
 			Model:                        normalized.Model,

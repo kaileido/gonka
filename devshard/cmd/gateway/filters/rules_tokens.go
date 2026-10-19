@@ -45,6 +45,13 @@ func resolveOutputTokenLimits(options Options, routedModel string) outputTokenLi
 	return limits
 }
 
+func flooredWithinCap(floor uint64, limits outputTokenLimits, admin bool) uint64 {
+	if admin {
+		return floor
+	}
+	return min(floor, normalizedOutputTokenLimits(limits).MaxTokensCap)
+}
+
 // capOutputTokens: 0 means no client budget and takes the default uncapped; a nonzero value clamps unless bypassed.
 func capOutputTokens(value uint64, bypassLimit bool, limits outputTokenLimits) uint64 {
 	limits = normalizedOutputTokenLimits(limits)
@@ -120,10 +127,11 @@ func decodeUint64Field(document *Document, name string, dst *uint64) error {
 }
 
 // applyOutputTokenLimits resolves max_tokens from whichever field(s) the client sent. See README.md, "Output token limits".
-func applyOutputTokenLimits(document *Document, view *requestView, options Options, routedModel string) {
+func applyOutputTokenLimits(document *Document, view *requestView, options Options, routedModel string, profile *Profile) {
 	_, hasMaxTokens := document.Get("max_tokens")
 	_, hasMaxCompletionTokens := document.Get("max_completion_tokens")
 	limits := resolveOutputTokenLimits(options, routedModel)
+	limits.DefaultMaxTokens = max(limits.DefaultMaxTokens, flooredWithinCap(profile.outputTokensFloor(), limits, options.Admin))
 
 	var resolved uint64
 	switch {
@@ -163,17 +171,18 @@ func keepCallerMinTokens(document *Document, maxTokens uint64) {
 // raiseOutputTokensToProfileFloor raises a budget under the profile's own floor to it, ahead of the refusal below. See README.md, "Output token limits".
 func raiseOutputTokensToProfileFloor() RuleFunc {
 	return func(ctx RuleContext) error {
-		if ctx.Profile == nil || ctx.Profile.OutputTokensFloor == outputTokensFloorNone {
+		floor := ctx.Profile.outputTokensFloor()
+		if floor == outputTokensFloorNone {
 			return nil
 		}
 		raw, exists := ctx.Document.Get(ctx.Param)
 		if !exists {
 			return nil
 		}
-		if number, ok := devshard.JSONNumericFloat64(raw); !ok || number >= float64(ctx.Profile.OutputTokensFloor) {
+		if number, ok := devshard.JSONNumericFloat64(raw); !ok || number >= float64(floor) {
 			return nil
 		}
-		ctx.Document.Set(ctx.Param, ctx.Profile.OutputTokensFloor)
+		ctx.Document.Set(ctx.Param, floor)
 		return nil
 	}
 }

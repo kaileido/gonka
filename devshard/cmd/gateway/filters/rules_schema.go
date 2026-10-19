@@ -40,6 +40,9 @@ func validTools(bounds SchemaBounds, defaultToolChoice string) RuleFunc {
 			ctx.Document.Delete("tool_choice")
 			return nil
 		}
+		if ctx.Profile.rejectsTools() {
+			return Reject("tools: not supported by this model")
+		}
 		tools, ok := raw.([]any)
 		if !ok {
 			return Reject("tools: invalid array shape: must be an array")
@@ -125,7 +128,7 @@ func validToolChoice(maxNameLen int) RuleFunc {
 func parallelToolCalls() RuleFunc {
 	validate := requireBool()
 	return func(ctx RuleContext) error {
-		if !ctx.Document.Has("tools") {
+		if !ctx.Document.Has("tools") || ctx.Profile.stripsParallelToolCalls() {
 			ctx.Document.Delete(ctx.Param)
 			return nil
 		}
@@ -152,6 +155,9 @@ func validResponseFormat(bounds SchemaBounds, maxNameLen int) RuleFunc {
 		case "text", "json_object":
 			return nil
 		case "json_schema":
+			if ctx.Profile.rejectsJSONSchema() {
+				return Reject("response_format.type: json_schema is not supported by this model")
+			}
 			return validResponseFormatJSONSchema(responseFormat, bounds, maxNameLen)
 		default:
 			return Reject("response_format.type: missing or unsupported: %q is not supported (allowed: text, json_object, json_schema)", responseType)

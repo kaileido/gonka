@@ -161,7 +161,7 @@ func validTopK(max float64) RuleFunc {
 		if !ok {
 			return nil
 		}
-		if number != -1 && number < 1 {
+		if number != topKDisabled && number < 1 {
 			return Reject("%s: must be -1 or a positive integer", ctx.Param)
 		}
 		if number > max {
@@ -189,4 +189,9 @@ func sanitizeFloatField(document *Document, name string) (float64, bool) {
 // nonFinite reports NaN or an infinity, neither of which is forwarded to a host.
 func nonFinite(number float64) bool {
 	return math.IsNaN(number) || math.IsInf(number, 0)
+}
+
+// IsValidModelName applies the request rule for `model` to a name that arrives elsewhere, such as an admin path.
+func IsValidModelName(name string) bool {
+	return len(name) <= modelMaxLen && strings.TrimSpace(name) != modelNameBlank && modelNameRegex.MatchString(name)
 }

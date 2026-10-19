@@ -6,27 +6,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Test flow:
-//  1. Assert deepseekProfile.Models lists only the DeepSeek model ID.
-//  2. Assert every boolean hook (ForceZeroPenalties, RejectStructuredOutput, AllowSafetyIdentifier, KeepReasoningSplit, ThinkingTokenBudget) is false, since DeepSeek carries no hooks at all.
-//  3. Assert deepseekProfile.Thinking is ThinkingNormalizeInPlace.
-func TestDeepseekProfileHooks(t *testing.T) {
-	require.Equal(t, []string{deepseekModelID}, deepseekProfile.Models)
+const deepseekModelID = "deepseek-ai/DeepSeek-V4-Flash-0731"
 
-	boolHooks := []struct {
-		name string
-		got  bool
-	}{
-		{"ForceZeroPenalties", deepseekProfile.ForceZeroPenalties},
-		{"RejectStructuredOutput", deepseekProfile.RejectStructuredOutput},
-		{"AllowSafetyIdentifier", deepseekProfile.AllowSafetyIdentifier},
-		{"KeepReasoningSplit", deepseekProfile.KeepReasoningSplit},
-		{"ThinkingTokenBudget", deepseekProfile.ThinkingTokenBudget},
-	}
-	for _, hook := range boolHooks {
-		require.Falsef(t, hook.got, "deepseekProfile.%s", hook.name)
-	}
-	require.Equal(t, ThinkingNormalizeInPlace, deepseekProfile.Thinking)
+// Test flow:
+//  1. Resolve the DeepSeek model through the built-in bindings.
+//  2. Assert it has none: it runs the default pipeline.
+func TestDeepseekRunsTheDefaultProfile(t *testing.T) {
+	require.Nil(t, BuiltInProfileFor(deepseekModelID))
 }
 
 // Test flow:

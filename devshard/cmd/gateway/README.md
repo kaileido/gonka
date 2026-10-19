@@ -102,6 +102,8 @@ Boot has a matching budget: the concurrent-build limit and the idle connection p
 
 `suspiciousHosts` is the operator's manual pin list, cached in memory because every race reads it and backed by the store because a pin outlives the incident that prompted it. **The store is written first**: a pin the gateway acts on but forgets on restart is the failure an operator cannot see.
 
+`modelFilters` holds the operator's per-model filter settings the same way, store first, and serves the chat path an immutable profile set it replaces whole on every write, so a request never reads half a change. A stored row it cannot read at boot is skipped with a warning and the model runs its built-in profile: configuration never stops the gateway from starting.
+
 - **`Deactivate` and `Settle` stop routing before the row changes**, so nothing new is admitted while the write runs.
 - **`Activate` refuses an escrow parked for settlement.** Its balance is already committed to a settlement that is either on chain or on its way, and serving from it again spends nonces that settlement does not account for.
 - **Every key is named, never carried.** `CreateEscrow` takes the name of the variable holding the signing key. See [`docs/operations.md`](./docs/operations.md), "What is exposed".

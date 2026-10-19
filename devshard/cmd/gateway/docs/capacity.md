@@ -189,7 +189,7 @@ That one label covers three very different hosts, so the finished-attempt line c
 | > 0 | 0 | events arrived and all of them were empty |
 | > 0 | > 0 | the host reported tokens it never delivered |
 
-`stream_chunks` counts every write, not the content-bearing ones, which is what separates the first row from the second. On a thinking-budget route the third row is classified as `burn_empty` instead, because there the host's own token count is the one signal that separates a model producing nothing from a host carrying nothing.
+`stream_chunks` counts every write, not the content-bearing ones, which is what separates the first row from the second. On an empty-answer route (a profile with `empty_answer_counts_tokens`) the third row is classified as `burn_empty` instead, because there the host's own token count is the one signal that separates a model producing nothing from a host carrying nothing.
 
 The distinction matters for what it costs. A host that answers empty after a receipt cannot have its nonce closed early: the timeout vote is only accepted once the chain's execution deadline has passed, around thirty minutes from the receipt, and the escrow's in-flight count carries it the whole time.
 

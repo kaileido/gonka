@@ -8,7 +8,7 @@ import "testing"
 //  3. Assert `attempt.logprobTokens` totals 6.
 func TestTheGatewayCountsTheTokensItStreamed(t *testing.T) {
 	t.Parallel()
-	classifier := newSSEClassifier(testBudget(1<<20, 1<<20, 1<<20), testParticipant, testModel, nil)
+	classifier := newSSEClassifier(testBudget(1<<20, 1<<20, 1<<20), testParticipant, false, nil)
 	attempt := &attemptState{}
 
 	for range 3 {

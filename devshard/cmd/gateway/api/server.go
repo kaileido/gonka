@@ -14,6 +14,7 @@ import (
 	"devshard/cmd/gateway/chain"
 	"devshard/cmd/gateway/config"
 	"devshard/cmd/gateway/engine"
+	"devshard/cmd/gateway/filters"
 	"devshard/cmd/gateway/journal"
 	"devshard/cmd/gateway/limits"
 	"devshard/cmd/gateway/registry"
@@ -130,6 +131,26 @@ type SuspiciousHosts interface {
 	Remove(ctx context.Context, participantKey string) error
 }
 
+// ModelFilterRecord is one operator filter setting as stored.
+type ModelFilterRecord struct {
+	Setting   filters.ModelSetting
+	UpdatedAt string
+	Problem   string
+}
+
+// Unreadable reports a stored row the gateway could not compose at boot; it is listed but never applied.
+func (record ModelFilterRecord) Unreadable() bool {
+	return record.Problem != problemNone
+}
+
+// ModelFilters is the operator's per-model filter settings; Profiles is what the chat path reads. See README.md, "Model filters".
+type ModelFilters interface {
+	Profiles() *filters.ProfileSet
+	Snapshot() (records map[string]ModelFilterRecord, profiles *filters.ProfileSet)
+	Put(ctx context.Context, model string, setting filters.ModelSetting) error
+	Delete(ctx context.Context, model string) error
+}
+
 type Telemetry interface {
 	InstrumentRoute(routeLabel string, next http.Handler) http.Handler
 	Handler() http.Handler
@@ -164,6 +185,7 @@ type Deps struct {
 	Accounting          RequestLedger
 	Operations          Operations
 	Suspicious          SuspiciousHosts
+	ModelFilters        ModelFilters
 	HostStates          HostStates
 	HostWindows         HostWindows
 	Telemetry           Telemetry
@@ -189,6 +211,7 @@ type Server struct {
 	accounting   RequestLedger
 	operations   Operations
 	suspicious   SuspiciousHosts
+	modelFilters ModelFilters
 	hostStates   HostStates
 	hostWindows  HostWindows
 	telemetry    Telemetry
@@ -233,6 +256,8 @@ func New(deps Deps) (*Server, error) {
 		return nil, errors.New("api: Operations is required")
 	case deps.Suspicious == nil:
 		return nil, errors.New("api: Suspicious is required")
+	case deps.ModelFilters == nil:
+		return nil, errors.New("api: ModelFilters is required")
 	case deps.Telemetry == nil:
 		return nil, errors.New("api: Telemetry is required")
 	case deps.Journal == nil:
@@ -254,6 +279,7 @@ func New(deps Deps) (*Server, error) {
 		accounting:   deps.Accounting,
 		operations:   deps.Operations,
 		suspicious:   deps.Suspicious,
+		modelFilters: deps.ModelFilters,
 		hostStates:   deps.HostStates,
 		hostWindows:  deps.HostWindows,
 		telemetry:    deps.Telemetry,

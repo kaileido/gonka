@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"crypto/subtle"
 	"errors"
@@ -204,14 +205,22 @@ func baseWriter(w http.ResponseWriter) http.ResponseWriter {
 }
 
 func decodeAdminBody(w http.ResponseWriter, r *http.Request, target any) error {
+	return decodeAdminBodyWith(w, r, target, strictjson.Unmarshal)
+}
+
+func decodeAdminBodyStrictly(w http.ResponseWriter, r *http.Request, target any) error {
+	return decodeAdminBodyWith(w, r, target, strictjson.DecodeKnownFields)
+}
+
+func decodeAdminBodyWith(w http.ResponseWriter, r *http.Request, target any, decode func([]byte, any) error) error {
 	body, err := readBody(w, r, adminIngestLimit)
 	if err != nil {
 		return err
 	}
-	if len(strings.TrimSpace(string(body))) == 0 {
+	if len(bytes.TrimSpace(body)) == 0 {
 		return nil
 	}
-	return strictjson.Unmarshal(body, target)
+	return decode(body, target)
 }
 
 func allowMethods(w http.ResponseWriter, r *http.Request, methods ...string) bool {

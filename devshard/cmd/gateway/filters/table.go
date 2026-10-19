@@ -44,9 +44,15 @@ const (
 	minPMax = 1.0
 	topPMax = 1.0
 
-	topKMax = 262144
+	topPExclusiveMin              = 0.0
+	repetitionPenaltyExclusiveMin = 0.0
 
-	modelMaxLen = 256
+	topKMin      = 1
+	topKMax      = 262144
+	topKDisabled = -1
+
+	modelMaxLen    = 256
+	modelNameBlank = ""
 
 	penaltyMin = -2.0
 	penaltyMax = 2.0
@@ -89,11 +95,11 @@ var (
 		spec("messages", StagePreValidation, validListLength(messagesMaxEntries, 0)),
 		spec("seed", StagePreValidation, requireUint()),
 		spec("n", StagePostLimits, replaceIfPresent(uint64(1))),
-		spec("temperature", StagePostLimits, clampFloat(minTemperature, maxTemperature)),
-		spec("repetition_penalty", StagePostLimits, rejectNonPositiveThenClamp(maxRepetitionPenalty)),
-		spec("top_p", StagePostLimits, rejectNonPositiveThenClamp(topPMax)),
-		spec("min_p", StagePostLimits, clampFloat(minPMin, minPMax)),
-		spec("top_k", StagePostLimits, validTopK(topKMax)),
+		postLimits("temperature", clampFloat(minTemperature, maxTemperature), clampToProfileLimit(temperatureLimit)),
+		postLimits("repetition_penalty", rejectNonPositiveThenClamp(maxRepetitionPenalty), clampToProfileLimit(repetitionPenaltyLimit)),
+		postLimits("top_p", rejectNonPositiveThenClamp(topPMax), clampToProfileLimit(topPLimit)),
+		postLimits("min_p", clampFloat(minPMin, minPMax), clampToProfileLimit(minPLimit)),
+		postLimits("top_k", validTopK(topKMax), topKToProfileLimit()),
 		{Name: "frequency_penalty", Rules: []StagedRule{
 			{Stage: StagePostLimits, Apply: clampFloat(penaltyMin, penaltyMax)},
 			{Stage: StagePostLimits, Apply: forceZeroPenalty()},
@@ -187,6 +193,7 @@ var (
 				MaxSizeBytes: chatTemplateKwargsMaxSizeBytes,
 			})},
 			{Stage: StagePostLimits, Apply: forceThinkingOn()},
+			{Stage: StagePostLimits, Apply: applyTemplateKwargsPolicy()},
 		}},
 	}
 
@@ -195,6 +202,14 @@ var (
 
 func spec(name string, stage Stage, rule RuleFunc) ParameterSpec {
 	return ParameterSpec{Name: name, Rules: []StagedRule{{Stage: stage, Apply: rule}}}
+}
+
+func postLimits(name string, rules ...RuleFunc) ParameterSpec {
+	staged := make([]StagedRule, 0, len(rules))
+	for _, rule := range rules {
+		staged = append(staged, StagedRule{Stage: StagePostLimits, Apply: rule})
+	}
+	return ParameterSpec{Name: name, Rules: staged}
 }
 
 func buildKnownParameterSet() map[string]struct{} {

@@ -2,18 +2,18 @@ package engine
 
 // sseClassifier joins one attempt's bounded reassembly to the SSE verdicts. See race.md, "Classification and reassembly".
 type sseClassifier struct {
-	thinkingBudget bool
-	carry          *carryBuffer
-	overflow       func()
-	retained       *errorStreamRetainer
+	emptyAnswerCountsTokens bool
+	carry                   *carryBuffer
+	overflow                func()
+	retained                *errorStreamRetainer
 }
 
-func newSSEClassifier(budget *carryBudget, participant, model string, overflow func()) *sseClassifier {
+func newSSEClassifier(budget *carryBudget, participant string, emptyAnswerCountsTokens bool, overflow func()) *sseClassifier {
 	return &sseClassifier{
-		thinkingBudget: thinkingBudgetRoute(model),
-		carry:          newCarryBuffer(budget, participant),
-		overflow:       overflow,
-		retained:       newErrorStreamRetainer(maxMissProofBytes),
+		emptyAnswerCountsTokens: emptyAnswerCountsTokens,
+		carry:                   newCarryBuffer(budget, participant),
+		overflow:                overflow,
+		retained:                newErrorStreamRetainer(maxMissProofBytes),
 	}
 }
 
@@ -26,14 +26,14 @@ func (c *sseClassifier) Classify(chunk []byte) chunkFacts {
 		}
 	}
 	c.retained.retain(events)
-	return c.facts(classifyChunk(events, c.thinkingBudget))
+	return c.facts(classifyChunk(events, c.emptyAnswerCountsTokens))
 }
 
 // Flush classifies the unterminated final event, which reads as nothing at all until it does.
 func (c *sseClassifier) Flush() chunkFacts {
 	tail := c.carry.Tail()
 	c.retained.retain(tail)
-	return c.facts(classifyChunk(tail, c.thinkingBudget))
+	return c.facts(classifyChunk(tail, c.emptyAnswerCountsTokens))
 }
 
 func (c *sseClassifier) Release() {
@@ -54,7 +54,7 @@ func (c *sseClassifier) facts(signal chunkSignal) chunkFacts {
 		UsagePromptTokens:     signal.UsagePromptTokens,
 		LogprobTokens:         signal.LogprobTokens,
 		FinishReason:          signal.FinishReason,
-		TokensBurned:          signal.UsageCompletionTokens > 0 && c.thinkingBudget,
+		TokensBurned:          signal.UsageCompletionTokens > 0 && c.emptyAnswerCountsTokens,
 		LogprobsDecoded:       signal.LogprobsDecoded,
 	}
 	if !signal.Error.present() {

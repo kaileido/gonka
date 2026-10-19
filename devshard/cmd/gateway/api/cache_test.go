@@ -110,7 +110,7 @@ func TestTheSameCallerOnADifferentEscrowIsAMiss(t *testing.T) {
 		request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 		request.Header.Set("Authorization", "Bearer caller-a")
 		request.SetPathValue("id", escrowID)
-		return cacheKeyFor(request, "qwen", []byte(chatBody), filters.LogprobIntent{}, false, false)
+		return cacheKeyFor(request, filters.Result{Model: "qwen", Body: []byte(chatBody), Logprobs: filters.LogprobIntent{}, ClientStream: false, ClientUsage: false})
 	}
 	cache := newResponseCache(1 << 20)
 	now := time.Unix(1700000000, 0)
@@ -422,9 +422,9 @@ func TestTheCacheKeySeparatesRequestsByWhatTheyAskedFor(t *testing.T) {
 	request.Header.Set("Authorization", "Bearer one-caller")
 	body := []byte(`{"model":"qwen","logprobs":true}`)
 
-	asked := cacheKeyFor(request, "qwen", body, filters.LogprobIntent{Keep: true}, false, false)
-	askedForAlternatives := cacheKeyFor(request, "qwen", body, filters.LogprobIntent{Keep: true, KeepTop: true}, false, false)
-	askedForNeither := cacheKeyFor(request, "qwen", body, filters.LogprobIntent{}, false, false)
+	asked := cacheKeyFor(request, filters.Result{Model: "qwen", Body: body, Logprobs: filters.LogprobIntent{Keep: true}, ClientStream: false, ClientUsage: false})
+	askedForAlternatives := cacheKeyFor(request, filters.Result{Model: "qwen", Body: body, Logprobs: filters.LogprobIntent{Keep: true, KeepTop: true}})
+	askedForNeither := cacheKeyFor(request, filters.Result{Model: "qwen", Body: body, Logprobs: filters.LogprobIntent{}, ClientStream: false, ClientUsage: false})
 
 	if asked == askedForNeither {
 		t.Fatal("a request that asked for logprobs shares an entry with one that did not")
@@ -432,7 +432,7 @@ func TestTheCacheKeySeparatesRequestsByWhatTheyAskedFor(t *testing.T) {
 	if asked == askedForAlternatives {
 		t.Fatal("a request that asked for alternatives shares an entry with one that did not")
 	}
-	askedForUsage := cacheKeyFor(request, "qwen", body, filters.LogprobIntent{Keep: true}, false, true)
+	askedForUsage := cacheKeyFor(request, filters.Result{Model: "qwen", Body: body, Logprobs: filters.LogprobIntent{Keep: true}, ClientStream: false, ClientUsage: true})
 	if asked == askedForUsage {
 		t.Fatal("a request that asked for a usage chunk shares an entry with one that did not")
 	}
@@ -446,8 +446,8 @@ func TestTheCacheSeparatesReplyShapes(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 	body := []byte(chatBody)
 
-	buffered := cacheKeyFor(request, "qwen", body, filters.LogprobIntent{}, false, false)
-	streamed := cacheKeyFor(request, "qwen", body, filters.LogprobIntent{}, true, false)
+	buffered := cacheKeyFor(request, filters.Result{Model: "qwen", Body: body, Logprobs: filters.LogprobIntent{}, ClientStream: false, ClientUsage: false})
+	streamed := cacheKeyFor(request, filters.Result{Model: "qwen", Body: body, Logprobs: filters.LogprobIntent{}, ClientStream: true, ClientUsage: false})
 
 	if buffered == streamed {
 		t.Fatal("a buffered and a streamed caller share one cache key")
@@ -801,5 +801,19 @@ func TestRecordingAStreamedReplyForTheCacheSpendsTheBufferBudget(t *testing.T) {
 	}
 	if held := live.server.buffers.Held(); held != 0 {
 		t.Fatalf("buffer budget held %d bytes after both requests, want 0", held)
+	}
+}
+
+// Test flow:
+//  1. Build two cache keys for the same normalized body, one with the empty-answer flag and one without.
+//  2. Assert they differ: a reply classified under one flag is never served to a request under the other.
+func TestCacheKeySeparatesTheEmptyAnswerFlag(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	normalized := filters.Result{Model: "qwen", Body: []byte(`{"model":"qwen"}`)}
+	flagged := normalized
+	flagged.EmptyAnswerCountsTokens = true
+
+	if cacheKeyFor(request, normalized) == cacheKeyFor(request, flagged) {
+		t.Error("the empty-answer flag does not change the cache key")
 	}
 }

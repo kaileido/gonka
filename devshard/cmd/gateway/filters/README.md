@@ -6,7 +6,7 @@ Everything a client sends is normalised here before it reaches a host, and every
 
 **The request side.**
 - `table.go` — one rule table, one row per top-level chat-completion parameter, each naming the stage it runs in and what it does. A parameter absent from the table is rejected: the gateway does not forward what it has not been taught.
-- `profiles.go`, `profile_*.go` — per-model divergences, kept next to the rule they change rather than scattered through it.
+- `presets/*.json` — the built-in presets and the models they bind; `presets.go` loads them and composes settings; `filter_knobs.go`, `template_kwargs.go` — the knobs and their bounds; `profiles.go` — the `Profile` every rule reads; `profile_set.go` — the operator's bindings the request path reads; `rules_sampling.go` — the per-model sampling limits.
 - `rules_*.go` — the rule bodies: types, ranges, arrays, schemas, token budgets, reasoning controls.
 - `messages.go`, `messages_validate.go` — message hygiene, which is separate from parameter rules because a message is a nested document: one file rewrites the array, the other decides whether what is left is admissible.
 
@@ -135,14 +135,54 @@ What the gateway forces, and what it strips:
 
 ## Model profiles
 
-A `*Profile` is one routed model's set of deltas from the default pipeline. A nil profile *is* the default — Qwen and anything unrecognised — and `ProfileFor` returns it for any model no registered profile claims.
+A `*Profile` is one routed model's set of deltas from the default pipeline. A nil profile *is* the default — Qwen, DeepSeek and anything unrecognised.
 
-| Model | Deltas |
-| --- | --- |
-| `moonshotai/Kimi-K2.6` | Zero penalties forced, `structured_outputs` rejected, `safety_identifier` allowed, thinking mirrored into `chat_template_kwargs`, owns a `thinking_token_budget` resolution, an output budget under 16 raised to its own floor (`OutputTokensFloor`) instead of refused. |
-| `MiniMaxAI/MiniMax-M2.7` | Thinking fields stripped, `reasoning_split` kept. |
-| `deepseek-ai/DeepSeek-V4-Flash-0731` | No deltas; registered so the routed model is recognised. |
-| `zai-org/GLM-5.3-Flash` | Thinking forced on in `chat_template_kwargs`. |
+A request's profile is resolved once, by `Options.Profiles.For(model)`: an operator setting stored through `/v1/admin/filters` wins, otherwise the built-in binding (`BuiltInProfileFor`), otherwise the `default` preset. `For` never returns nil, and every rule reads the profile through a nil-safe accessor that resolves nil to the same `default` preset. `Result.EmptyAnswerCountsTokens` carries the profile's empty-answer exemption on to the engine, so the race is classified by the same profile the body was normalised with.
+
+### Presets live in `presets/`
+
+Every built-in preset is a JSON file in [`presets/`](./presets), embedded into the binary. `default.json` spells out every choice a profile must make (thinking, its template key, the reasoning_effort mode, tools, parallel_tool_calls); every other preset is composed over it, so an unset choice can only come from a broken file, and the loader refuses it. A file is `{"models": [...], "filters": {...}}`. The `filters` object is the same one a `PUT /v1/admin/filters/{model}` carries, so a built-in preset and an operator setting are written the same way; `models` binds models to the preset when no operator setting names them. The preset's name is the file name. `loadPresets` decodes every file through `strictjson.DecodeKnownFields`, one value and no unknown keys, and composes it like an operator setting, and refuses the whole folder on any bad file or on a model two files bind, so a typo fails `TestEveryEmbeddedPresetComposes` rather than booting as half a profile. Adding a preset is adding a file; no Go code names a model.
+
+| Preset | Built-in binding | Deltas |
+| --- | --- | --- |
+| `kimi` | `moonshotai/Kimi-K2.6` | Zero penalties forced, `structured_outputs` rejected, `safety_identifier` allowed, thinking mirrored into `chat_template_kwargs.thinking`, a `thinking_token_budget` resolution, the empty-answer exemption, an output budget under 16 raised to its own floor instead of refused. |
+| `minimax` | `MiniMaxAI/MiniMax-M2.7` | Thinking fields stripped, `reasoning_split` kept. |
+| `glm_flash` | `zai-org/GLM-5.3-Flash` | Thinking forced on in `chat_template_kwargs.enable_thinking`. |
+| `default` | everything else | None. |
+
+### Knobs
+
+`ComposeProfile(model, ModelSetting)` turns a setting into a fresh profile: the named preset, or the model's own built-in preset when none is named, or `default`; then each `FilterKnobs` field that is set; then `validate`. A knobs-only setting is therefore a tweak of the model's preset, never a reset: Kimi keeps its budget and exemption when an operator only raises its floor. A partial `reasoning_effort` object keeps the preset's mode or allowed list for the half it leaves out. Every knob only removes, zeroes, refuses, narrows or raises what the client sent, and none can loosen a guard in the rule table.
+
+| Knob | Shape | Default | Rule it changes |
+| --- | --- | --- | --- |
+| `thinking` | `normalize`, `mirror_to_kwargs`, `strip`, `force_on` | `normalize` | `thinking`, `enable_thinking`, `chat_template_kwargs` |
+| `thinking_template_key` | kwargs key, ≤ 64 bytes, never a forbidden key | `enable_thinking` | the key the mirror, force-on and budget silence write |
+| `thinking_token_budget` | `{force_zero_below, default_divisor, absolute_max, content_headroom}` or absent | absent: the field is stripped | `thinking_token_budget` |
+| `empty_answer_counts_tokens` | bool | false | the engine's crowning of an empty stop with completion tokens |
+| `force_zero_penalties` | bool | false | `frequency_penalty`, `presence_penalty` |
+| `reject_structured_outputs` | bool | false | `structured_outputs` |
+| `allow_safety_identifier` | bool | false | `safety_identifier` |
+| `keep_reasoning_split`, `default_reasoning_split` | bool; the default needs keep | false, none | `reasoning_split` |
+| `reasoning_effort` | `{mode: forward or strip, allowed: [...]}` | forward, every value | `reasoning_effort`, `reasoning.effort` |
+| `sampling` | `temperature_max`, `top_p_max`, `min_p_max`, `repetition_penalty_max`, `top_k_max`, each inside the global bound | none | the sampled parameters, after their global rule; `top_k: -1` becomes the model's max |
+| `template_kwargs` | `{forced: {key: bool, number or string ≤ 256}, denied: [key]}`, ≤ 16 each, never a forbidden key | none | `chat_template_kwargs`, after every thinking rule: denied keys removed, forced keys written |
+| `tools` | `allow`, `reject` | `allow` | `tools` is a 400 when rejected |
+| `parallel_tool_calls` | `keep`, `strip` | `keep` | `parallel_tool_calls` |
+| `reject_json_schema` | bool | false | `response_format` of type `json_schema` is a 400 |
+| `output_tokens_floor` | 0 to `MaxOutputTokensFloor` | 0 | `max_tokens`, `max_completion_tokens` |
+
+A budget cannot go with `thinking: force_on`, nor with its own `thinking_template_key` among the forced or denied kwargs: each would undo the silence below `force_zero_below`, and the model would then reason through a budget too small to answer in. `force_on` cannot go with its key among the forced or denied kwargs either, since the kwargs policy runs after it. The silence also applies when the gateway's own clamps (`absolute_max`, `content_headroom`) or its invented default bring the budget to 0; a client that asked for 0 itself keeps its kwargs as sent.
+
+`thinking_template_key` is the key the `thinking` field's mirror, `force_on` and the budget silence write. A top-level `enable_thinking` is always mirrored into `chat_template_kwargs.enable_thinking`, whatever the key: that field already names its kwarg.
+
+`Profile` carries no JSON of its own. `Profile.Knobs` writes it out as a fully set `FilterKnobs`, the same object a PUT carries, and that is what the admin API shows as a model's effective filters and as the preset catalog. A nil profile resolves to the `default` preset everywhere, so the default is defined once, in `presets/default.json`. `PresetCatalog` is the admin API's preset listing. Every composed profile and every catalog copy is a deep copy: no caller shares a pointer, slice or map with the catalog. Only `PresetDefault` is named in Go; the other presets are named by their files.
+
+Denied kwargs keys are removed, not refused: the thinking rules write keys such as `enable_thinking` into the object first, so a refusal would turn away requests whose client never sent the key. The globally forbidden keys stay a 400.
+
+`thinking_token_budget` and `empty_answer_counts_tokens` are the two knobs a mistake turns against the hosts: the budget field crashes vLLM `EngineCore` on models that lack it (Qwen3-Instruct-2507), and the exemption lets a host's own usage report win the race with an empty answer (`docs/race.md`, "Crown denial"). `Profile.RequiresRegisteredModel` reports them, and the admin API accepts them only for a model the chain registers, never through `allow_off_chain`.
+
+How filters rank against `model_limits`, the environment and the host, and what a release that changes a preset does to stored settings: [`docs/operations.md`](../docs/operations.md), "Which setting wins" and "When a release changes the presets". The profile's `output_tokens_floor` also raises the default output budget a request leaves unnamed.
 
 `ThinkingDisposition` is the closed set of ways a profile handles `thinking`/`enable_thinking`: normalise in place (the default), mirror into `chat_template_kwargs`, strip entirely, or force thinking on.
 
@@ -160,11 +200,11 @@ A `*Profile` is one routed model's set of deltas from the default pipeline. A ni
 
 `ThinkingForceOn` handles both fields as the default does, then sets `chat_template_kwargs.enable_thinking` to `true` at `StagePostLimits`, once every lift into the kwargs has landed, whatever the caller sent. A caller's `chat_template_kwargs.thinking` passes through. Why, and why only on the exact GLM-5.3-Flash id: [`glm-5.3-flash.md`](../../../../docs/chat-api/glm-5.3-flash.md).
 
-`thinking_token_budget` reaches a host only for a profile that declares `ThinkingTokenBudget`, which only Kimi's does: `thinkingTokenBudgetScope` strips it everywhere else at `StagePreValidation`, because the engines behind the other models crash on it (vLLM `EngineCore` on Qwen3-Instruct-2507, [`qwen3-235b-a22b-instruct-2507.md`](../../../../docs/chat-api/qwen3-235b-a22b-instruct-2507.md)) and a host on the V2 model runner rejects it outright. For the profile that keeps it, `thinkingTokenBudgetResolve` runs after the token limits, invents `max_tokens / 2` when the request names none, and clamps the result so content keeps room to be written: down to `thinkingBudgetAbsoluteMax` (96,000), and down to `max_tokens - thinkingBudgetContentHeadroom` (64).
+`thinking_token_budget` reaches a host only for a profile that declares a `ThinkingTokenBudget`, which among the presets only `kimi` does: `thinkingTokenBudgetScope` strips it everywhere else at `StagePreValidation`, because the engines behind the other models crash on it (vLLM `EngineCore` on Qwen3-Instruct-2507, [`qwen3-235b-a22b-instruct-2507.md`](../../../../docs/chat-api/qwen3-235b-a22b-instruct-2507.md)) and a host on the V2 model runner rejects it outright. For the profile that keeps it, `thinkingTokenBudgetResolve` runs after the token limits, invents `max_tokens / default_divisor` (2 for Kimi) when the request names none, and clamps the result so content keeps room to be written: down to `absolute_max` (96,000), and down to `max_tokens - content_headroom` (64). Without a budget the rule removes the field, so it never reaches a host even if an earlier stage let it through.
 
 ### Silencing Kimi's reasoning
 
-Below `kimiThinkingBudgetForceZeroBelow` (256) output tokens, a profile that owns the budget gets `thinking_token_budget: 0` and `chat_template_kwargs.thinking: false`. That second write overwrites rather than fills, unlike every other mirror: the budget alone is a logits processor, which speculative decoding discards, and the `thinking` rule has already mirrored the caller's answer into the kwargs. A request that cannot afford thinking cannot afford it in the template either.
+Below `force_zero_below` (256 for Kimi) output tokens, a profile that owns the budget gets `thinking_token_budget: 0` and `false` under its `thinking_template_key` (`chat_template_kwargs.thinking` for Kimi). That second write overwrites rather than fills, unlike every other mirror: the budget alone is a logits processor, which speculative decoding discards, and the `thinking` rule has already mirrored the caller's answer into the kwargs. A request that cannot afford thinking cannot afford it in the template either.
 
 ### The rest of the profile-scoped rules
 

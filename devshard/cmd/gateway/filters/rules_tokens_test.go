@@ -92,7 +92,7 @@ func applyLimits(t *testing.T, body string, options Options) (*Document, request
 	if err != nil {
 		t.Fatalf("decodeRequestView: %v", err)
 	}
-	applyOutputTokenLimits(document, &view, options, view.Model)
+	applyOutputTokenLimits(document, &view, options, view.Model, BuiltInProfileFor(view.Model))
 	return document, view
 }
 
@@ -335,10 +335,10 @@ func TestAKimiBudgetAtOrAboveItsFloorIsKept(t *testing.T) {
 }
 
 // Test flow:
-//  1. Apply `raiseOutputTokensToProfileFloor()` to a document with max_tokens:0 under the default (nil), minimax, and deepseek profiles.
+//  1. Apply `raiseOutputTokensToProfileFloor()` to a document with max_tokens:0 under the default (nil), minimax, and an empty profile.
 //  2. Assert the value is left at 0 for every profile without a floor, leaving it for the downstream refusal.
 func TestOnlyAProfileWithAFloorRaisesTheBudget(t *testing.T) {
-	for _, profile := range []*Profile{nil, minimaxProfile, deepseekProfile} {
+	for _, profile := range []*Profile{nil, minimaxProfile, &Profile{}} {
 		document := parseTestDocument(t, `{"max_tokens":0}`)
 		if err := raiseOutputTokensToProfileFloor()(RuleContext{Document: document, Param: "max_tokens", Profile: profile}); err != nil {
 			t.Fatalf("raiseOutputTokensToProfileFloor() = %v, want nil", err)
@@ -350,10 +350,10 @@ func TestOnlyAProfileWithAFloorRaisesTheBudget(t *testing.T) {
 }
 
 // Test flow:
-//  1. Apply `rejectNonPositiveOutputTokens()` to a document with max_tokens:0 under the default (nil), kimi, minimax, and deepseek profiles.
+//  1. Apply `rejectNonPositiveOutputTokens()` to a document with max_tokens:0 under the default (nil), kimi, minimax, and an empty profile.
 //  2. Assert every profile is rejected, since the refusal stays absolute — a profile with a floor gets its zero raised by `raiseOutputTokensToProfileFloor` running ahead of it, because capOutputTokens would otherwise read the zero as "unset" and hand it the default rather than the profile's floor.
 func TestRejectNonPositiveOutputTokensRejectsZeroOnEveryProfile(t *testing.T) {
-	for _, profile := range []*Profile{nil, kimiProfile, minimaxProfile, deepseekProfile} {
+	for _, profile := range []*Profile{nil, kimiProfile, minimaxProfile, &Profile{}} {
 		document := parseTestDocument(t, `{"max_tokens":0}`)
 		if err := rejectNonPositiveOutputTokens()(RuleContext{Document: document, Param: "max_tokens", Profile: profile}); err == nil {
 			t.Errorf("rejectNonPositiveOutputTokens() = nil for profile %v, want a rejection", profile)
@@ -483,5 +483,45 @@ func TestTokensOnlyKimiRaisesASmallBudget(t *testing.T) {
 				t.Errorf("MaxTokens = %d, want %d", result.MaxTokens, want)
 			}
 		})
+	}
+}
+
+// Test flow:
+//  1. Configure a default of 8 output tokens and send Kimi, whose preset floors output at 16, a request with no budget.
+//  2. Assert the default is raised to the floor, the same as a budget the client named.
+func TestDefaultOutputBudgetIsRaisedToTheProfileFloor(t *testing.T) {
+	body := []byte(`{"model":"` + kimiModelID + `","messages":[{"role":"user","content":"x"}]}`)
+
+	result, err := NormalizeRequest(body, Options{DefaultMaxTokens: 8, MaxTokensCap: RequestMaxTokensCap})
+
+	if err != nil {
+		t.Fatalf("NormalizeRequest() error = %v", err)
+	}
+	if result.MaxTokens != kimiOutputTokensFloor {
+		t.Errorf("max_tokens = %d, want the floor %d", result.MaxTokens, kimiOutputTokensFloor)
+	}
+}
+
+// Test flow:
+//  1. Give a model an output floor of 3000 with a default of 500 and a cap of 1000, and send a request with no budget, once as a client and once as an admin.
+//  2. Assert the client gets the cap, not the floor: the cap prices the reservation, whatever raised the default. The admin, who skips the cap, gets the floor.
+func TestFloorNeverRaisesTheDefaultAboveTheCap(t *testing.T) {
+	floor := uint64(3000)
+	profile := composeForTest(t, presetsTestQwenModel, ModelSetting{Filters: FilterKnobs{OutputTokensFloor: &floor}})
+	body := []byte(`{"model":"` + presetsTestQwenModel + `","messages":[{"role":"user","content":"x"}]}`)
+	options := Options{DefaultMaxTokens: 500, MaxTokensCap: 1000, Profiles: NewProfileSet(map[string]*Profile{presetsTestQwenModel: profile})}
+
+	client, clientErr := NormalizeRequest(body, options)
+	options.Admin = true
+	admin, adminErr := NormalizeRequest(body, options)
+
+	if clientErr != nil || adminErr != nil {
+		t.Fatalf("errors = %v, %v", clientErr, adminErr)
+	}
+	if client.MaxTokens != 1000 {
+		t.Errorf("client max_tokens = %d, want the cap 1000", client.MaxTokens)
+	}
+	if admin.MaxTokens != 3000 {
+		t.Errorf("admin max_tokens = %d, want the floor 3000", admin.MaxTokens)
 	}
 }

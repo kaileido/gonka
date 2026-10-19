@@ -36,14 +36,8 @@ type chunkSignal struct {
 // crownsWinner admits content and nothing else. See race.md, "An SSE error event counts as a chunk but never crowns".
 func (s chunkSignal) crownsWinner() bool { return s.ContentSource != "" }
 
-// thinkingBudgetRoute reports the only route whose completion_tokens can stand in for content. See race.md, "Crown denial".
-func thinkingBudgetRoute(model string) bool {
-	profile := filters.ProfileFor(model)
-	return profile != nil && profile.ThinkingTokenBudget
-}
-
-func classifyChunk(events []byte, thinkingBudget bool) chunkSignal {
-	signal := chunkSignal{chunkScan: scanChunk(events, thinkingBudget)}
+func classifyChunk(events []byte, emptyAnswerCountsTokens bool) chunkSignal {
+	signal := chunkSignal{chunkScan: scanChunk(events, emptyAnswerCountsTokens)}
 	if failure, ok := errorPayload(events); ok {
 		signal.Error = failure
 	}
@@ -137,7 +131,7 @@ func decodeEvent(payload []byte) (streamedEvent, bool) {
 }
 
 // scanChunk decodes each event once and answers every question the classifier asks of it.
-func scanChunk(events []byte, thinkingBudget bool) chunkScan {
+func scanChunk(events []byte, emptyAnswerCountsTokens bool) chunkScan {
 	var scan chunkScan
 	filters.EachSSEDataPayload(events, func(payload []byte) bool {
 		event, decoded := decodeEvent(payload)
@@ -159,7 +153,7 @@ func scanChunk(events []byte, thinkingBudget bool) chunkScan {
 				scan.FinishReason = choice.FinishReason
 			}
 			if scan.ContentSource == "" {
-				scan.ContentSource = choiceSource(choice.Delta, choice.Message, choice.FinishReason, thinkingBudget && tokens > 0)
+				scan.ContentSource = choiceSource(choice.Delta, choice.Message, choice.FinishReason, emptyAnswerCountsTokens && tokens > 0)
 			}
 			if !scan.LogprobsDecoded {
 				scan.LogprobsDecoded = choice.Logprobs.namesDecodedTokens()

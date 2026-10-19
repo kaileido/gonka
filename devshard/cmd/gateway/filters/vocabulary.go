@@ -44,3 +44,47 @@ var (
 		"disconnect",
 	}
 )
+
+// PresetName names a built-in filter preset an operator binds a model to. See README.md, "Model profiles".
+type PresetName string
+
+const (
+	PresetDefault PresetName = "default"
+	presetUnnamed PresetName = ""
+)
+
+type thinkingWire string
+
+const (
+	thinkingWireNormalize      thinkingWire = "normalize"
+	thinkingWireMirrorToKwargs thinkingWire = "mirror_to_kwargs"
+	thinkingWireStrip          thinkingWire = "strip"
+	thinkingWireForceOn        thinkingWire = "force_on"
+	thinkingWireUnknown        thinkingWire = ""
+)
+
+// ReasoningEffortMode is whether a model's requests carry reasoning_effort on to the host.
+type ReasoningEffortMode string
+
+const (
+	ReasoningEffortForward ReasoningEffortMode = "forward"
+	ReasoningEffortStrip   ReasoningEffortMode = "strip"
+
+	reasoningEffortModeUnset ReasoningEffortMode = ""
+)
+
+// ToolsPolicy is whether a model's chat template and parser take tools at all.
+type ToolsPolicy string
+
+const (
+	ToolsAllow  ToolsPolicy = "allow"
+	ToolsReject ToolsPolicy = "reject"
+)
+
+// ParallelToolCallsPolicy is whether parallel_tool_calls reaches the host.
+type ParallelToolCallsPolicy string
+
+const (
+	ParallelToolCallsKeep  ParallelToolCallsPolicy = "keep"
+	ParallelToolCallsStrip ParallelToolCallsPolicy = "strip"
+)

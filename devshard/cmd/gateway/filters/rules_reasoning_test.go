@@ -390,30 +390,19 @@ func TestThinkingTokenBudgetRejectsANonNumericValue(t *testing.T) {
 }
 
 // Test flow:
-//  1. For both the default (nil) and minimax profiles, apply `thinkingTokenBudgetResolve()` to a document with `max_tokens` and a small `thinking_token_budget`.
-//  2. Assert the caller's budget is kept unchanged, since it already fits inside the content headroom without a profile resolution.
-func TestThinkingTokenBudgetResolveClampsWithoutHook(t *testing.T) {
+//  1. For both the default (nil) and minimax profiles, apply `thinkingTokenBudgetResolve()` to a document that still carries a budget, small and oversized.
+//  2. Assert the field is removed: a profile without a budget never forwards one, even if an earlier stage let it through.
+func TestThinkingTokenBudgetResolveRemovesTheFieldWithoutABudget(t *testing.T) {
 	for _, profile := range []*Profile{nil, minimaxProfile} {
-		document := parseTestDocument(t, `{"max_tokens":4096,"thinking_token_budget":50}`)
-		if err := thinkingTokenBudgetResolve()(RuleContext{Document: document, Profile: profile}); err != nil {
-			t.Fatalf("thinkingTokenBudgetResolve() = %v, want nil", err)
+		for _, body := range []string{`{"max_tokens":4096,"thinking_token_budget":50}`, `{"max_tokens":300,"thinking_token_budget":9000}`} {
+			document := parseTestDocument(t, body)
+			if err := thinkingTokenBudgetResolve()(RuleContext{Document: document, Profile: profile}); err != nil {
+				t.Fatalf("thinkingTokenBudgetResolve() = %v, want nil", err)
+			}
+			if document.Has("thinking_token_budget") {
+				t.Errorf("thinking_token_budget kept for profile %v and body %s", profile, body)
+			}
 		}
-		if got, _ := document.Get("thinking_token_budget"); got != uint64(50) {
-			t.Errorf("thinking_token_budget = %v, want 50 for profile %v", got, profile)
-		}
-	}
-}
-
-// Test flow:
-//  1. Apply `thinkingTokenBudgetResolve()` under the default (nil) profile to a document whose requested budget far exceeds max_tokens.
-//  2. Assert the budget is clamped to max_tokens minus the content headroom.
-func TestThinkingTokenBudgetResolveWithoutHookNeverEatsTheContentHeadroom(t *testing.T) {
-	document := parseTestDocument(t, `{"max_tokens":300,"thinking_token_budget":9000}`)
-	if err := thinkingTokenBudgetResolve()(RuleContext{Document: document, Profile: nil}); err != nil {
-		t.Fatalf("thinkingTokenBudgetResolve() = %v, want nil", err)
-	}
-	if got, _ := document.Get("thinking_token_budget"); got != 300-thinkingBudgetContentHeadroom {
-		t.Errorf("thinking_token_budget = %v, want the headroom cap %d", got, 300-thinkingBudgetContentHeadroom)
 	}
 }
 

@@ -26,29 +26,29 @@ const (
 func TestContentSource(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name           string
-		body           string
-		thinkingBudget bool
-		wantSource     string
+		name                    string
+		body                    string
+		emptyAnswerCountsTokens bool
+		wantSource              string
 	}{
 		{name: "empty", body: ""},
 		{name: "done_only", body: "data: [DONE]\n\n"},
 		{name: "role_chunk_only", body: `data: {"id":"a","choices":[{"delta":{"role":"assistant"},"index":0,"finish_reason":null}]}` + "\n\n"},
 		{name: "finish_only", body: `data: {"id":"a","choices":[{"delta":{},"index":0,"finish_reason":"stop"}]}` + "\n\n"},
 		{
-			name:           "empty_stop_with_completion_tokens_on_a_thinking_budget_route",
-			body:           `data: {"id":"a","choices":[{"message":{"content":""},"index":0,"finish_reason":"stop"}],"usage":{"completion_tokens":1}}` + "\n\n",
-			thinkingBudget: true,
-			wantSource:     "message.empty_stop_completion_tokens",
+			name:                    "empty_stop_with_completion_tokens_on_a_thinking_budget_route",
+			body:                    `data: {"id":"a","choices":[{"message":{"content":""},"index":0,"finish_reason":"stop"}],"usage":{"completion_tokens":1}}` + "\n\n",
+			emptyAnswerCountsTokens: true,
+			wantSource:              "message.empty_stop_completion_tokens",
 		},
 		{
 			name: "empty_stop_with_completion_tokens_off_a_thinking_budget_route",
 			body: `data: {"id":"a","choices":[{"message":{"content":""},"index":0,"finish_reason":"stop"}],"usage":{"completion_tokens":1}}` + "\n\n",
 		},
 		{
-			name:           "empty_stop_without_completion_tokens",
-			body:           `data: {"id":"a","choices":[{"message":{"content":""},"index":0,"finish_reason":"stop"}],"usage":{"completion_tokens":0}}` + "\n\n",
-			thinkingBudget: true,
+			name:                    "empty_stop_without_completion_tokens",
+			body:                    `data: {"id":"a","choices":[{"message":{"content":""},"index":0,"finish_reason":"stop"}],"usage":{"completion_tokens":0}}` + "\n\n",
+			emptyAnswerCountsTokens: true,
 		},
 		{
 			name:       "delta_content",
@@ -129,7 +129,7 @@ func TestContentSource(t *testing.T) {
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			source, ok := contentSource([]byte(testCase.body), testCase.thinkingBudget)
+			source, ok := contentSource([]byte(testCase.body), testCase.emptyAnswerCountsTokens)
 			if source != testCase.wantSource {
 				t.Errorf("contentSource = %q, want %q", source, testCase.wantSource)
 			}
@@ -403,9 +403,9 @@ func TestParseCapabilityErrorRecognisesARefusal(t *testing.T) {
 }
 
 // replayStream drives one attempt's real classifier and accumulator over chunks and returns the resulting state.
-func replayStream(t *testing.T, model string, receipted bool, chunks ...[]byte) *attemptState {
+func replayStream(t *testing.T, emptyAnswerCountsTokens bool, receipted bool, chunks ...[]byte) *attemptState {
 	t.Helper()
-	classifier := newTestClassifier(model, nil)
+	classifier := newTestClassifier(emptyAnswerCountsTokens, nil)
 	defer classifier.Release()
 
 	state := &attemptState{}
@@ -415,7 +415,7 @@ func replayStream(t *testing.T, model string, receipted bool, chunks ...[]byte) 
 	for _, chunk := range chunks {
 		state.record(classifier.Classify(chunk))
 	}
-	state.classify(context.Background(), AttemptSpec{Model: model, Classifier: classifier}, nil)
+	state.classify(context.Background(), AttemptSpec{Model: qwenModel, Classifier: classifier}, nil)
 	return state
 }
 
@@ -473,7 +473,7 @@ func TestAccumulatorCountsErrorEventsWithoutCrowningThem(t *testing.T) {
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			state := replayStream(t, qwenModel, true, []byte(testCase.body))
+			state := replayStream(t, false, true, []byte(testCase.body))
 
 			if state.contentSource != testCase.wantSource {
 				t.Errorf("contentSource = %q, want %q", state.contentSource, testCase.wantSource)
@@ -555,18 +555,18 @@ func TestBurnEmptyIsOnlyReachableOnAThinkingBudgetRoute(t *testing.T) {
 	t.Parallel()
 	const usageOnly = `data: {"choices":[{"delta":{},"finish_reason":"length"}],"usage":{"prompt_tokens":12,"completion_tokens":100,"total_tokens":112}}` + "\n\n"
 	cases := []struct {
-		name  string
-		model string
-		want  Terminal
+		name                    string
+		emptyAnswerCountsTokens bool
+		want                    Terminal
 	}{
-		{name: "thinking_budget_route_burned_the_tokens", model: kimiModel, want: TerminalBurnEmpty},
-		{name: "any_other_route_answered_with_nothing", model: qwenModel, want: TerminalEmptyStream},
+		{name: "thinking_budget_route_burned_the_tokens", emptyAnswerCountsTokens: true, want: TerminalBurnEmpty},
+		{name: "any_other_route_answered_with_nothing", emptyAnswerCountsTokens: false, want: TerminalEmptyStream},
 	}
 
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			state := replayStream(t, testCase.model, true, []byte(usageOnly))
+			state := replayStream(t, testCase.emptyAnswerCountsTokens, true, []byte(usageOnly))
 
 			if state.usageCompletionTokens != 100 {
 				t.Errorf("usageCompletionTokens = %d, want 100", state.usageCompletionTokens)
@@ -589,7 +589,7 @@ func TestBurnEmptyIsOnlyReachableOnAThinkingBudgetRoute(t *testing.T) {
 //  5. Assert contentChunks counts all four chunks, since each carried either content or an error.
 func TestFirstContentAndFirstErrorAreTheOnesRecorded(t *testing.T) {
 	t.Parallel()
-	state := replayStream(t, qwenModel, true,
+	state := replayStream(t, false, true,
 		[]byte(`data: {"choices":[{"delta":{"reasoning":"think"}}]}`+"\n\n"),
 		[]byte(`data: {"choices":[{"delta":{"content":"hi"}}]}`+"\n\n"),
 		[]byte(`data: {"error":{"message":"first","type":"server_error"}}`+"\n\n"),
@@ -671,7 +671,7 @@ func TestFixtureStreamsClassifyWholeBlob(t *testing.T) {
 	for _, fixture := range sseFixtures {
 		t.Run(fixture.file, func(t *testing.T) {
 			t.Parallel()
-			assertFixtureState(t, fixture, replayStream(t, qwenModel, true, readFixture(t, fixture.file)))
+			assertFixtureState(t, fixture, replayStream(t, false, true, readFixture(t, fixture.file)))
 		})
 	}
 }
@@ -694,7 +694,7 @@ func TestFixtureStreamsClassifyIdenticallyUnderRandomChunking(t *testing.T) {
 				start = end
 			}
 
-			assertFixtureState(t, fixture, replayStream(t, qwenModel, true, chunks...))
+			assertFixtureState(t, fixture, replayStream(t, false, true, chunks...))
 		})
 	}
 }
@@ -708,7 +708,7 @@ func TestFixtureStreamsClassifyIdenticallyUnderRandomChunking(t *testing.T) {
 func TestNewlineLessFinalEventLooksEmptyUntilTheStreamCloses(t *testing.T) {
 	t.Parallel()
 	body := readFixture(t, "newlineless_final_content.sse")
-	classifier := newTestClassifier(qwenModel, nil)
+	classifier := newTestClassifier(false, nil)
 	defer classifier.Release()
 
 	state := &attemptState{receiptTime: testEpoch}
@@ -756,7 +756,7 @@ func TestGarbageAndTruncatedInputClassifyWithoutPanicking(t *testing.T) {
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			state := replayStream(t, qwenModel, true, []byte(testCase.body))
+			state := replayStream(t, false, true, []byte(testCase.body))
 
 			if state.contentSource != "" {
 				t.Errorf("contentSource = %q, want empty", state.contentSource)
@@ -933,8 +933,8 @@ func TestAWrongTypedFieldOnlyCostsItsOwnAnswer(t *testing.T) {
 }
 
 // The three questions the scan answers, each named for what its table drives.
-func contentSource(events []byte, thinkingBudget bool) (string, bool) {
-	source := scanChunk(events, thinkingBudget).ContentSource
+func contentSource(events []byte, emptyAnswerCountsTokens bool) (string, bool) {
+	source := scanChunk(events, emptyAnswerCountsTokens).ContentSource
 	return source, source != ""
 }
 

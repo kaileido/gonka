@@ -28,6 +28,92 @@ The `/devshard/{id}/…` prefix pins a request to one escrow instead of letting 
 
 `/v1/debug/memstats` reads the heap, stack and GC figures through `runtime/metrics` (`api/memory.go`, `readMemory`), which never stops the world, so polling it under load costs no pause; a runtime sample of an unexpected kind answers 500 rather than a zero.
 
+### Configuring a model's filters
+
+Each model's request filters are a preset, filters set over it, or both (`api/admin_filters.go`). A model nobody configured runs its built-in binding — Kimi-K2.6 `kimi`, MiniMax-M2.7 `minimax`, GLM-5.3-Flash `glm_flash` — or `default`. A setting applies to the next request; no restart.
+
+```sh
+curl -X PUT -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY" \
+  "$GATEWAY/v1/admin/filters/Qwen/Qwen3-235B-A22B-Instruct-2507-FP8" \
+  -d '{"preset":"glm_flash","filters":{"output_tokens_floor":32}}'
+```
+
+The answer is the model's entry: `source` (`stored`, `built_in`, `default`, or `unreadable` for a stored setting the gateway could not read at boot, with its `problem`), `preset`, the `filters` as stored, the `effective` filters, `on_chain`, `updated_at`, the read-only `limits` and any `warnings`. `GET /v1/admin/filters` lists every model the gateway knows of — stored, built-in and every model the chain registers — and `GET /v1/admin/filters/presets` the presets. `DELETE /v1/admin/filters/{model}` returns the model to its built-in binding.
+
+Every filter a built-in preset uses is a knob; [`filters/README.md`](../filters/README.md), "Knobs", lists all of them with their bounds. The ones a new model most often needs:
+
+| Filter | Values | What it does |
+| --- | --- | --- |
+| `thinking` | `normalize`, `mirror_to_kwargs`, `strip`, `force_on` | where `thinking` / `enable_thinking` go: normalised in place, mirrored into `chat_template_kwargs`, removed, or forced on |
+| `thinking_template_key` | a kwargs key | which `chat_template_kwargs` key the template reads thinking from (`thinking` for Kimi, `enable_thinking` otherwise) |
+| `thinking_token_budget` | `{force_zero_below, default_divisor, absolute_max, content_headroom}` | lets `thinking_token_budget` through and resolves it; registered models only |
+| `empty_answer_counts_tokens` | bool | an empty answer that reports completion tokens counts as the model's, not the host's; registered models only |
+| `reasoning_effort` | `{mode: forward or strip, allowed: [...]}` | forwards, strips or narrows `reasoning_effort` |
+| `sampling` | `temperature_max`, `top_p_max`, `top_k_max`, `min_p_max`, `repetition_penalty_max` | lowers the global ranges for this model |
+| `template_kwargs` | `{forced: {...}, denied: [...]}` | kwargs the template always gets, or never sees |
+| `tools`, `parallel_tool_calls`, `reject_json_schema` | `allow`/`reject`, `keep`/`strip`, bool | for a model served without tool calling or schema-guided decoding |
+| `force_zero_penalties`, `reject_structured_outputs`, `allow_safety_identifier`, `keep_reasoning_split`, `default_reasoning_split`, `output_tokens_floor` | as named | Kimi's and MiniMax's deltas, open to any model |
+
+A new model with a Kimi-like template but its own key and a cooler temperature is one call:
+
+```sh
+curl -X PUT -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY" \
+  "$GATEWAY/v1/admin/filters/acme/Reasoner-2" \
+  -d '{"preset":"kimi","filters":{"thinking_template_key":"enable_thinking","sampling":{"temperature_max":1.2}}}'
+```
+
+A PUT that names no preset changes the model's own preset: `{"filters":{"output_tokens_floor":32}}` on Kimi keeps everything else Kimi's preset does. Name `"preset":"default"` to start from the default instead.
+
+The entry also shows the model's token limits under `limits`, with `"source": "model_limits"` when the model has its own entry in `/v1/admin/settings` and `"global"` when it runs the gateway-wide default and cap (`GATEWAY_DEFAULT_MAX_TOKENS`, `GATEWAY_MAX_TOKENS_CAP` or their settings keys). A filter PUT cannot change them.
+
+A PUT checks that the chain registers the model. An unknown model answers 404 `model_not_on_chain`, and a gateway that has not read the chain's model list yet answers 503 `chain_models_unavailable`. `?allow_off_chain=true` skips the check, for a model that is not registered yet; the answer then carries `on_chain: false`. A setting with `thinking_token_budget` or `empty_answer_counts_tokens` is refused off chain even with the flag, and its audit line carries `engine_crash_risk=true` when the model has no built-in budget. A model that leaves the chain keeps its setting.
+
+### Which setting wins
+
+A model's request is shaped by several sources. Each owns its own part, and where two touch the same value, the order below decides. Nothing here is a tie: the first source that applies wins.
+
+**Which filters a model runs** (`filters.ProfileSet.For`):
+
+| Order | Source | Applies when |
+| --- | --- | --- |
+| 1 | the operator's stored setting (`PUT /v1/admin/filters/{model}`) | a row exists and the gateway could read it at boot |
+| 2 | the model's built-in preset (`models` in `filters/presets/<name>.json`) | no readable row |
+| 3 | `filters/presets/default.json` | neither |
+
+Within one setting: a knob the setting sets beats the preset it names; a setting that names no preset is composed over the model's built-in preset (order 2), else `default`. A setting the gateway could not read at boot is not applied at all: the model runs order 2 or 3, and the entry shows `source: unreadable` with the `problem`, until the operator replaces or deletes it.
+
+**What a request finally carries:**
+
+| Value | Who decides, highest first | Why |
+| --- | --- | --- |
+| request invariants: `n`, `top_logprobs` ≤ 5, `return_token_ids`, `stop_token_ids` vocabulary, schema and `chat_template_kwargs` bounds, unknown-parameter refusal | the gateway's own rules, then the host, which re-pins the same values | they protect reservation accounting, validation and vLLM; no setting can loosen them |
+| `max_tokens` the client named | `max_tokens_cap` (`model_limits` in `/v1/admin/settings`, else `GATEWAY_MAX_TOKENS_CAP`), then `output_tokens_floor` | the floor raises first and the cap clamps after, so **the cap wins**: it prices the reservation. An admin key skips the cap but not the floor |
+| `max_tokens` the client left out | `default_max_tokens` (`model_limits`, else `GATEWAY_DEFAULT_MAX_TOKENS`), raised to `output_tokens_floor` but never by the floor above the cap | a default below the floor would hand the model the budget the floor exists to prevent; the floor still cannot reserve more than the cap prices. A default set above the cap is the operator's own choice and is kept. An admin key skips the cap here too |
+| `thinking_token_budget` | the model's budget, resolved against the final `max_tokens` | it reads the resolved value: a cap below `force_zero_below` silences thinking on every request that names a budget, and a default below it on every request that names none |
+| sampling ranges | the global bound, then the model's `sampling` limit | a model limit only narrows |
+| who may call the model, whether it is routed | `model_access`, `rotation_models_json`, escrows | filters never open or route a model; a filter refusal (for example `tools: reject`) is answered before the access check, as every filter refusal is |
+| context length | `model_limits.max_model_len`, else the chain's `--max-model-len` | filters do not read it; a host refuses an over-long request and the engine retries elsewhere |
+| streaming upstream, logprobs handling | `GATEWAY_FORCE_UPSTREAM_STREAMING`, `GATEWAY_LOGPROBS_OPTIMIZATION_OVERRIDE` and their settings keys | independent of filters |
+
+A filter entry lists `warnings` when the settings' limits override its filters — a cap below the floor, a cap below the budget's `force_zero_below`, or a default budget below it — so the conflict is visible where the filters are edited. Neither PUT refuses it: the two are edited separately and either order must be possible.
+
+A cached reply is keyed on the normalized body, the model and the empty-answer exemption, so a filter change never serves a reply produced under the old filters; entries also expire within the cache TTL.
+
+### When a release changes the presets
+
+Presets are code: a release can change them, and the gateway applies the change at boot.
+
+- **A model on its built-in preset** runs the new values at once.
+- **A stored setting** keeps only its preset name and the knobs it sets. At boot it is recomposed over the release's preset, so it follows every value it does not set itself and keeps every value it does. A setting that named no preset follows the model's current built-in preset; if a release rebinds the model, the setting's base moves with it.
+- **A stored setting that no longer reads** — its preset was renamed or removed, a knob it sets was renamed, or a new rule refuses its combination — is not applied. The gateway logs a warning at boot, the model runs its built-in preset, and the entry shows `source: unreadable` with the reason. Re-PUT the setting in the new form or DELETE it.
+- **A preset file the release cannot load** stops the release at its own tests; it never reaches a gateway.
+
+To pin a model to exact values across releases, PUT every knob that matters to you; a preset you name only sets the values you leave out.
+
+### A new version of a model
+
+The chain names a new version with a new model id. Every setting is keyed by the exact id — filter settings, built-in bindings, `model_limits`, `model_access` — so nothing carries over: the new id runs the `default` preset and is admin-only until it is configured. Configure it with one PUT that names the preset of the version it replaces, and give it its `model_limits` and `model_access` in `/v1/admin/settings`.
+
 ### Who may call what
 
 `api/routes.go`, `authorizeModel`. Three tiers per model, from `limits.model_access`, which the admin override `model_access` sets:
@@ -465,6 +551,7 @@ How each escrow reaches its hosts is in two series: `devshard_gateway_escrow_ses
 | one escrow's protocol state | `GET /devshard/{id}/v1/state` |
 | what happened to one request's nonces | `GET /v1/requests/{id}` |
 | hosts the gateway distrusts | `GET /v1/admin/suspicious-hosts` |
+| which filters each model runs, and where they come from | `GET /v1/admin/filters` |
 | why one host is or is not taking work | `GET /v1/admin/hosts` |
 
 `GET /v1/debug/heightsync` reads each session's published height-sync view, not the session itself, so the read never waits on an escrow's lock (`registry/session.go`, `HeightSyncView`). A nonce commit and an applied response only mark that view stale and leave its snapshot, which takes the session lock again, to the view's trailing flush (`user.Session.publishHeightSyncViewOffPath`): the view lags the session by about its publish interval.

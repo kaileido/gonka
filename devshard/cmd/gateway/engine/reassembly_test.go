@@ -8,36 +8,33 @@ import (
 	"devshard/cmd/gateway/filters"
 )
 
-func newTestClassifier(model string, overflow func()) *sseClassifier {
-	return newSSEClassifier(testBudget(1<<20, 1<<20, 1<<20), testParticipant, model, overflow)
+func newTestClassifier(emptyAnswerCountsTokens bool, overflow func()) *sseClassifier {
+	return newSSEClassifier(testBudget(1<<20, 1<<20, 1<<20), testParticipant, emptyAnswerCountsTokens, overflow)
 }
 
 // Test flow:
-//  1. For each table case's model and raw SSE chunk (content, role-only, a plain error, a context-limit refusal, a tool refusal, thinking-budget usage on/off route, an empty-stop-with-usage crowning on/off route), classify it with a fresh `sseClassifier`.
+//  1. For each table case's thinking-budget flag and raw SSE chunk (content, role-only, a plain error, a context-limit refusal, a tool refusal, thinking-budget usage on/off route, an empty-stop-with-usage crowning on/off route), classify it with a fresh `sseClassifier`.
 //  2. Assert the returned `chunkFacts` match the case's expectation.
 func TestClassifierMapsOneChunkToItsFacts(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name  string
-		model string
-		chunk string
-		want  chunkFacts
+		name                    string
+		emptyAnswerCountsTokens bool
+		chunk                   string
+		want                    chunkFacts
 	}{
 		{
 			name:  "content_chunk",
-			model: qwenModel,
 			chunk: `data: {"choices":[{"delta":{"content":"hi"}}]}` + "\n\n",
 			want:  chunkFacts{Content: true, ContentSource: "delta.content"},
 		},
 		{
 			name:  "role_only_chunk_is_neither_content_nor_error",
-			model: qwenModel,
 			chunk: `data: {"choices":[{"delta":{"role":"assistant"}}]}` + "\n\n",
 			want:  chunkFacts{},
 		},
 		{
 			name:  "error_event_counts_as_a_chunk_but_never_crowns",
-			model: qwenModel,
 			chunk: `data: {"error":{"code":500,"message":"backend failed","type":"server_error"}}` + "\n\n",
 			want: chunkFacts{
 				Error:        true,
@@ -50,7 +47,6 @@ func TestClassifierMapsOneChunkToItsFacts(t *testing.T) {
 		},
 		{
 			name:  "context_limit_refusal_is_retriable_not_an_error_chunk",
-			model: qwenModel,
 			chunk: `data: {"error":{"code":400,"message":"` + vllmContextTotalMessage + `","type":"BadRequestError"}}` + "\n\n",
 			want: chunkFacts{
 				ErrorSource:       "error.BadRequestError",
@@ -64,7 +60,6 @@ func TestClassifierMapsOneChunkToItsFacts(t *testing.T) {
 		},
 		{
 			name:  "tool_refusal_is_retriable_not_an_error_chunk",
-			model: qwenModel,
 			chunk: `data: {"object":"error","message":"` + filters.ToolChoiceUnsupportedMessage + `","type":"BadRequestError"}` + "\n\n",
 			want: chunkFacts{
 				ErrorSource:       "error.BadRequestError",
@@ -76,21 +71,20 @@ func TestClassifierMapsOneChunkToItsFacts(t *testing.T) {
 			},
 		},
 		{
-			name:  "usage_burns_tokens_on_a_thinking_budget_route",
-			model: kimiModel,
-			chunk: `data: {"choices":[{"delta":{}}],"usage":{"completion_tokens":90}}` + "\n\n",
-			want:  chunkFacts{UsageCompletionTokens: 90, TokensBurned: true},
+			name:                    "usage_burns_tokens_on_a_thinking_budget_route",
+			emptyAnswerCountsTokens: true,
+			chunk:                   `data: {"choices":[{"delta":{}}],"usage":{"completion_tokens":90}}` + "\n\n",
+			want:                    chunkFacts{UsageCompletionTokens: 90, TokensBurned: true},
 		},
 		{
 			name:  "usage_off_the_thinking_budget_route_burns_nothing",
-			model: qwenModel,
 			chunk: `data: {"choices":[{"delta":{}}],"usage":{"completion_tokens":90}}` + "\n\n",
 			want:  chunkFacts{UsageCompletionTokens: 90},
 		},
 		{
-			name:  "an_empty_stop_with_usage_crowns_on_a_thinking_budget_route",
-			model: kimiModel,
-			chunk: `data: {"choices":[{"message":{"content":""},"finish_reason":"stop"}],"usage":{"completion_tokens":90}}` + "\n\n",
+			name:                    "an_empty_stop_with_usage_crowns_on_a_thinking_budget_route",
+			emptyAnswerCountsTokens: true,
+			chunk:                   `data: {"choices":[{"message":{"content":""},"finish_reason":"stop"}],"usage":{"completion_tokens":90}}` + "\n\n",
 			want: chunkFacts{
 				Content:               true,
 				ContentSource:         "message.empty_stop_completion_tokens",
@@ -101,7 +95,6 @@ func TestClassifierMapsOneChunkToItsFacts(t *testing.T) {
 		},
 		{
 			name:  "an_empty_stop_with_usage_crowns_nobody_off_that_route",
-			model: qwenModel,
 			chunk: `data: {"choices":[{"message":{"content":""},"finish_reason":"stop"}],"usage":{"completion_tokens":90}}` + "\n\n",
 			want:  chunkFacts{UsageCompletionTokens: 90, FinishReason: "stop"},
 		},
@@ -110,7 +103,7 @@ func TestClassifierMapsOneChunkToItsFacts(t *testing.T) {
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			classifier := newTestClassifier(testCase.model, nil)
+			classifier := newTestClassifier(testCase.emptyAnswerCountsTokens, nil)
 			defer classifier.Release()
 
 			got := classifier.Classify([]byte(testCase.chunk))
@@ -128,7 +121,7 @@ func TestClassifierMapsOneChunkToItsFacts(t *testing.T) {
 //  3. Assert the completed tail is read as content from `delta.content`.
 func TestClassifierHoldsASplitEventUntilItsLineCompletes(t *testing.T) {
 	t.Parallel()
-	classifier := newTestClassifier(qwenModel, nil)
+	classifier := newTestClassifier(false, nil)
 	defer classifier.Release()
 
 	head := classifier.Classify([]byte(`data: {"choices":[{"delta":{"con`))
@@ -149,7 +142,7 @@ func TestClassifierHoldsASplitEventUntilItsLineCompletes(t *testing.T) {
 func TestClassifierCountsAReassembledEventExactlyOnce(t *testing.T) {
 	t.Parallel()
 	event := []byte(`data: {"choices":[{"delta":{"content":"hi"}}]}` + "\n\n")
-	classifier := newTestClassifier(qwenModel, nil)
+	classifier := newTestClassifier(false, nil)
 	defer classifier.Release()
 
 	contentChunks := 0
@@ -170,7 +163,7 @@ func TestClassifierCountsAReassembledEventExactlyOnce(t *testing.T) {
 //  3. Call `Flush` and assert it now reads as content from `delta.content`.
 func TestClassifierFlushReadsTheNewlineLessFinalEvent(t *testing.T) {
 	t.Parallel()
-	classifier := newTestClassifier(qwenModel, nil)
+	classifier := newTestClassifier(false, nil)
 	defer classifier.Release()
 
 	streamed := classifier.Classify([]byte(`data: {"choices":[{"delta":{"content":"hi"}}]}`))
@@ -191,7 +184,7 @@ func TestClassifierFlushReadsTheNewlineLessFinalEvent(t *testing.T) {
 func TestClassifierReleaseRefundsTheHeldFragment(t *testing.T) {
 	t.Parallel()
 	budget := testBudget(1<<20, 1<<20, 1<<20)
-	classifier := newSSEClassifier(budget, testParticipant, qwenModel, nil)
+	classifier := newSSEClassifier(budget, testParticipant, false, nil)
 
 	classifier.Classify([]byte(`data: {"choices":[`))
 	assertUsage(t, budget, testParticipant, 18, 18)
@@ -209,7 +202,7 @@ func TestClassifierReleaseRefundsTheHeldFragment(t *testing.T) {
 func TestClassifierReportsAnOverflowOnceAndKeepsClassifying(t *testing.T) {
 	t.Parallel()
 	overflows := 0
-	classifier := newSSEClassifier(testBudget(8, 1<<20, 1<<20), testParticipant, qwenModel, func() { overflows++ })
+	classifier := newSSEClassifier(testBudget(8, 1<<20, 1<<20), testParticipant, false, func() { overflows++ })
 	defer classifier.Release()
 
 	oversized := []byte(`data: {"choices":[{"delta":{"content":"much longer than the attempt cap"`)
@@ -237,7 +230,7 @@ func TestClassifierReadsTheFixtureCorpusIdenticallyAtEveryChunkSize(t *testing.T
 				t.Parallel()
 				body := readFixture(t, fixture.file)
 
-				state := replayStream(t, qwenModel, true, fixedChunks(body, chunkSize)...)
+				state := replayStream(t, false, true, fixedChunks(body, chunkSize)...)
 
 				assertFixtureState(t, fixture, state)
 			})
@@ -252,7 +245,7 @@ func TestClassifierPreservesTheChunkItWasGiven(t *testing.T) {
 	t.Parallel()
 	chunk := []byte(`data: {"choices":[{"delta":{"content":"hi"}}]}` + "\n\n")
 	original := bytes.Clone(chunk)
-	classifier := newTestClassifier(qwenModel, nil)
+	classifier := newTestClassifier(false, nil)
 	defer classifier.Release()
 
 	classifier.Classify(chunk)

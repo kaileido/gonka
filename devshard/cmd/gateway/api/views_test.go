@@ -56,7 +56,7 @@ func TestTheForcedStreamingSwitchReachesTheFilters(t *testing.T) {
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
-			options := filterOptions(config.Limits{ForceUpstreamStreaming: testCase.forceUpstream}, false, nil)
+			options := filterOptions(config.Limits{ForceUpstreamStreaming: testCase.forceUpstream}, false, nil, nil)
 
 			if options.KeepClientStream != testCase.wantKeepClientStream {
 				t.Errorf("KeepClientStream = %v, want %v", options.KeepClientStream, testCase.wantKeepClientStream)

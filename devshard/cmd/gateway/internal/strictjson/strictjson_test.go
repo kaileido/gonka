@@ -54,3 +54,21 @@ func FuzzUnmarshalNeverPanics(f *testing.F) {
 		_ = Unmarshal(payload, &decoded)
 	})
 }
+
+// Test flow:
+//  1. Decode one known-key object, an object with an unknown key, two values in a row, and a truncated value.
+//  2. Assert only the first decodes.
+func TestDecodeKnownFields(t *testing.T) {
+	type knownShape struct {
+		Name string `json:"name"`
+	}
+	var decoded knownShape
+	if err := DecodeKnownFields([]byte(`{"name":"a"}`), &decoded); err != nil || decoded.Name != "a" {
+		t.Errorf("known object: %+v, %v", decoded, err)
+	}
+	for _, body := range []string{`{"title":"a"}`, `{"name":"a"}{"name":"b"}`, `{"name":`} {
+		if err := DecodeKnownFields([]byte(body), &knownShape{}); err == nil {
+			t.Errorf("DecodeKnownFields(%s) = nil, want a refusal", body)
+		}
+	}
+}

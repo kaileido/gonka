@@ -10,7 +10,7 @@ import (
 //  3. Assert the returned facts carry both `UsagePromptTokens` and `UsageCompletionTokens` as reported.
 func TestBothHalvesOfAHostsUsageAreRead(t *testing.T) {
 	t.Parallel()
-	classifier := newSSEClassifier(testBudget(1<<20, 1<<20, 1<<20), testParticipant, testModel, nil)
+	classifier := newSSEClassifier(testBudget(1<<20, 1<<20, 1<<20), testParticipant, false, nil)
 
 	classifier.Classify([]byte(`data: {"choices":[{"delta":{"content":"hi"}}]}` + "\n\n"))
 	facts := classifier.Classify([]byte(`data: {"choices":[],"usage":{"prompt_tokens":27438,"completion_tokens":4096}}` + "\n\n"))
@@ -47,7 +47,7 @@ func TestBothHalvesOfTheUsageLatchTogether(t *testing.T) {
 //  3. Assert the returned facts carry the last event's completion and prompt token counts, not an earlier one.
 func TestRunningUsageIsReadAtItsLastValueWithinOneRead(t *testing.T) {
 	t.Parallel()
-	classifier := newSSEClassifier(testBudget(1<<20, 1<<20, 1<<20), testParticipant, testModel, nil)
+	classifier := newSSEClassifier(testBudget(1<<20, 1<<20, 1<<20), testParticipant, false, nil)
 
 	facts := classifier.Classify([]byte(
 		`data: {"choices":[{"delta":{"content":"a"}}],"usage":{"prompt_tokens":27438,"completion_tokens":1}}` + "\n\n" +

@@ -3,12 +3,12 @@ package filters
 import "testing"
 
 // Test flow:
-//  1. Inspect `kimiProfile`'s Models slice and Thinking mode.
-//  2. Assert Models holds exactly kimiModelID and Thinking is ThinkingMirrorToKwargs.
-//  3. Assert each boolean hook (ForceZeroPenalties, RejectStructuredOutput, AllowSafetyIdentifier, KeepReasoningSplit, ThinkingTokenBudget) matches its expected value.
+//  1. Inspect `kimiProfile`'s built-in binding and Thinking mode.
+//  2. Assert kimiModelID is bound to it and Thinking is ThinkingMirrorToKwargs.
+//  3. Assert each boolean hook (ForceZeroPenalties, RejectStructuredOutputs, AllowSafetyIdentifier, KeepReasoningSplit, EmptyAnswerCountsTokens) matches its expected value.
 func TestKimiProfileHooks(t *testing.T) {
-	if len(kimiProfile.Models) != 1 || kimiProfile.Models[0] != kimiModelID {
-		t.Errorf("kimiProfile.Models = %v, want [%q]", kimiProfile.Models, kimiModelID)
+	if BuiltInProfileFor(kimiModelID) != kimiProfile {
+		t.Errorf("BuiltInProfileFor(%q) is not kimiProfile", kimiModelID)
 	}
 	if kimiProfile.Thinking != ThinkingMirrorToKwargs {
 		t.Errorf("kimiProfile.Thinking = %v, want ThinkingMirrorToKwargs", kimiProfile.Thinking)
@@ -19,10 +19,10 @@ func TestKimiProfileHooks(t *testing.T) {
 		want bool
 	}{
 		{"ForceZeroPenalties", kimiProfile.ForceZeroPenalties, true},
-		{"RejectStructuredOutput", kimiProfile.RejectStructuredOutput, true},
+		{"RejectStructuredOutputs", kimiProfile.RejectStructuredOutputs, true},
 		{"AllowSafetyIdentifier", kimiProfile.AllowSafetyIdentifier, true},
 		{"KeepReasoningSplit", kimiProfile.KeepReasoningSplit, false},
-		{"ThinkingTokenBudget", kimiProfile.ThinkingTokenBudget, true},
+		{"EmptyAnswerCountsTokens", kimiProfile.EmptyAnswerCountsTokens, true},
 	}
 	for _, hook := range boolHooks {
 		if hook.got != hook.want {
@@ -32,23 +32,11 @@ func TestKimiProfileHooks(t *testing.T) {
 }
 
 // Test flow:
-//  1. Compare the kimi thinking-budget constants (force-zero threshold, absolute max, content headroom) against their documented values.
-//  2. Assert each constant equals its expected value.
-func TestKimiThinkingBudgetConstants(t *testing.T) {
-	tests := []struct {
-		name string
-		got  uint64
-		want uint64
-	}{
-		{"force-zero threshold", kimiThinkingBudgetForceZeroBelow, 256},
-		{"absolute max", thinkingBudgetAbsoluteMax, 96_000},
-		{"content headroom", thinkingBudgetContentHeadroom, 64},
-	}
-	for _, testCase := range tests {
-		t.Run(testCase.name, func(t *testing.T) {
-			if testCase.got != testCase.want {
-				t.Errorf("%s = %d, want %d", testCase.name, testCase.got, testCase.want)
-			}
-		})
+//  1. Read the thinking budget the kimi preset file declares.
+//  2. Assert its numbers are the documented ones: force zero below 256, divisor 2, absolute max 96000, content headroom 64.
+func TestKimiThinkingBudgetNumbers(t *testing.T) {
+	want := ThinkingBudget{ForceZeroBelow: 256, DefaultDivisor: 2, AbsoluteMax: 96_000, ContentHeadroom: 64}
+	if kimiProfile.ThinkingTokenBudget == nil || *kimiProfile.ThinkingTokenBudget != want {
+		t.Errorf("kimi budget = %+v, want %+v", kimiProfile.ThinkingTokenBudget, want)
 	}
 }

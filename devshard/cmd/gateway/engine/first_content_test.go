@@ -6,7 +6,7 @@ import (
 )
 
 func classifiedState() (*attemptState, *sseClassifier) {
-	return &attemptState{}, newSSEClassifier(testBudget(1<<20, 1<<20, 1<<20), "participant", "model", nil)
+	return &attemptState{}, newSSEClassifier(testBudget(1<<20, 1<<20, 1<<20), "participant", false, nil)
 }
 
 // Test flow:
