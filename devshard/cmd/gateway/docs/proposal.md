@@ -123,7 +123,7 @@ Equivalence was proven before the numbers were read: 84 body-and-intent combinat
 |---|---|
 | a second implementation diverges from observed behaviour | old tests kept as contracts; golden-parity harness for filters |
 | cutover loses escrow state | state rebuilt from `DEVSHARDS_JSON` and the admin import endpoint; the legacy database is not migrated |
-| operators carry stale configuration | every variable devshardctl had is read under devshardctl's name, parsed as devshardctl parsed it |
+| operators carry stale configuration | every variable the gateway kept from devshardctl is read under devshardctl's name, parsed as devshardctl parsed it; the ones it dropped are listed as not read in [operations.md](./operations.md), "Variable names" |
 | defects reachable only under real load | staged rollout on one node with log review after each burst — the source of section 8's measurements |
 
 ## 10. Open items

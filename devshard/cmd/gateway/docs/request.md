@@ -28,12 +28,12 @@ Steps 4–6 run **after** normalisation because the model name is only known onc
 
 1. `unwrapExtraBody` — hoist `extra_body` into the top level.
 2. `rejectUnknownParameters` — a parameter absent from the table is refused. The gateway does not forward what it has not been taught.
-3. `applyStage(StagePreValidation)` — type and range checks, strips.
+3. `applyStage(StagePreValidation)` — type and range checks, strips; then `validateStopTokenIDs` against the model's vocabulary.
 4. `normalizeMessages` → `validateMessages` — message hygiene, separate because a message is a nested document.
 5. `decodeRequestView` — the typed view of what the client asked for.
 6. `applyOutputTokenLimits` — default and cap, per model.
-7. `decodeLogprobIntent` — **read here, before the next stage**, because `StagePostLimits` forces logprobs on and afterwards the document says what the gateway wants, not what the client asked.
-8. `applyStage(StagePostLimits)` — the forcing stage: `logprobs`, `top_logprobs`, `n → 1`, and each model profile's own forces ([`filters/README.md`](../filters/README.md), "Model profiles").
+7. `decodeLogprobIntent` — **read here, before the next stage**, because `StagePostLimits` caps `top_logprobs` and afterwards the document says the width that goes on the wire, not the one the client asked for.
+8. `applyStage(StagePostLimits)` — the forcing stage: `top_logprobs` capped at 5, `n → 1` when present, and each model profile's own forces ([`filters/README.md`](../filters/README.md), "Model profiles"); then `syncRequestView` re-decodes the view and `decodeUsageIntent` reads the client's `include_usage`.
 9. `forceUpstreamStreaming` — unless `force_upstream_streaming` is off.
 10. `document.Marshal` → `Result`.
 
@@ -45,13 +45,12 @@ Steps 4–6 run **after** normalisation because the model name is only known onc
 
 | Forced regardless of the client | Why |
 | --- | --- |
-| `logprobs: true`, `top_logprobs: 5` | validators re-execute and compare distributions |
 | `n: 1` when present | reservation budgets one `max_tokens` output; `n` choices can produce `n` times what was signed for |
 | `stream: true` | the gateway needs the stream to time the first token and spot a stall |
 
-The executor forces `logprobs` and `top_logprobs` itself, and `return_token_ids: true` beside them (`common/completionapi.ModifyRequestBodyWithLogprobsMode`), so the gateway's copies of `logprobs` and `top_logprobs` are belt and braces on the committed payload rather than the only guard. `return_token_ids` is the executor's alone: the gateway strips it from the client's request.
+The executor forces `logprobs` and `top_logprobs` itself, and `return_token_ids: true` beside them (`common/completionapi.ModifyRequestBodyWithLogprobsMode`), so the gateway carries the client's `logprobs` and `top_logprobs` as asked, `top_logprobs` capped at `completionapi.ForcedTopLogprobs` (5), rather than forcing them ([`filters/README.md`](../filters/README.md), "Parameter rules"). `return_token_ids` is the executor's alone: the gateway strips it from the client's request.
 
-## Step 9 in detail: the race
+## Step 10 in detail: the race
 
 `api/routes.go`, `race` → `engine.Run` (`engine/engine.go`).
 
@@ -73,7 +72,7 @@ sequenceDiagram
     R->>H1: settle the losing nonce
 ```
 
-The escalation ladder (`engine/escalation.go`) measures each stage against the host's own history, not a fixed timeout: receipt, first token, inter-chunk silence. `MaxAttemptsPerRequest` bounds the **total** attempts including the primary.
+The escalation ladder (`engine/escalation.go`) times each stage — receipt, first token, inter-chunk silence — against a configured deadline; the first token's grows with the prompt and is extended, never shortened, by the host's own first-content p75 ([race.md](./race.md), "Escalation"). `MaxAttemptsPerRequest` bounds the **unfinished** attempts a race holds at once, the primary included: an attempt that ends gives its place back, and the race starts no more attempts in total than its host group has.
 
 ## The response side
 
@@ -105,13 +104,13 @@ The "always stripped" list is **derived** from the two above, not written out a 
 | `maxBufferedResponseBytes` | 32 MiB | one reply being assembled |
 | `max_buffered_response_bytes` | 512 MiB | **every** reply being assembled, and every reply being recorded for the response cache, at once; a recording the budget cannot hold stops and that reply is not cached, while the client still receives it whole. Recordings and assemblies spend the one budget, so a non-streamed reply that is also recorded is counted twice while both copies are held, and an assembly refused while recordings fill the budget is answered 503 like any other |
 
-The two 10 MiB bounds are not the same bound. A prompt travels base64 inside the host-bound JSON, so it costs four bytes for every three, and the catch-up diffs ride the same body. A request inside the ingest cap can therefore be past what the public proxy, the versiond router and a host accept — the shape [issue #1658](https://github.com/gonka-ai/gonka/issues/1658) reported. Step 3 refuses it before a nonce is spent. When the catch-up backlog is what would not fit, it is drained ahead of the request instead of riding it ([`user/session.go`](../../../user/session.go), `drainOversizedCatchUp`), and each drained chunk is cut by wire bytes rather than by diff count — a chunk a host refuses whole leaves its sync cursor where it was, so the next attempt rebuilds the same backlog, which is the loop [issue #1660](https://github.com/gonka-ai/gonka/issues/1660) describes. Only a body that still does not fit is refused at the send with `transport.ErrHostRequestTooLarge`.
+The two 10 MiB bounds are not the same bound. A prompt travels base64 inside the host-bound JSON, so it costs four bytes for every three, and the catch-up diffs ride the same body. A request inside the ingest cap can therefore be past what the public proxy, the versiond router and a host accept — the shape [issue #1658](https://github.com/gonka-ai/gonka/issues/1658) reported. Step 3 refuses it before a nonce is spent. When the catch-up backlog is what would not fit, it is drained ahead of the request instead of riding it ([`user/session.go`](../../../user/session.go), `drainOversizedBacklog`), and each drained chunk is cut by wire bytes rather than by diff count — a chunk a host refuses whole leaves its sync cursor where it was, so the next attempt rebuilds the same backlog, which is the loop [issue #1660](https://github.com/gonka-ai/gonka/issues/1660) describes. Only a body that still does not fit is refused at the send with `transport.ErrHostRequestTooLarge`.
 
-**A session keeps only the newest diffs in memory.** A stored session holds the newest 1024 diffs and trims back to that once 2048 accumulate; the rest stay in the escrow's store (`user/session.go`, `trimDiffsLocked`). A host whose cursor is older than what memory holds — one far behind, one rewound to nonce 0 after it lost the escrow, or one left behind across a restart — is first taught the gap from the store: 1024 diffs per read, read without the session's lock so the escrow's other hosts are not held, each page cut into the same wire-bounded chunks (`closeStoredGap`). Only then does the request go out, carrying the in-memory tail and its own diff. The inference, heartbeat, pending-diff and finalize paths and a timeout vote all go through it (`catchUpForRequest`), so no host-bound body is sized by how far a host lags. A store read that fails sends nothing: the request fails, `catch_up_store_read_failed` names the range, the cursor stays where it was, and the next request to that host tries again. The one store read made under the lock is a single row: the post-state root of a nonce memory no longer holds, when a response reports one (`storedPostStateRoot`).
+**A session keeps only the newest diffs in memory.** A session with a store holds at most the newest 256 diffs (`maxRetainedDiffs`), and fewer once every host has acknowledged past them; the rest stay in the escrow's store (`user/session.go`, `dropDiffPrefixLocked`). A request carries at most one 200-diff chunk of catch-up (`catchUpChunkSize`). A host further behind than that — one far behind, one rewound to nonce 0 after it lost the escrow, or one left behind across a restart — is first taught every earlier nonce through chunked catch-up, whose store reads, in pages of at most 64 nonces or 8 MiB (`storage.ReadDiffPages`), are made without the session's lock so the escrow's other hosts are not held (`diffRange`). Only then does the request go out, carrying its own chunk. The inference, heartbeat, pending-diff and finalize paths and a timeout vote all go through it (`user/catch_up_send.go`, `catchUpForSend`), so no host-bound body is sized by how far a host lags. A store read that fails sends nothing: the request fails, `read trimmed diffs from store` names the range, the cursor stays where it was, and the next request to that host tries again. The store reads made under the lock are bounded: a catch-up within one chunk, and the post-state root of a nonce memory no longer holds, when a response reports one (`postStateRootForNonce`).
 
 **Step 3 reserves room for the catch-up rather than measuring the prompt alone.** The diffs are the gateway's own state and a client cannot be refused for them, so the check asks whether the prompt fits inside `MaxHostRequestBytes` *less* `hostCatchUpReserveBytes`. Measuring the prompt against the whole budget admits a body that leaves nothing for the backlog, and the refusal then lands at the send — after the nonce is committed, which spends the escrow's reserve on nobody, and the exemption ladder is what keeps it off the host's record ([race.md](./race.md), "The exemption ladder"). The reserve is a trade, and the numbers are worth stating: the prompt ceiling falls from about 7.86 MB to about 7.07 MB, which covers an ordinary backlog of a few thousand small diffs, while closing the hazard outright would mean reserving the full 4 MiB a backlog may ride inline and giving up roughly 40% of the usable prompt. What is left over is refused as the gateway's own limit rather than charged to a host.
 
-The last one exists because the request limiter does not stand in for it: with `max_concurrent_requests` unset the cap comes from network weight and admits thousands at a time. Past it, a request is refused 503; `devshard_gateway_buffered_response_bytes` is what is held right now.
+The last one exists because the request limiter does not stand in for it: by default `max_concurrent_requests` admits 2 048 requests per model at a time, and at 0 the cap comes from network weight alone. Past it, a request is refused 503; `devshard_gateway_buffered_response_bytes` is what is held right now.
 
 ## Compression to the host
 

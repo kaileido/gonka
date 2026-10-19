@@ -1,6 +1,6 @@
 # Defects outside the gateway
 
-Seven defects the gateway runs into and cannot fix inside `cmd/gateway`. The first four are closed and the last three are patched locally pending upstream; each entry states the rule that closes it and where that rule lives.
+Seven defects the gateway runs into and cannot fix inside `cmd/gateway`. The first four and the sixth are closed, and the fifth and seventh are patched locally pending upstream; each entry states the rule that closes it and where that rule lives.
 
 ---
 
@@ -60,13 +60,13 @@ With an empty map a nonce a host already receipted yields reason `refused`, and 
 
 ---
 
-## 6. Every composed diff copied the live window three times — patched pending upstream
+## 6. Every composed diff copied the live window three times — closed
 
 **The failure.** `StateMachine.PreviewLocalBestEffort` ([`state/machine.go`](../../../state/machine.go)) composes every diff the gateway sends, heartbeat turns included. Without the hand-over it deep-copies the mutable state before the trial apply, `localBestEffortLocked` copies it again for its own rollback, and the preview copies it a third time to hand back the post-state. Each copy walks every live inference and every nonce the escrow ever sealed, so the cost grows with the escrow's age. A profile under production load shows 32% of CPU in `snapshotMutable`. The gateway cannot wrap it: the copies happen under the state machine's own lock.
 
-**The rule.** `localBestEffortLocked` takes its rollback snapshot from the caller, so the preview passes the copy it already holds, and the preview hands the trial-applied maps over by reference (`handOverMutable`) while the copy goes back in their place. One copy per composed diff rather than three: on an escrow with twenty thousand live and a hundred thousand sealed inferences a preview costs 14 ms and 24 MB, against 22 ms and 39.5 MB with three copies (`BenchmarkPreviewOfALongLivedEscrow`).
+**The rule.** The state machine no longer copies the state to apply a diff: an apply mutates the live maps in place under a mutation journal that saves only what each touched key held, and a trial apply detaches the journal, recording the post value of every touched key, and then undoes ([`state/journal.go`](../../../state/journal.go), `mutationJournal` and `detachJournalLocked`; `state/machine.go`, `localBestEffortJournaled`). Untouched records, committed blobs and sealed nonces are never copied, so a preview's cost follows the diff rather than the escrow's age.
 
-**Why it is sound.** Nothing about the root changes: the same transactions are applied to the same state, and only which of two equal copies ends up live differs. The handed-over maps are reachable only through the returned handle, because the live state switches to the copy before the lock is released; `TestAPreviewLeavesTheLiveStateUntouchedUntilItsHandleIsCommitted` and `TestADiscardedPreviewLeavesNothingBehindForTheNextApply` ([`state/preview_isolation_test.go`](../../../state/preview_isolation_test.go)) fail if the pre-state is ever shared.
+**Why it is sound.** Nothing about the root changes: the same transactions are applied to the same state. The post-state is reachable only through the returned handle, because the apply is undone before the lock is released; `TestAPreviewLeavesTheLiveStateUntouchedUntilItsHandleIsCommitted` and `TestADiscardedPreviewLeavesNothingBehindForTheNextApply` ([`state/preview_isolation_test.go`](../../../state/preview_isolation_test.go)) fail if the pre-state is ever shared.
 
 ---
 
@@ -74,7 +74,7 @@ With an empty map a nonce a host already receipted yields reason `refused`, and 
 
 **The failure.** A seal pass ([`state/seal.go`](../../../state/seal.go), `autoSealLocked`) runs once per 150 nonces of every escrow on the gateway and on every host. Building a record of each live inference, sorting it and logging it as JSON at Info costs, on a 20 000-record window, 24 ms, 29 MB and a 3.6 MB log line per pass; one participant's host logged 327 MB of these lines in four hours, 60% of its log.
 
-**The rule.** The pass counts instead of listing: `candidates_count`, `waiting_nonce_gate`, `waiting_clock_gate`, `next_clock_gate_seconds` when something waits on the clock, `sealed_count` and the first and last sealed ids. The same pass costs 1.4 ms and 166 KB (`BenchmarkAutoSealEvaluationOfAWindowNotYetDue`).
+**The rule.** The pass counts instead of listing: `candidates_count`, `sealed_count` and `live_inferences_count`, with the window's earliest and latest `ConfirmedAt` when it has any (`state/seal.go`, the `auto-seal evaluation` line). The same pass costs 1.4 ms and 166 KB (`BenchmarkAutoSealEvaluationOfAWindowNotYetDue`).
 
 **Why it is sound.** Nothing but the log reads such a list. Which inferences are sealed is decided by the same nonce gate, terminal-status shortcut and clock gate whether the pass lists or counts, and the eligible ids are sorted before they fold into the sealed accumulator.
 
