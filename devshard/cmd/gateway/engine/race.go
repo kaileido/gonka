@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sync"
 	"time"
 
 	"devshard/cmd/gateway/chain"
@@ -160,6 +161,7 @@ type raceCoordinator struct {
 	pending          int
 	pickCancel       context.CancelFunc
 	pickStarted      time.Time
+	pickStopped      bool
 	pickReason       string
 	moreImmediate    int
 	excluded         []string
@@ -172,6 +174,7 @@ type raceCoordinator struct {
 	startErr         error
 
 	retryRuledOut bool
+	reportOnce    sync.Once
 }
 
 // raceExit is why await stopped; only exitComplete means the race is over.
@@ -186,6 +189,12 @@ const (
 // The returned outcome is the client's view; the reported one may be finished later, after losers stream.
 func runRace(clientCtx context.Context, deps raceDeps, request raceRequest) (RaceOutcome, error) {
 	coordinator := newCoordinator(clientCtx, deps, request)
+	defer func() {
+		if panicked := recover(); panicked != nil {
+			coordinator.abandon()
+			panic(panicked)
+		}
+	}()
 	if err := coordinator.begin(); err != nil {
 		return coordinator.fail(err)
 	}

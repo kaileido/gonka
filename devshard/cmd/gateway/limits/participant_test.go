@@ -1,6 +1,7 @@
 package limits
 
 import (
+	"math"
 	"math/rand"
 	"sync"
 	"testing"
@@ -1171,6 +1172,24 @@ func TestReconfigureLiftsAWindowThatCollapsedBelowTheNewInitial(t *testing.T) {
 }
 
 // Test flow:
+//  1. Acquire one request and post an Overload verdict, shrinking the window below the initial 4.
+//  2. Reconfigure the limiter with the very same window bounds, as an unrelated admin write does.
+//  3. Assert the window stays where the overload left it: only a raised initial lifts a window, so an unrelated write cannot reopen a host the gateway just backed off from.
+func TestReconfigureWithUnchangedBoundsKeepsANarrowedWindow(t *testing.T) {
+	t.Parallel()
+	limiter := newTestLimiter(testConfig(), fixedNow(testEpoch))
+	limiter.admitOne("host-a", "model-a")
+	limiter.answered("host-a", "model-a", Overload)
+	narrowed := windowOf(t, limiter, "host-a")
+
+	limiter.Reconfigure(testConfig())
+
+	if got := windowOf(t, limiter, "host-a"); got != narrowed {
+		t.Fatalf("window = %v, want the narrowed %v kept", got, narrowed)
+	}
+}
+
+// Test flow:
 //  1. Acquire and answer forty Success results, growing the window well past 8.
 //  2. Reconfigure the limiter with a new initial window of 1.
 //  3. Assert the tracked participant's window is left at the value it had already grown to, since a lowered initial is a floor, not a ceiling.
@@ -1604,5 +1623,14 @@ func TestAdmitsReadsWhileAttemptsAndCutOffsWrite(t *testing.T) {
 		if state := limiter.states[key{participant: host, model: "m"}]; state != nil && !state.idle() {
 			t.Fatalf("host %q in flight = (%d, %d), want both 0: every lease was released", host, state.input.inflight, state.output.inflight)
 		}
+	}
+}
+
+// Test flow:
+//  1. Price a host whose weight times the configured share overflows an int64.
+//  2. Assert the earned concurrency saturates at the largest int64: a float out of an int64's range converts differently on each architecture, so it is never converted.
+func TestEarnedConcurrencySaturatesAWeightPastTheInt64Range(t *testing.T) {
+	if earned := earnedConcurrency(math.MaxFloat64, math.MaxFloat64); earned != math.MaxInt64 {
+		t.Fatalf("earnedConcurrency() = %d, want %d", earned, int64(math.MaxInt64))
 	}
 }

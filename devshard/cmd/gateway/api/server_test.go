@@ -132,15 +132,19 @@ func (e *fakeEngine) Run(ctx context.Context, request engine.Request, client io.
 }
 
 type countingLimiter struct {
-	acquires atomic.Int64
-	releases atomic.Int64
-	tokens   atomic.Int64
-	err      error
+	acquires  atomic.Int64
+	releases  atomic.Int64
+	tokens    atomic.Int64
+	err       error
+	onAcquire func()
 }
 
 func (l *countingLimiter) AcquireForModel(_ context.Context, _ string, inputTokens int64, _ limits.ModelCapacity) error {
 	if l.err != nil {
 		return l.err
+	}
+	if l.onAcquire != nil {
+		l.onAcquire()
 	}
 	l.acquires.Add(1)
 	l.tokens.Add(inputTokens)
@@ -192,6 +196,7 @@ type fakeOperations struct {
 	added       []AddDevshardRequest
 	imported    []ImportDevshardRequest
 	deactivated []string
+	applied     config.Overrides
 }
 
 func (f *fakeOperations) record(name string) error {
@@ -262,8 +267,17 @@ func (f *fakeOperations) Unquarantine(context.Context, string) error {
 	return f.record("unquarantine")
 }
 
-func (f *fakeOperations) Reconfigure(context.Context, config.Overrides) error {
+func (f *fakeOperations) Reconfigure(_ context.Context, overrides config.Overrides) error {
+	f.mu.Lock()
+	f.applied = overrides
+	f.mu.Unlock()
 	return f.record("reconfigure")
+}
+
+func (f *fakeOperations) appliedOverrides() config.Overrides {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.applied
 }
 
 type fakeSuspicious struct{ hosts []string }
@@ -631,7 +645,7 @@ func TestImportKeepsTheTemplatedMetricLabel(t *testing.T) {
 // Test flow:
 //  1. Disable the gateway with a custom disabled message.
 //  2. Assert a client route now answers 503.
-//  3. Assert /metrics, /healthz, and an admin-keyed operator route still answer 200.
+//  3. Assert /metrics, /healthz, /v1/status, and an admin-keyed operator route still answer 200.
 func TestKillSwitchSparesMetricsHealthzAndTheOperatorRoutes(t *testing.T) {
 	live := newHarness(t)
 	live.swapConfig(func(next *config.Config) {
@@ -646,6 +660,9 @@ func TestKillSwitchSparesMetricsHealthzAndTheOperatorRoutes(t *testing.T) {
 	}
 	if got := live.request(t, http.MethodGet, "/healthz", "", nil).Code; got != http.StatusOK {
 		t.Fatalf("disabled gateway must still serve /healthz, or its container healthcheck reports a gateway disabled on purpose as unhealthy: got %d", got)
+	}
+	if got := live.request(t, http.MethodGet, "/v1/status", "", nil).Code; got != http.StatusOK {
+		t.Fatalf("disabled gateway must still serve /v1/status, which the deployed compose healthcheck reads: got %d", got)
 	}
 	if got := live.request(t, http.MethodGet, "/v1/admin/state", "", adminHeaders()).Code; got != http.StatusOK {
 		t.Fatalf("disabled gateway must still serve the operator routes: got %d", got)

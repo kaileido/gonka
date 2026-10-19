@@ -4,11 +4,15 @@ package scheduler
 func (s *Scheduler) Stop() {
 	s.registryMu.Lock()
 	s.stopped = true
-	running := make([]*dispatcher, 0, len(s.dispatchers))
+	running := make([]*dispatcher, 0, len(s.dispatchers)+len(s.superseded))
 	for _, active := range s.dispatchers {
 		running = append(running, active)
 	}
+	for superseded := range s.superseded {
+		running = append(running, superseded)
+	}
 	clear(s.dispatchers)
+	clear(s.superseded)
 	s.registryMu.Unlock()
 
 	for _, active := range running {
@@ -24,7 +28,11 @@ func (s *Scheduler) dispatcherFor(escrow Escrow) (*dispatcher, error) {
 	}
 
 	target, known := s.dispatchers[escrow.ID]
-	if !known || target.isStopped() || target.sessionID != escrow.SessionID {
+	live := known && !target.isStopped()
+	if live && target.sessionID != escrow.SessionID {
+		s.supersede(target)
+	}
+	if !live || target.sessionID != escrow.SessionID {
 		target = newDispatcher(dispatcherDeps{
 			escrowID:            escrow.ID,
 			sessionID:           escrow.SessionID,
@@ -57,11 +65,21 @@ func (s *Scheduler) retire(idle *dispatcher) bool {
 	if idle.pendingSubmits.Load() != 0 || !idle.markStopped() {
 		return false
 	}
-	if s.dispatchers[idle.escrowID] == idle {
-		delete(s.dispatchers, idle.escrowID)
+	delete(s.superseded, idle)
+	if s.dispatchers[idle.escrowID] != idle {
+		return true
 	}
+	delete(s.dispatchers, idle.escrowID)
 	if s.observer != nil {
 		s.observer.EscrowRetired(idle.escrowID)
 	}
 	return true
+}
+
+// supersede keeps a dispatcher a new session of its escrow replaces owned until it idles out, so Stop waits for it and the waiters it already holds are still served. Caller holds registryMu.
+func (s *Scheduler) supersede(previous *dispatcher) {
+	if s.superseded == nil {
+		s.superseded = make(map[*dispatcher]struct{})
+	}
+	s.superseded[previous] = struct{}{}
 }

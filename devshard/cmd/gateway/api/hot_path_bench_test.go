@@ -291,7 +291,7 @@ func BenchmarkCacheRecorderStream(b *testing.B) {
 
 	b.ReportAllocs()
 	for b.Loop() {
-		recorder := newCacheRecorder(sink, maxBufferedResponseBytes, true)
+		recorder := newCacheRecorder(sink, maxBufferedResponseBytes, true, nil)
 		for _, chunk := range chunks {
 			if _, err := recorder.Write(chunk); err != nil {
 				b.Fatalf("Write: %v", err)

@@ -3,11 +3,10 @@
 # GATEWAY_VERSION is stamped into devshard/types.buildStateRootProtocolVersion, which is hashed into the
 # state-root preimage and written into every settlement payload. A binary built without it falls back to
 # the plain-`go build` default and signs settlements the network computes differently, so every target
-# that produces a binary passes it -- including the images.
+# that produces a binary passes it -- including the images -- and refuses to run without it.
 
-.PHONY: help build test test-race test-junit cover lint verify image release clean
+.PHONY: help require-version build test test-race test-junit cover lint verify image release clean
 
-GATEWAY_VERSION ?= dev
 GATEWAY_IMAGE ?= ghcr.io/gonka-ai/devshard-gateway-v4
 GATEWAY_TAGS ?=
 GATEWAY_STAGE_TAG ?= stage
@@ -38,11 +37,19 @@ help:
 	@echo "test-junit   test-race with a JUnit report at $(JUNIT_REPORT)"
 	@echo "cover        statement coverage of the request and money paths"
 	@echo "lint         golangci-lint over the gateway"
-	@echo "verify       build, test-race and lint: the gate before a push"
+	@echo "verify       test-race and lint: the gate before a push"
 	@echo "image        build $(GATEWAY_IMAGE):$(GATEWAY_STAGE_TAG) into the local daemon"
 	@echo "release      build and push $(GATEWAY_IMAGE) for every tag in GATEWAY_TAGS"
 
-build:
+# Required rather than defaulted: a binary stamped with a version nobody chose signs settlements no host
+# accepts.
+require-version:
+	@if [ -z "$(strip $(GATEWAY_VERSION))" ]; then \
+		echo "GATEWAY_VERSION is required, e.g. GATEWAY_VERSION=v6" >&2; \
+		exit 1; \
+	fi
+
+build: require-version
 	go build -ldflags "$(LDFLAGS)" -o $(BINARY) .
 
 test:
@@ -61,10 +68,10 @@ cover:
 lint:
 	golangci-lint run ./...
 
-verify: build test-race lint
+verify: test-race lint
 
 # Loaded into the local daemon rather than pushed, so a stage image can be run before it is shared.
-image:
+image: require-version
 	DOCKER_BUILDKIT=1 docker build \
 		--target $(IMAGE_TARGET) \
 		--build-arg DEVSHARD_VERSION=$(GATEWAY_VERSION) \
@@ -75,7 +82,7 @@ image:
 
 # Tags are required rather than defaulted: an image pushed under a name nobody chose is worse than a
 # build that refused to run.
-release:
+release: require-version
 	@if [ -z "$(strip $(GATEWAY_TAGS))" ]; then \
 		echo "GATEWAY_TAGS is required, e.g. GATEWAY_TAGS='v4 v4-latest'" >&2; \
 		exit 1; \

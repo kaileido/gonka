@@ -11,6 +11,8 @@ import (
 
 var versionNotFound = regexp.MustCompile(`version "[^"]*" not found`)
 
+const contextEstimateMargin = 2
+
 type CapabilitySignal struct {
 	ToolsUnsupported   bool
 	VersionUnsupported bool
@@ -26,6 +28,15 @@ func (s CapabilitySignal) Retriable() bool {
 // ServableByALongerHost reports a context-length refusal from a host running shorter than the model, for a request the model's full length would take.
 func (s CapabilitySignal) ServableByALongerHost(modelContextLength uint64) bool {
 	return s.ContextLimit > 0 && s.ContextLimit < modelContextLength && s.ContextRequested <= modelContextLength
+}
+
+// servableElsewhere reports a context-length refusal another host may still serve: a shorter host's, or a claim the gateway's own estimate contradicts.
+func (s CapabilitySignal) servableElsewhere(modelContextLength, estimatedTokens uint64) bool {
+	return s.ServableByALongerHost(modelContextLength) || s.contradictedByEstimate(modelContextLength, estimatedTokens)
+}
+
+func (s CapabilitySignal) contradictedByEstimate(modelContextLength, estimatedTokens uint64) bool {
+	return s.ContextLimit > 0 && estimatedTokens != noTokenEstimate && estimatedTokens*contextEstimateMargin <= modelContextLength
 }
 
 // Refused reports any refusal the gateway recognises, retriable or not.
@@ -70,8 +81,8 @@ func CapabilityOf(attempt AttemptOutcome) CapabilitySignal {
 }
 
 // rulesOutRetry reports a trusted answer no other host would change: a context-length refusal a longer host could still serve keeps the search going. See race.md, "Escalation".
-func rulesOutRetry(attempt AttemptOutcome, modelContextLength uint64) bool {
-	return answersForEveryHost(attempt) && !CapabilityOf(attempt).ServableByALongerHost(modelContextLength)
+func rulesOutRetry(attempt AttemptOutcome, modelContextLength, estimatedTokens uint64) bool {
+	return answersForEveryHost(attempt) && !CapabilityOf(attempt).servableElsewhere(modelContextLength, estimatedTokens)
 }
 
 // answersForEveryHost reports a trusted host's answer the race takes as every host's: a refusal that is not Retriable, or a rejection of the request itself.

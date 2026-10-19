@@ -80,7 +80,7 @@ func (o RaceOutcome) hostError() *HostApplicationError {
 }
 
 func (o RaceOutcome) refusedByAShorterHost(attempt AttemptOutcome) bool {
-	return CapabilityOf(attempt).ServableByALongerHost(o.ModelContextLength)
+	return CapabilityOf(attempt).servableElsewhere(o.ModelContextLength, o.InputTokens+o.OutputTokens)
 }
 
 // longestShorterHostRefusal names the most any host offered, and only once every host refused: a host that failed otherwise may have run the whole length.

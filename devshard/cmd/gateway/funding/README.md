@@ -4,7 +4,7 @@ Pure: `Plan` reads one `ModelState` and returns one `Decision`; `Bucket` and `De
 
 ## Inputs
 
-Per escrow (`EscrowState`): its money and flags from [`liquidity`](../liquidity/README.md), its role (standby or temp), its bridge label, whether it is at its nonce cap, whether it is `Unread` (an active row with no live session yet, entered by the manager as a fresh escrow holding its stored amount with nothing in flight), its own full-context price `FullCost`, and how long it has been idle. Per model (`ModelState`): `counted` (every store row of the model plus its commitment rows), the model's counts and `max_unsettled` and `full_context_slots` (`K`), the amount and the chain's create fee, the model-level prices (`FullCost` and `Slot` at the chain's current price), the demand peak and whether the demand window is full, the surplus streak (consecutive earlier scheduled ticks on which `Decision.SurplusHeld` was true) and whether this tick is a scheduled one or a wakeup (`ScheduledTick`), `Parking` (the model's rows already parked or settling and not yet settled), the money-short mark, whether the wallet refused the model's last create (`WalletShort`, cleared by the next create that lands), the phase (requests blocked, epoch known, bridge windows, the current label), the create gates (served by the network, breaker), and the bucket's tokens.
+Per escrow (`EscrowState`): its money and flags from [`liquidity`](../liquidity/README.md), its role (standby or temp), its bridge label, whether it is at its nonce cap, whether it is `Unread` (an active row with no live session yet, entered by the manager as a fresh escrow holding its stored amount with nothing in flight), its own full-context price `FullCost`, and how long it has been idle. Per model (`ModelState`): `counted` (every store row of the model plus its commitment rows), the model's counts and `max_unsettled` and `full_context_slots` (`K`), the amount and the chain's create fee, the model-level prices (`FullCost` and `Slot` at the chain's current price), the demand peak and whether the demand window is full, the surplus streak (consecutive earlier scheduled ticks on which `Decision.SurplusHeld` was true) and whether this tick is a scheduled one or a wakeup (`ScheduledTick`), `Parking` (the model's rows already parked or settling and not yet settled), `PendingRegularCreates` and `PendingStandbyCreates` (the model's open create commitments by role, transactions that may still land), the money-short mark, whether the wallet refused the model's last create (`WalletShort`, cleared by the next create that lands), the phase (requests blocked, epoch known, bridge windows, the current label), the create gates (served by the network, breaker), and the bucket's tokens.
 
 An escrow is **routable** when it is not standby and not at its nonce cap. An unread escrow counts in every sum and count below, routable or not by the same rule, so a fresh escrow whose session is not open yet is never funded twice; it is never a retire candidate.
 
@@ -19,9 +19,11 @@ capShort     = priced && (moneyShort || need > L) ? ceil(max(1, need − L) / (A
 spreadShort  = max(0, TargetCount − #{routable non-temp of the current label})
 standbyShort = max(0, ReserveCount − #{standby of the current label or later})
 room         = MaxUnsettled − counted − (near the bridge window and not in it ? TempCount : 0)
-creates      = allowed ? min(max(guard, cap, spread) + standbyShort, room, bucket) : 0, regulars first
-broken       = regular creates < guardShort, or the wallet is short while guardShort > 0
-budget       = max(guard, cap, spread) + standbyShort > room          (Decision.BudgetReached)
+regulars     = max(0, max(guard, cap, spread) − pending regular creates)
+standbys     = max(0, standbyShort − pending standby creates)
+creates      = allowed ? min(regulars + standbys, room, bucket) : 0, regulars first
+broken       = regular creates + pending regular creates < guardShort, or the wallet is short while guardShort > 0
+budget       = regulars + standbys > room          (Decision.BudgetReached)
 deficit      = max(guard, cap, spread) − room
 ```
 

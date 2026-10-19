@@ -6,7 +6,7 @@ Seven defects the gateway runs into and cannot fix inside `cmd/gateway`. The fir
 
 ## 1. The execution timeouts nobody retried — closed
 
-**The failure.** A nonce a host receipted and never finished owes an execution timeout. Voted only by `SettleTimeouts` at the end of the race that owns it ([`engine/engine.go`](../engine/engine.go)), a round that finds no verifiers leaves the nonce owned by nobody, because no other component knows it exists.
+**The failure.** A nonce a host receipted and never finished owes an execution timeout. Voted only by `settleSteps` at the end of the race that owns it ([`engine/engine.go`](../engine/engine.go)), a round that finds no verifiers leaves the nonce owned by nobody, because no other component knows it exists.
 
 The cost is money, not observability. In `settleLiveRecordLocked` ([`state/machine.go`](../../../state/machine.go)) a `StatusStarted` record settles as `ActualCost = ReservedCost`, credited to the executor slot: the escrow pays in full for an answer it never received, and the unposted vote also spares that host the `Missed` it earned.
 

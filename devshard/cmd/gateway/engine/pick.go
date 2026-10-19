@@ -14,9 +14,9 @@ func (c *raceCoordinator) pick(ctx context.Context) (scheduler.Assignment, error
 	return c.observePick(c.deps.Picker.Pick(ctx, c.requestProfile(c.request.Params)))
 }
 
-// observePick latches the out-of-funds fact a declined nonce carries; no host ever reports it.
+// observePick latches the out-of-funds fact a declined nonce carries, except a pinned escrow's own shortfall; no host ever reports it.
 func (c *raceCoordinator) observePick(assignment scheduler.Assignment, err error) (scheduler.Assignment, error) {
-	if errors.Is(err, types.ErrInsufficientBalance) {
+	if errors.Is(err, types.ErrInsufficientBalance) && !errors.Is(err, scheduler.ErrPinnedEscrowShort) {
 		c.balanceExhausted = true
 	}
 	return assignment, err
@@ -65,7 +65,7 @@ func (c *raceCoordinator) startPick(reason string, params any) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.drain.race, schedulerPickTimeout)
-	c.pickCancel, c.pickStarted, c.pickReason = cancel, c.deps.Now(), reason
+	c.pickCancel, c.pickStarted, c.pickReason, c.pickStopped = cancel, c.deps.Now(), reason, false
 	profile := c.requestProfile(params)
 	go func() {
 		assignment, err := c.deps.Picker.Pick(ctx, profile)
@@ -115,11 +115,12 @@ func (c *raceCoordinator) stopPicking() {
 	c.moreImmediate = 0
 	if c.picking() {
 		c.pickCancel()
+		c.pickStopped = true
 	}
 }
 
 func (c *raceCoordinator) pickDeadline() time.Time {
-	if !c.picking() {
+	if !c.picking() || c.pickStopped {
 		return time.Time{}
 	}
 	return c.pickStarted.Add(schedulerPickTimeout)

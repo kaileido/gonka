@@ -353,20 +353,25 @@ func (e *Engine) settle(outcome RaceOutcome, params any, registration *raceRegis
 			poster = resolved
 		}
 	}
-	task := settleTask{
-		deadline: func() time.Time { return earliestVote(outcome, poster) },
-		post: func() {
-			retries := SettleTimeouts(settleContext(outcome.RequestID), poster, outcome, e.reportTimeout)
-			outcome.releaseHeldFinishes()
-			e.retryRefusedVotes(outcome, poster, retries, registration, 0)
-		},
+	groups := voteGroups(outcome.TimeoutPlan(), poster)
+	markPosted := afterAll(len(groups), outcome.releaseHeldFinishes)
+	markSettled := afterAll(len(groups), registration.release)
+	for _, group := range groups {
+		task := settleTask{
+			deadline: func() time.Time { return earliestDue(group.steps, poster) },
+			post: func() {
+				retries := settleSteps(settleContext(outcome.RequestID), poster, group.steps, outcome.Lifecycle.EscrowMissing, e.reportTimeout)
+				markPosted()
+				e.retryRefusedVotes(outcome, poster, retries, markSettled, 0)
+			},
+		}
+		e.settles.Add(task, int(e.deps.Config.Load().Engine.MaxConcurrentTimeoutVotes))
 	}
-	e.settles.Add(task, int(e.deps.Config.Load().Engine.MaxConcurrentTimeoutVotes))
 }
 
-func (e *Engine) retryRefusedVotes(outcome RaceOutcome, poster TimeoutPoster, steps []TimeoutStep, registration *raceRegistration, round int) {
+func (e *Engine) retryRefusedVotes(outcome RaceOutcome, poster TimeoutPoster, steps []TimeoutStep, markSettled func(), round int) {
 	if len(steps) == 0 || round >= refusedVoteRetries || e.stopping.Err() != nil {
-		registration.release()
+		markSettled()
 		return
 	}
 	retryAt := e.settles.now().Add(refusedVoteFirstRetryDelay << round)
@@ -375,28 +380,10 @@ func (e *Engine) retryRefusedVotes(outcome RaceOutcome, poster TimeoutPoster, st
 		wake:     e.stopping,
 		post: func() {
 			remaining := postTimeouts(settleContext(outcome.RequestID), poster, steps, outcome.Lifecycle.EscrowMissing, e.reportTimeout)
-			e.retryRefusedVotes(outcome, poster, remaining, registration, round+1)
+			e.retryRefusedVotes(outcome, poster, remaining, markSettled, round+1)
 		},
 	}
 	e.settles.Add(task, int(e.deps.Config.Load().Engine.MaxConcurrentTimeoutVotes))
-}
-
-// earliestVote is when the first of a race's votes may be posted.
-func earliestVote(outcome RaceOutcome, poster TimeoutPoster) time.Time {
-	var earliest time.Time
-	if poster == nil {
-		return earliest
-	}
-	for _, step := range outcome.TimeoutPlan() {
-		if !step.Post {
-			continue
-		}
-		deadline := poster.VoteDeadline(step.Nonce, step.StartedAt)
-		if earliest.IsZero() || deadline.Before(earliest) {
-			earliest = deadline
-		}
-	}
-	return earliest
 }
 
 func (e *Engine) reportTimeout(event TimeoutEvent) {

@@ -46,7 +46,7 @@ func TestAssembleSSEBodyMergesDeltas(t *testing.T) {
 				`{"id":"a","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":"stop"}]}`,
 				`{"id":"a","object":"chat.completion.chunk","choices":[],"usage":{"completion_tokens":2,"prompt_tokens":5,"total_tokens":7}}`,
 			},
-			want: `{"choices":[{"finish_reason":"stop","index":0,"message":{"content":"hi"}}],"id":"a","object":"chat.completion","usage":{"completion_tokens":2,"prompt_tokens":5,"total_tokens":7}}`,
+			want: `{"choices":[{"finish_reason":"stop","index":0,"message":{"content":"hi","role":"assistant"}}],"id":"a","object":"chat.completion","usage":{"completion_tokens":2,"prompt_tokens":5,"total_tokens":7}}`,
 		},
 		{
 			name: "reasoning accumulates beside content",
@@ -54,7 +54,7 @@ func TestAssembleSSEBodyMergesDeltas(t *testing.T) {
 				`{"choices":[{"index":0,"delta":{"reasoning_content":"th"}}]}`,
 				`{"choices":[{"index":0,"delta":{"reasoning_content":"ink","content":"out"}}]}`,
 			},
-			want: `{"choices":[{"index":0,"message":{"content":"out","reasoning_content":"think"}}],"object":"chat.completion"}`,
+			want: `{"choices":[{"index":0,"message":{"content":"out","reasoning_content":"think","role":"assistant"}}],"object":"chat.completion"}`,
 		},
 		{
 			name: "two tool calls keep their own arguments",
@@ -64,7 +64,7 @@ func TestAssembleSSEBodyMergesDeltas(t *testing.T) {
 				`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"1}"}}]}}]}`,
 				`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"function":{"arguments":"2}"}}]}}]}`,
 			},
-			want: `{"choices":[{"index":0,"message":{"content":null,"tool_calls":[{"function":{"arguments":"{\"a\":1}","name":"lookup"},"id":"c1","index":0},{"function":{"arguments":"{\"b\":2}","name":"send"},"id":"c2","index":1}]}}],"object":"chat.completion"}`,
+			want: `{"choices":[{"index":0,"message":{"content":null,"role":"assistant","tool_calls":[{"function":{"arguments":"{\"a\":1}","name":"lookup"},"id":"c1"},{"function":{"arguments":"{\"b\":2}","name":"send"},"id":"c2"}]}}],"object":"chat.completion"}`,
 		},
 		{
 			name: "every token's logprobs survive, not just the last chunk's",
@@ -72,7 +72,7 @@ func TestAssembleSSEBodyMergesDeltas(t *testing.T) {
 				`{"choices":[{"index":0,"delta":{"content":"a"},"logprobs":{"content":[{"token":"a","logprob":-0.1}]}}]}`,
 				`{"choices":[{"index":0,"delta":{"content":"b"},"logprobs":{"content":[{"token":"b","logprob":-0.2}]}}]}`,
 			},
-			want: `{"choices":[{"index":0,"logprobs":{"content":[{"logprob":-0.1,"token":"a"},{"logprob":-0.2,"token":"b"}]},"message":{"content":"ab"}}],"object":"chat.completion"}`,
+			want: `{"choices":[{"index":0,"logprobs":{"content":[{"logprob":-0.1,"token":"a"},{"logprob":-0.2,"token":"b"}]},"message":{"content":"ab","role":"assistant"}}],"object":"chat.completion"}`,
 		},
 		{
 			name: "choices come back in index order",
@@ -80,7 +80,7 @@ func TestAssembleSSEBodyMergesDeltas(t *testing.T) {
 				`{"choices":[{"index":1,"delta":{"content":"second"}}]}`,
 				`{"choices":[{"index":0,"delta":{"content":"first"}}]}`,
 			},
-			want: `{"choices":[{"index":0,"message":{"content":"first"}},{"index":1,"message":{"content":"second"}}],"object":"chat.completion"}`,
+			want: `{"choices":[{"index":0,"message":{"content":"first","role":"assistant"}},{"index":1,"message":{"content":"second","role":"assistant"}}],"object":"chat.completion"}`,
 		},
 		{
 			name: "a host answering with a whole completion is left alone",
@@ -109,7 +109,7 @@ func TestAssembleSSEBodyKeepsLogprobsOfEveryChoice(t *testing.T) {
 	assembled := string(assembleSSEBody(sseStream(
 		`{"choices":[{"index":0,"delta":{"content":"a"},"logprobs":{"content":[{"token":"a"}]}},{"index":1,"delta":{"content":"x"},"logprobs":{"content":[{"token":"x"}]}}]}`,
 	)))
-	want := `{"choices":[{"index":0,"logprobs":{"content":[{"token":"a"}]},"message":{"content":"a"}},{"index":1,"logprobs":{"content":[{"token":"x"}]},"message":{"content":"x"}}],"object":"chat.completion"}`
+	want := `{"choices":[{"index":0,"logprobs":{"content":[{"token":"a"}]},"message":{"content":"a","role":"assistant"}},{"index":1,"logprobs":{"content":[{"token":"x"}]},"message":{"content":"x","role":"assistant"}}],"object":"chat.completion"}`
 	if assembled != want {
 		t.Fatalf("assembled\n got: %s\nwant: %s", assembled, want)
 	}
@@ -125,7 +125,7 @@ func TestAssembleSSEBodyKeepsIdentityFieldsWhole(t *testing.T) {
 		`{"choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"city\":"}}]}}]}`,
 		`{"choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"\"Paris\"}"}}]}}]}`,
 	)))
-	want := `{"choices":[{"index":0,"message":{"content":null,"role":"assistant","tool_calls":[{"function":{"arguments":"{\"city\":\"Paris\"}","name":"get_weather"},"id":"call_1","index":0,"type":"function"}]}}],"object":"chat.completion"}`
+	want := `{"choices":[{"index":0,"message":{"content":null,"role":"assistant","tool_calls":[{"function":{"arguments":"{\"city\":\"Paris\"}","name":"get_weather"},"id":"call_1","type":"function"}]}}],"object":"chat.completion"}`
 	if assembled != want {
 		t.Fatalf("assembled\n got: %s\nwant: %s", assembled, want)
 	}
@@ -141,7 +141,7 @@ func TestAssembleSSEBodyJoinsSplitDataLines(t *testing.T) {
 
 	assembled := string(assembleSSEBody(split))
 
-	want := `{"choices":[{"index":0,"message":{"content":"hi"}}],"id":"a","object":"chat.completion"}`
+	want := `{"choices":[{"index":0,"message":{"content":"hi","role":"assistant"}}],"id":"a","object":"chat.completion"}`
 	if assembled != want {
 		t.Fatalf("assembled\n got: %s\nwant: %s", assembled, want)
 	}
@@ -158,7 +158,7 @@ func TestAssembleSSEBodyOrdersChoicesWithAnIndexFirst(t *testing.T) {
 		`{"choices":[{"delta":{"content":"none"}}]}`,
 		`{"choices":[{"index":0,"delta":{"content":"zero"}}]}`,
 	)))
-	want := `{"choices":[{"index":0,"message":{"content":"zero"}},{"index":1,"message":{"content":"one"}},{"message":{"content":"none"}}],"object":"chat.completion"}`
+	want := `{"choices":[{"index":0,"message":{"content":"zero","role":"assistant"}},{"index":1,"message":{"content":"one","role":"assistant"}},{"message":{"content":"none","role":"assistant"}}],"object":"chat.completion"}`
 	if assembled != want {
 		t.Fatalf("assembled\n got: %s\nwant: %s", assembled, want)
 	}
@@ -226,7 +226,7 @@ func TestAssembleSSEBodyAccumulatesTokenIds(t *testing.T) {
 		`{"choices":[{"index":0,"delta":{"content":"a"},"token_ids":[11]}]}`,
 		`{"choices":[{"index":0,"delta":{"content":"b"},"token_ids":[22]}]}`,
 	)))
-	want := `{"choices":[{"index":0,"message":{"content":"ab"},"token_ids":[11,22]}],"object":"chat.completion"}`
+	want := `{"choices":[{"index":0,"message":{"content":"ab","role":"assistant"},"token_ids":[11,22]}],"object":"chat.completion"}`
 	if assembled != want {
 		t.Fatalf("assembled\n got: %s\nwant: %s", assembled, want)
 	}
@@ -321,7 +321,7 @@ func TestAssembleSSEBodyDoesNotDoubleArgumentsResentWhole(t *testing.T) {
 		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"ty\":"}}]}}]}`,
 		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"city\":\"Paris\"}"}}]}}]}`,
 	)))
-	want := `{"choices":[{"index":0,"message":{"content":null,"tool_calls":[{"function":{"arguments":"{\"city\":\"Paris\"}"},"index":0}]}}],"object":"chat.completion"}`
+	want := `{"choices":[{"index":0,"message":{"content":null,"role":"assistant","tool_calls":[{"function":{"arguments":"{\"city\":\"Paris\"}"}}]}}],"object":"chat.completion"}`
 	if assembled != want {
 		t.Fatalf("assembled\n got: %s\nwant: %s", assembled, want)
 	}
@@ -340,7 +340,7 @@ func TestAssembleSSEBodyOnARecordedKimiReply(t *testing.T) {
 
 	assembled := string(assembleSSEBody(stream))
 
-	want := `{"choices":[{"finish_reason":"length","index":0,"message":{"content":" I'll </think> examining","role":"assistant","tool_calls":[]}}],"created":1786114584,"id":"devshard-46055-1453","model":"moonshotai/Kimi-K2.6","object":"chat.completion","usage":{"completion_tokens":16,"prompt_tokens":46,"total_tokens":62}}`
+	want := `{"choices":[{"finish_reason":"length","index":0,"message":{"content":" I'll </think> examining","role":"assistant"}}],"created":1786114584,"id":"devshard-46055-1453","model":"moonshotai/Kimi-K2.6","object":"chat.completion","usage":{"completion_tokens":16,"prompt_tokens":46,"total_tokens":62}}`
 	if assembled != want {
 		t.Fatalf("assembled\n got: %s\nwant: %s", assembled, want)
 	}
@@ -358,7 +358,7 @@ func TestAssembleSSEBodyGrowsArgumentsThatStartEmpty(t *testing.T) {
 		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"city\":"}}]}}]}`,
 		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"Paris\"}"}}]}}]}`,
 	)))
-	want := `{"choices":[{"index":0,"message":{"content":null,"tool_calls":[{"function":{"arguments":"{\"city\":\"Paris\"}"},"index":0}]}}],"object":"chat.completion"}`
+	want := `{"choices":[{"index":0,"message":{"content":null,"role":"assistant","tool_calls":[{"function":{"arguments":"{\"city\":\"Paris\"}"}}]}}],"object":"chat.completion"}`
 	if assembled != want {
 		t.Fatalf("assembled\n got: %s\nwant: %s", assembled, want)
 	}

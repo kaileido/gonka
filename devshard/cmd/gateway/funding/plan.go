@@ -25,33 +25,35 @@ type EscrowState struct {
 
 // ModelState is everything Plan reads for one model. See README.md, "Inputs".
 type ModelState struct {
-	Escrows          []EscrowState
-	Counted          int
-	TargetCount      int
-	TempCount        int
-	ReserveCount     int
-	MaxUnsettled     int
-	FullContextSlots int
-	Amount           uint64
-	CreateFee        uint64
-	FullCost         uint64
-	Slot             uint64
-	Priced           bool
-	DemandPeak       uint64
-	DemandWindowFull bool
-	SurplusStreak    int
-	ScheduledTick    bool
-	Parking          int
-	MoneyShort       bool
-	WalletShort      bool
-	RequestsBlocked  bool
-	EpochKnown       bool
-	ServedByNetwork  bool
-	BreakerGated     bool
-	InBridgeWindow   bool
-	NearBridgeWindow bool
-	CurrentLabel     int64
-	BucketTokens     int
+	Escrows               []EscrowState
+	Counted               int
+	TargetCount           int
+	TempCount             int
+	ReserveCount          int
+	MaxUnsettled          int
+	FullContextSlots      int
+	Amount                uint64
+	CreateFee             uint64
+	FullCost              uint64
+	Slot                  uint64
+	Priced                bool
+	DemandPeak            uint64
+	DemandWindowFull      bool
+	SurplusStreak         int
+	ScheduledTick         bool
+	Parking               int
+	PendingRegularCreates int
+	PendingStandbyCreates int
+	MoneyShort            bool
+	WalletShort           bool
+	RequestsBlocked       bool
+	EpochKnown            bool
+	ServedByNetwork       bool
+	BreakerGated          bool
+	InBridgeWindow        bool
+	NearBridgeWindow      bool
+	CurrentLabel          int64
+	BucketTokens          int
 }
 
 // Shortfalls are the four terms a model's creates are sized from. See README.md, "The algorithm".
@@ -102,12 +104,12 @@ func Plan(state ModelState) Decision {
 		Standby:  standbyShortfall(state),
 	}
 	decision.Room = state.MaxUnsettled - state.Counted - bridgeReservation(state)
-	regularWanted := regularWant(decision.Shortfalls)
-	wanted := regularWanted + decision.Shortfalls.Standby
+	regularWanted := max(0, regularWant(decision.Shortfalls)-state.PendingRegularCreates)
+	wanted := regularWanted + max(0, decision.Shortfalls.Standby-state.PendingStandbyCreates)
 	decision.BudgetReached = wanted > decision.Room
 	count := min(wanted, max(decision.Room, 0), max(state.BucketTokens, 0))
 	decision.Creates = plannedCreates(state, decision.Shortfalls, regularWanted, count)
-	decision.Broken = regularCreates(decision.Creates) < decision.Shortfalls.Guard || (state.WalletShort && decision.Shortfalls.Guard > 0)
+	decision.Broken = regularCreates(decision.Creates)+state.PendingRegularCreates < decision.Shortfalls.Guard || (state.WalletShort && decision.Shortfalls.Guard > 0)
 	decision.SurplusHeld = surplusHeld(state, decision.Shortfalls, routable, decision.Need)
 	decision.Retires = plannedRetires(state, routable, decision)
 	return decision
@@ -242,7 +244,7 @@ func plannedCreates(state ModelState, shortfalls Shortfalls, regularWanted, coun
 	}
 	creates := make([]Create, 0, count)
 	for index := range min(count, regularWanted) {
-		creates = append(creates, Create{Reason: regularReason(index, shortfalls)})
+		creates = append(creates, Create{Reason: regularReason(index+state.PendingRegularCreates, shortfalls)})
 	}
 	for len(creates) < count {
 		creates = append(creates, Create{Standby: true, Reason: ReasonStandby})

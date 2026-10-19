@@ -203,6 +203,8 @@ func serveCached(w http.ResponseWriter, requestID string, entry cachedResponse) 
 type cacheRecorder struct {
 	http.ResponseWriter
 	limit      int64
+	budget     *BufferBudget
+	charged    int64
 	status     int
 	body       bytes.Buffer
 	bounds     []int
@@ -210,9 +212,9 @@ type cacheRecorder struct {
 	overflowed bool
 }
 
-// A streamed reply is recorded event by event, so its boundaries are worth reserving; a folded one arrives as a single body.
-func newCacheRecorder(w http.ResponseWriter, limit int64, streamed bool) *cacheRecorder {
-	recorder := &cacheRecorder{ResponseWriter: w, limit: limit}
+// A streamed reply is recorded event by event, so its boundaries are worth reserving; a folded one arrives as a single body. The recording spends the shared buffer budget. See README.md, "The response cache".
+func newCacheRecorder(w http.ResponseWriter, limit int64, streamed bool, budget *BufferBudget) *cacheRecorder {
+	recorder := &cacheRecorder{ResponseWriter: w, limit: limit, budget: budget}
 	if streamed {
 		recorder.bounds = make([]int, 0, expectedStreamEvents)
 	}
@@ -233,16 +235,28 @@ func (w *cacheRecorder) Write(chunk []byte) (int, error) {
 		w.writeErr = err
 	}
 	if written > 0 && !w.overflowed {
-		if int64(w.body.Len()+written) > w.limit {
-			w.overflowed = true
-			w.body = bytes.Buffer{}
-			w.bounds = nil
+		if int64(w.body.Len()+written) > w.limit || !w.budget.reserve(int64(written)) {
+			w.overflow()
 		} else {
+			w.charged += int64(written)
 			w.body.Write(chunk[:written])
 			w.bounds = append(w.bounds, w.body.Len())
 		}
 	}
 	return written, err
+}
+
+func (w *cacheRecorder) overflow() {
+	w.overflowed = true
+	w.body = bytes.Buffer{}
+	w.bounds = nil
+	w.releaseBudget()
+}
+
+// releaseBudget hands back what the recording held; the cache accounts for an entry it keeps on its own.
+func (w *cacheRecorder) releaseBudget() {
+	w.budget.release(w.charged)
+	w.charged = 0
 }
 
 func (w *cacheRecorder) Unwrap() http.ResponseWriter { return w.ResponseWriter }

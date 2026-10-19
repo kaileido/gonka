@@ -14,7 +14,7 @@ No CI job runs this gate, so running it is the author's job. Run from this direc
 
 ```
 cd devshard/cmd/gateway
-make verify                                        # build, go test -race, golangci-lint
+make verify                                        # go test -race, golangci-lint
 golangci-lint run --new-from-merge-base=main ./... # only what the branch introduced
 golangci-lint fmt ./...                            # gofumpt and gci, as the config sets them
 ```
@@ -28,7 +28,7 @@ go test ./journal -run '^$' -bench . -benchmem
 
 `-count=1` makes every run execute: a cached `ok` says nothing about a race or ordering bug that shows only on some runs.
 
-Build binaries with `make build GATEWAY_VERSION=…` or `make image`, never a plain `go build -o`. `GATEWAY_VERSION` is stamped into `devshard/types.buildStateRootProtocolVersion`, which is hashed into every settlement, so an unstamped binary signs settlements the network computes differently. `make clean` removes the binary, `coverage.out` and `junit-report.xml`.
+Build binaries with `make build GATEWAY_VERSION=…` or `make image GATEWAY_VERSION=…`, never a plain `go build -o`; both refuse to run without the version. `GATEWAY_VERSION` is stamped into `devshard/types.buildStateRootProtocolVersion`, which is hashed into every settlement, so an unstamped binary signs settlements the network computes differently. `make clean` removes the binary, `coverage.out` and `junit-report.xml`.
 
 A `//nolint:<linter> // reason` is a last resort and carries its reason; `nolintlint` refuses one without.
 

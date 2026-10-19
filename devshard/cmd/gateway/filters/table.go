@@ -175,7 +175,7 @@ var (
 		spec("enable_thinking", StagePreValidation, enableThinking()),
 		spec("thinking", StagePreValidation, thinking()),
 		{Name: "thinking_token_budget", Rules: []StagedRule{
-			{Stage: StagePreValidation, Apply: requireUint()},
+			{Stage: StagePreValidation, Apply: thinkingTokenBudgetScope()},
 			{Stage: StagePostLimits, Apply: thinkingTokenBudgetResolve()},
 		}},
 		spec("safety_identifier", StagePreValidation, safetyIdentifier()),

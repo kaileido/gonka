@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+
+	"devshard/cmd/gateway/store"
 )
 
 // OnEscrowMissing marks an escrow a host reported as absent; the tick confirms it, so this hook does no I/O.
@@ -24,7 +26,7 @@ func (m *Manager) checkMissing(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// Only a confirmed not-found deactivates the escrow. See README.md, "Escrow checks".
+// Only a confirmed not-found deactivates the escrow, and a confirmed settlement parks it. See README.md, "Escrow checks".
 func (m *Manager) TriggerEscrowCheck(ctx context.Context, escrowID string) error {
 	leave, busy := m.checks.enter(escrowID)
 	if busy {
@@ -32,9 +34,15 @@ func (m *Manager) TriggerEscrowCheck(ctx context.Context, escrowID string) error
 	}
 	defer leave()
 
-	_, found, err := m.tx.GetEscrow(ctx, escrowID)
+	onChain, found, err := m.tx.GetEscrow(ctx, escrowID)
 	if err != nil {
 		return fmt.Errorf("checking escrow %s: %w", escrowID, err)
+	}
+	if found && onChain.Settled {
+		if err := m.park(ctx, escrowID); !errors.Is(err, store.ErrDevshardNotFound) {
+			return err
+		}
+		return nil
 	}
 	if found {
 		return nil

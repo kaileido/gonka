@@ -13,6 +13,10 @@ const (
 	reasonTooManyConcurrentRequests = "too many concurrent requests"
 	reasonTooManyInputTokens        = "too many input tokens in flight"
 	reasonQueueTooDeep              = "queue is deeper than the wait budget can clear"
+	admissionOpen                   = ""
+
+	maxQueueHeadPasses       = 64
+	queueHeadPatienceDivisor = 2
 )
 
 type RateLimitError struct {
@@ -87,15 +91,18 @@ type waiter struct {
 	capacity ModelCapacity
 	reason   string
 	ready    chan struct{}
+	queuedAt time.Time
+	passedBy int
 }
 
-// GatewayLimiter is the gateway-wide FIFO admission limiter; each model records the cap it was last judged against.
+// GatewayLimiter is the gateway-wide admission limiter, queued in arrival order and passed by what fits; each model records the cap it was last judged against.
 type GatewayLimiter struct {
 	mu     sync.Mutex
 	cfg    GatewayConfig
 	models map[string]*modelCounter
 	total  modelCounter
 	queue  []*waiter
+	now    func() time.Time
 }
 
 // InFlight is what one scope of the limiter currently holds.
@@ -120,7 +127,7 @@ type LimiterSnapshot struct {
 }
 
 func NewGatewayLimiter(cfg GatewayConfig) *GatewayLimiter {
-	return &GatewayLimiter{cfg: cfg, models: map[string]*modelCounter{}}
+	return &GatewayLimiter{cfg: cfg, models: map[string]*modelCounter{}, now: time.Now}
 }
 
 // Reconfigure replaces the caps and sweeps the queue. See capacity.md, "The queue".
@@ -175,9 +182,12 @@ func (l *GatewayLimiter) AcquireForModel(ctx context.Context, model string, inpu
 		l.mu.Unlock()
 		return &RateLimitError{Reason: reason, RetryAfter: acquireWait}
 	}
-	// A freed slot goes to the queue under this same lock, so admitting a request that fits overtakes nobody.
+	// A freed slot goes to the queue under this same lock; a request that fits passes only waiters whose own tokens do not, and a starving head not at all.
 	reason := admitted.blockedReason(counter.inFlight, counter.inputTokens)
-	if reason == "" {
+	if reason == admissionOpen {
+		reason = l.passQueueHeadLocked(model)
+	}
+	if reason == admissionOpen {
 		l.takeLocked(counter, inputTokens)
 		l.mu.Unlock()
 		return nil
@@ -192,7 +202,7 @@ func (l *GatewayLimiter) AcquireForModel(ctx context.Context, model string, inpu
 		return &RateLimitError{Reason: reasonQueueTooDeep, RetryAfter: acquireWait}
 	}
 
-	blocked := &waiter{model: model, tokens: inputTokens, capacity: capacity, reason: reason, ready: make(chan struct{})}
+	blocked := &waiter{model: model, tokens: inputTokens, capacity: capacity, reason: reason, ready: make(chan struct{}), queuedAt: l.now()}
 	l.queue = append(l.queue, blocked)
 	l.promoteLocked() // capacity may already be free; the queue only enforces order, it is not a delay
 	l.mu.Unlock()
@@ -228,21 +238,54 @@ func (l *GatewayLimiter) dequeue(w *waiter) bool {
 	return false
 }
 
-// promoteLocked skips — rather than stops at — a waiter its own model cannot serve. See capacity.md, "The queue".
+// promoteLocked skips — rather than stops at — a waiter its own model cannot serve, until that model's head starves. See capacity.md, "The queue".
 func (l *GatewayLimiter) promoteLocked() {
+	heads := map[string]*waiter{}
 	for i := 0; i < len(l.queue); {
 		waiting := l.queue[i]
+		head, behindHead := heads[waiting.model]
+		if behindHead && l.starvingLocked(head) {
+			i++
+			continue
+		}
 		admitted := l.admissionFor(waiting.model, waiting.tokens, waiting.capacity)
 		counter := l.counterLocked(waiting.model)
 		counter.enforced = admitted
-		if admitted.blockedReason(counter.inFlight, counter.inputTokens) != "" {
+		if admitted.blockedReason(counter.inFlight, counter.inputTokens) != admissionOpen {
+			if !behindHead {
+				heads[waiting.model] = waiting
+			}
 			i++
 			continue
+		}
+		if behindHead {
+			head.passedBy++
 		}
 		l.queue = append(l.queue[:i], l.queue[i+1:]...)
 		l.takeLocked(counter, waiting.tokens)
 		close(waiting.ready)
 	}
+}
+
+// passQueueHeadLocked counts a pass of the model's queue head, or names its cap when the head is starving and may not be passed.
+func (l *GatewayLimiter) passQueueHeadLocked(model string) string {
+	for _, head := range l.queue {
+		if head.model != model {
+			continue
+		}
+		if l.starvingLocked(head) {
+			return head.reason
+		}
+		head.passedBy++
+		return admissionOpen
+	}
+	return admissionOpen
+}
+
+// starvingLocked reports a head passed as often as the ceiling allows, or waiting longer than its share of the admission wait.
+func (l *GatewayLimiter) starvingLocked(head *waiter) bool {
+	patience := l.cfg.AcquireWait / queueHeadPatienceDivisor
+	return head.passedBy >= maxQueueHeadPasses || !l.now().Before(head.queuedAt.Add(patience))
 }
 
 // queueTooDeepLocked reports a queue this request cannot reach the front of in time. See capacity.md, "The wait budget".
@@ -328,7 +371,7 @@ func (a admission) blockedReason(inFlight, inFlightTokens int64) string {
 	if a.inputTokenLimited && inFlightTokens+a.requestedTokens > a.inputTokenLimit {
 		return reasonTooManyInputTokens
 	}
-	return ""
+	return admissionOpen
 }
 
 func (a admission) impossible() string {

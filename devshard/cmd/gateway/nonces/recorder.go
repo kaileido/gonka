@@ -57,6 +57,20 @@ type Recorder struct {
 	pinnedEpochs sync.Map
 
 	observing sync.Map
+	wake      chan struct{}
+
+	unknownEscrowFacts atomic.Uint64
+}
+
+// EscrowPublished wakes the sweep, so a new escrow is opened before the facts of its first requests arrive; it only marks and returns, as the registry calls it under its lock.
+func (n *Recorder) EscrowPublished(string, string) {
+	if n == nil {
+		return
+	}
+	select {
+	case n.wake <- struct{}{}:
+	default:
+	}
 }
 
 func (n *Recorder) SetCapability(lookup accounting.CapabilityFunc) {
@@ -103,7 +117,7 @@ func Open(settings config.NonceAccounting, storageDir string, epochs EpochSource
 	if !settings.Enabled {
 		return nil
 	}
-	ledger := &Recorder{epochs: epochs}
+	ledger := &Recorder{epochs: epochs, wake: make(chan struct{}, 1)}
 	store, openErr := accounting.OpenStore(filepath.Join(storageDir, nonceAccountingDatabase))
 	if openErr != nil {
 		logging.Error("nonce accounting could not open its store", "error", openErr)
@@ -157,6 +171,22 @@ func (n *Recorder) report(err error) {
 	if err != nil && !errors.Is(err, accounting.ErrUnknownEscrow) {
 		logging.Warn("nonce accounting refused a fact", "error", err)
 	}
+}
+
+func (n *Recorder) reportFact(err error) {
+	if errors.Is(err, accounting.ErrUnknownEscrow) {
+		n.unknownEscrowFacts.Add(1)
+		return
+	}
+	n.report(err)
+}
+
+// UnknownEscrowFacts counts the facts dropped for an escrow the ledger does not hold: one its sweep has not opened yet, or one retention pruned.
+func (n *Recorder) UnknownEscrowFacts() uint64 {
+	if n == nil {
+		return 0
+	}
+	return n.unknownEscrowFacts.Load()
 }
 
 func (n *Recorder) Close() error {

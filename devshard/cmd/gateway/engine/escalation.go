@@ -37,6 +37,8 @@ func (s EscalationStage) Reason() string {
 		return EscalationReasonFirstToken
 	case StageHedge:
 		return EscalationReasonHedge
+	case StageStall:
+		return EscalationReasonStall
 	}
 	return ""
 }
@@ -199,6 +201,8 @@ func (p EscalationPolicy) triggerFor(attempt *EscalationAttempt, request Escalat
 		return ArmedEscalation{}, false
 	case attempt.Done:
 		return ArmedEscalation{Stage: StageAttemptFailed, Deadline: now}, true
+	case attempt.Stalled:
+		return ArmedEscalation{Stage: StageStall, Deadline: now}, true
 	case attempt.ClockStart.IsZero():
 		return ArmedEscalation{}, false
 	case attempt.ReceiptTime.IsZero():

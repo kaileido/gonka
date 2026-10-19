@@ -47,6 +47,7 @@ type Scheduler struct {
 
 	registryMu  sync.Mutex
 	dispatchers map[string]*dispatcher
+	superseded  map[*dispatcher]struct{}
 	stopped     bool
 
 	blocksMu     sync.RWMutex

@@ -236,7 +236,7 @@ func (w *attemptWriter) Write(chunk []byte) (int, error) {
 		w.state.firstContent = now
 		w.spec.emit(w.progress(AttemptContent, now))
 	}
-	if !w.spec.offer(w.progress(AttemptChunk, now)) {
+	if facts.Content && !w.spec.offer(w.progress(AttemptChunk, now)) {
 		w.state.droppedEvents++
 	}
 
@@ -316,9 +316,20 @@ func (spec AttemptSpec) emit(event AttemptEvent) bool {
 	}
 }
 
+// finish hands a held Finish to the race, or releases it when no race is left to take it. See ../docs/race.md, "Error misses".
 func (spec AttemptSpec) finish(event AttemptEvent) {
-	if !spec.emit(event) && event.Outcome != nil {
+	delivered := spec.emit(event)
+	if event.Outcome == nil {
+		return
+	}
+	if !delivered {
 		event.Outcome.MissProof.releaseHeldFinish()
+		return
+	}
+	select {
+	case <-spec.Reported:
+		event.Outcome.MissProof.releaseUntakenFinish()
+	default:
 	}
 }
 

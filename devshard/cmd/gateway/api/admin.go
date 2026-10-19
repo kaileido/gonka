@@ -56,21 +56,43 @@ func (s *Server) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 		s.writeErrorFor(w, err)
 		return
 	}
-	overrides, err := config.ParseOverrides(body)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	s.settingsWrites.Lock()
+	defer s.settingsWrites.Unlock()
+	overrides, parseErr, err := s.settingsToApply(r, body)
+	if writeControlFailure(w, err) {
+		return
+	}
+	if parseErr != nil {
+		writeError(w, http.StatusBadRequest, parseErr.Error())
 		return
 	}
 	if err := s.operations.Reconfigure(r.Context(), overrides); err != nil {
 		s.writeErrorFor(w, err)
 		return
 	}
-	inForce := s.config.Load().Scheduler
-	auditAdmin("settings replaced",
-		logkey.ParticipantAllowlist, inForce.ParticipantAllowlist,
-		logkey.UnthrottledParticipants, inForce.UnthrottledParticipants,
+	inForce := s.config.Load()
+	auditAdmin("settings written",
+		logkey.Method, r.Method,
+		logkey.OpenModels, inForce.Limits.OpenModels(),
+		logkey.GatewayDisabled, inForce.Modes.Disabled,
+		logkey.ParticipantAllowlist, inForce.Scheduler.ParticipantAllowlist,
+		logkey.UnthrottledParticipants, inForce.Scheduler.UnthrottledParticipants,
 	)
 	writeJSON(w, http.StatusOK, overrides)
+}
+
+// settingsToApply reads a PUT as the whole document and a POST as a patch over the stored one. See ../docs/operations.md, "Configuration".
+func (s *Server) settingsToApply(r *http.Request, body []byte) (overrides config.Overrides, parseErr, loadErr error) {
+	if r.Method == http.MethodPut {
+		overrides, parseErr = config.ParseOverrides(body)
+		return overrides, parseErr, nil
+	}
+	stored, err := s.control.LoadOverrides(r.Context())
+	if err != nil {
+		return config.Overrides{}, nil, err
+	}
+	overrides, parseErr = stored.Merged(body)
+	return overrides, parseErr, nil
 }
 
 // auditAdmin carries the action and its subject, never the body: an override payload can hold the admin key.

@@ -173,7 +173,7 @@ func contentFacts(source string) chunkFacts {
 // Test flow:
 //  1. Configure a `fakeDispatcher` that announces a receipt and writes two chunks, the second carrying content, and a `fakeClassifier` that reports content only on that second chunk.
 //  2. Drain `fixture.events` concurrently while running `runAttempt`, so -race exercises the same handover the coordinator performs.
-//  3. Assert the event kinds arrive in order: Dispatched, Receipt, FirstToken, Chunk, Content, Chunk, Done.
+//  3. Assert the event kinds arrive in order: Dispatched, Receipt, FirstToken, Content, Chunk, Done: the role chunk stamps the first token and moves no stall clock.
 //  4. Assert each event's timestamp is not before the previous one's.
 //  5. Assert the AttemptDone outcome carries TerminalLost, the attempt's identity (nonce, host index, participant), one content chunk, Confirmed true with ContentSource "delta.content", and non-zero receipt/first-token/completed timestamps.
 //  6. Assert the sink received both chunks verbatim.
@@ -204,7 +204,6 @@ func TestRunAttempt_HealthyAttemptEmitsEveryEventInOrder(t *testing.T) {
 		AttemptDispatched,
 		AttemptReceipt,
 		AttemptFirstToken,
-		AttemptChunk,
 		AttemptContent,
 		AttemptChunk,
 		AttemptDone,

@@ -16,8 +16,9 @@ One `POST /v1/chat/completions`, from the socket to the settled nonce. Every ste
 | 6 | does the chain phase admit new work | `admission`, on `snapshots.Snapshot()` | 503, except a refusal that is proof-of-compute alone, which waits for step 7 |
 | 7 | cache lookup | `cacheKeyFor` → `cache.get` | — (hit returns here); a miss behind a proof-of-compute refusal answers that 503 |
 | 8 | take an admission slot and token budget | `limiter.AcquireForModel` | 429 |
-| 9 | race it | `race` → `engine.Run` | see below |
-| 10 | release the slot | `defer limiter.ReleaseForModel` | — |
+| 9 | does the chain phase still admit new work | `admission` again, on a fresh snapshot: the limiter can hold a request for minutes, and a block that began meanwhile must not get a nonce | 503 |
+| 10 | race it | `race` → `engine.Run` | see below |
+| 11 | release the slot | `defer limiter.ReleaseForModel` | — |
 
 Steps 4–6 run **after** normalisation because the model name is only known once the body is parsed and the per-model profile applied.
 
@@ -102,7 +103,7 @@ The "always stripped" list is **derived** from the two above, not written out a 
 | `hostCatchUpReserveBytes` | 1 MiB | the room inside that body kept for the escrow's catch-up |
 | `MaxStreamCarryBytes` | 32 MiB | one unterminated SSE event |
 | `maxBufferedResponseBytes` | 32 MiB | one reply being assembled |
-| `max_buffered_response_bytes` | 512 MiB | **every** reply being assembled, at once |
+| `max_buffered_response_bytes` | 512 MiB | **every** reply being assembled, and every reply being recorded for the response cache, at once; a recording the budget cannot hold stops and that reply is not cached, while the client still receives it whole. Recordings and assemblies spend the one budget, so a non-streamed reply that is also recorded is counted twice while both copies are held, and an assembly refused while recordings fill the budget is answered 503 like any other |
 
 The two 10 MiB bounds are not the same bound. A prompt travels base64 inside the host-bound JSON, so it costs four bytes for every three, and the catch-up diffs ride the same body. A request inside the ingest cap can therefore be past what the public proxy, the versiond router and a host accept — the shape [issue #1658](https://github.com/gonka-ai/gonka/issues/1658) reported. Step 3 refuses it before a nonce is spent. When the catch-up backlog is what would not fit, it is drained ahead of the request instead of riding it ([`user/session.go`](../../../user/session.go), `drainOversizedCatchUp`), and each drained chunk is cut by wire bytes rather than by diff count — a chunk a host refuses whole leaves its sync cursor where it was, so the next attempt rebuilds the same backlog, which is the loop [issue #1660](https://github.com/gonka-ai/gonka/issues/1660) describes. Only a body that still does not fit is refused at the send with `transport.ErrHostRequestTooLarge`.
 

@@ -15,6 +15,10 @@ import (
 
 func notFinite(value float64) bool { return math.IsNaN(value) || math.IsInf(value, 0) }
 
+func outsideWeightRateRange(requestsPer10000Weight float64) bool {
+	return notFinite(requestsPer10000Weight) || requestsPer10000Weight < 0 || requestsPer10000Weight > maxConcurrentRequests
+}
+
 // MaxContextTokens is the longest context a model may be priced at. See capacity.md, "The participant limiter: IOCW".
 const (
 	MaxContextTokens = 100_000_000
@@ -99,11 +103,11 @@ func (c *Config) Validate() error {
 	if c.Limits.AdmissionQueuePerSlot < 0 || c.Limits.AdmissionQueuePerSlot > maxAdmissionQueuePerSlot {
 		complain("admission_queue_per_slot: %d must be between 0 and %d", c.Limits.AdmissionQueuePerSlot, maxAdmissionQueuePerSlot)
 	}
-	if notFinite(c.Limits.Concurrency.RequestsPer10000Weight) || c.Limits.Concurrency.RequestsPer10000Weight < 0 {
-		complain("max_concurrent_requests_per_10000_weight: %v must be >= 0", c.Limits.Concurrency.RequestsPer10000Weight)
+	if outsideWeightRateRange(c.Limits.Concurrency.RequestsPer10000Weight) {
+		complain("max_concurrent_requests_per_10000_weight: %v must be between 0 and %d", c.Limits.Concurrency.RequestsPer10000Weight, maxConcurrentRequests)
 	}
-	if notFinite(c.Limits.Concurrency.PoCRequestsPer10000Weight) || c.Limits.Concurrency.PoCRequestsPer10000Weight < 0 {
-		complain("poc_max_concurrent_requests_per_10000_weight: %v must be >= 0", c.Limits.Concurrency.PoCRequestsPer10000Weight)
+	if outsideWeightRateRange(c.Limits.Concurrency.PoCRequestsPer10000Weight) {
+		complain("poc_max_concurrent_requests_per_10000_weight: %v must be between 0 and %d", c.Limits.Concurrency.PoCRequestsPer10000Weight, maxConcurrentRequests)
 	}
 	if c.Limits.MaxInputTokensInFlight < 0 {
 		complain("max_input_tokens_in_flight: %d must be >= 0", c.Limits.MaxInputTokensInFlight)

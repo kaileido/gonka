@@ -55,7 +55,7 @@ func (c *raceCoordinator) rivalsMissedTheirDeadline() bool {
 			continue
 		}
 		missed := attempt.receiptDeadline == deadlineMissed || attempt.firstTokenDeadline == deadlineMissed
-		if !missed || !attempt.firstToken.IsZero() {
+		if !missed || !attempt.firstContent.IsZero() {
 			return false
 		}
 		rivals++

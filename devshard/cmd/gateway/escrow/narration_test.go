@@ -370,7 +370,7 @@ func TestASettledRetirementIsNarratedFromParkToDrop(t *testing.T) {
 // Test flow:
 //  1. Store a record already SettlementPending with a settle tx hash, and a tx client whose txCommittedFn reports the transaction committed.
 //  2. Call settle unforced for that record and assert it returns no error.
-//  3. Assert the narrator recorded the park followed by the reconciled line.
+//  3. Assert the narrator recorded the reconciled line alone: the record was already parked, so no second park is narrated.
 func TestASettleAlreadyOnChainIsNarratedAsReconciled(t *testing.T) {
 	record := store.DevshardRecord{EscrowID: "7", Model: "model-a", SettlementPending: true, SettleTxHash: "SETTLE-TX"}
 	testStore := newFakeStore()
@@ -385,7 +385,7 @@ func TestASettleAlreadyOnChainIsNarratedAsReconciled(t *testing.T) {
 	_, err := m.settle(context.Background(), record, false)
 
 	require.NoError(t, err)
-	require.Equal(t, []string{"parked 7", "reconciled 7 tx SETTLE-TX"}, narrator.recorded())
+	require.Equal(t, []string{"reconciled 7 tx SETTLE-TX"}, narrator.recorded())
 }
 
 // Test flow:

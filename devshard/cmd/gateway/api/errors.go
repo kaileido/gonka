@@ -168,7 +168,7 @@ func statusForError(err error) int {
 		return http.StatusConflict
 	case errors.Is(err, ErrUnknownDevshard), errors.Is(err, ErrUnknownParticipant):
 		return http.StatusNotFound
-	case errors.Is(err, escrow.ErrEscrowPruned):
+	case errors.Is(err, escrow.ErrEscrowPruned), errors.Is(err, escrow.ErrEscrowSettledOnChain):
 		return http.StatusGone
 	case errors.Is(err, chain.ErrWalletUnderfunded):
 		return http.StatusPaymentRequired

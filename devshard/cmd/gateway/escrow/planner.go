@@ -141,9 +141,19 @@ func (m *Manager) readModel(model ModelConfig, rows []store.DevshardRecord, comm
 		if commitment.Model == model.ModelID {
 			reading.state.Counted++
 			reading.report.Counts[CountCommitted]++
+			reading.countPendingCreate(commitment.Role)
 		}
 	}
 	return reading
+}
+
+func (reading *modelReading) countPendingCreate(role string) {
+	switch role {
+	case RoleReserve:
+		reading.state.PendingStandbyCreates++
+	case roleRegular:
+		reading.state.PendingRegularCreates++
+	}
 }
 
 func (m *Manager) readRow(reading *modelReading, row store.DevshardRecord, pricing modelPricing, sweepGrace time.Duration, now time.Time) {

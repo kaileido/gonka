@@ -21,7 +21,10 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const maxModelLenFlag = "--max-model-len"
+const (
+	maxModelLenFlag = "--max-model-len"
+	txNotFoundText  = "tx not found"
+)
 
 // Reader is the chain state the observer polls, an interface so tests answer it without a connection.
 type Reader interface {
@@ -213,6 +216,7 @@ func (g *GRPCChain) Escrow(ctx context.Context, escrowID uint64) (EscrowInfo, bo
 		EscrowID:   fmt.Sprintf("%d", escrowID),
 		Balance:    response.GetEscrow().GetAmount(),
 		EpochIndex: response.GetEscrow().GetEpochIndex(),
+		Settled:    response.GetEscrow().GetSettled(),
 	}, true, nil
 }
 
@@ -286,12 +290,15 @@ func (g *GRPCChain) PreservedNodes(ctx context.Context) (*PreservedNodes, bool, 
 	return converted, true, nil
 }
 
-// isNotFoundStatus also matches the message text, for nodes that answer Unknown instead of the typed code.
+// isNotFoundStatus reads the typed code, and the SDK's own text only from a node that answers Unknown: a proxy's 404 or any other failure keeps the intent it was checking.
 func isNotFoundStatus(err error) bool {
-	if status.Code(err) == codes.NotFound {
+	switch status.Code(err) {
+	case codes.NotFound:
 		return true
+	case codes.Unknown:
+		return strings.Contains(strings.ToLower(status.Convert(err).Message()), txNotFoundText)
 	}
-	return strings.Contains(strings.ToLower(err.Error()), "not found")
+	return false
 }
 
 // EpochGroupData answers an epoch's model snapshot, which the stop-token vocabulary reads a model's pinned tokenizer from.

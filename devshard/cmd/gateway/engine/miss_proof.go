@@ -4,11 +4,18 @@ import (
 	"bytes"
 	"encoding/json"
 	"strings"
+	"sync/atomic"
 
 	"common/completionapi"
 )
 
 const maxMissProofBytes = 64 * 1024
+
+const (
+	heldFinishUntaken int32 = iota
+	heldFinishTaken
+	heldFinishReleased
+)
 
 // MissProof is the evidence a verifier recomputes. See ../docs/race.md, "Error misses".
 type MissProof struct {
@@ -16,11 +23,24 @@ type MissProof struct {
 	Complete        bool
 	Truncated       bool
 
-	releaseFinish func()
+	releaseFinish   func()
+	finishOwnership atomic.Int32
 }
 
 func (p *MissProof) releaseHeldFinish() {
-	if p != nil && p.releaseFinish != nil {
+	if p != nil && p.releaseFinish != nil && p.finishOwnership.Swap(heldFinishReleased) != heldFinishReleased {
+		p.releaseFinish()
+	}
+}
+
+func (p *MissProof) takeHeldFinish() {
+	if p != nil {
+		p.finishOwnership.CompareAndSwap(heldFinishUntaken, heldFinishTaken)
+	}
+}
+
+func (p *MissProof) releaseUntakenFinish() {
+	if p != nil && p.releaseFinish != nil && p.finishOwnership.CompareAndSwap(heldFinishUntaken, heldFinishReleased) {
 		p.releaseFinish()
 	}
 }

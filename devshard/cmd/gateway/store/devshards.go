@@ -10,15 +10,14 @@ import (
 
 // Apart from its caller so a test can read which columns the update carries. See README.md, "The devshard registry".
 const upsertDevshardStatement = `
-		INSERT INTO devshards (escrow_id, private_key_env, model, active, rotation_role, rotation_epoch, settlement_pending, settle_tx_hash, route_prefix)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO devshards (escrow_id, private_key_env, model, active, rotation_role, rotation_epoch, settlement_pending, route_prefix)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(escrow_id) DO UPDATE SET
 			private_key_env = excluded.private_key_env,
 			model = excluded.model,
 			active = excluded.active,
 			rotation_role = excluded.rotation_role,
 			rotation_epoch = excluded.rotation_epoch,
-			settle_tx_hash = excluded.settle_tx_hash,
 			gone_from_chain = CASE WHEN excluded.active = 1 THEN 0 ELSE devshards.gone_from_chain END,
 			updated_at = datetime('now')`
 
@@ -41,12 +40,11 @@ type DevshardRecord struct {
 	GoneFromChain     bool   `json:"gone_from_chain"`
 }
 
-// UpsertDevshard replaces every field except settlement_pending, route_prefix, chain_epoch, amount and gone_from_chain. See README.md, "The devshard registry".
+// UpsertDevshard replaces every field except settlement_pending, settle_tx_hash, route_prefix, chain_epoch, amount and gone_from_chain. See README.md, "The devshard registry".
 func (s *Store) UpsertDevshard(ctx context.Context, record DevshardRecord) error {
 	_, err := s.db.ExecContext(ctx, upsertDevshardStatement,
 		record.EscrowID, record.PrivateKeyEnv, record.Model, record.Active,
-		record.RotationRole, record.RotationEpoch, record.SettlementPending, record.SettleTxHash,
-		record.RoutePrefix)
+		record.RotationRole, record.RotationEpoch, record.SettlementPending, record.RoutePrefix)
 	if err != nil {
 		return fmt.Errorf("upserting devshard %s: %w", record.EscrowID, err)
 	}

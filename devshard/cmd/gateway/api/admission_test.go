@@ -137,3 +137,26 @@ func TestStatusReportsTheChainsEpochPhase(t *testing.T) {
 		t.Fatalf("status = %s (%v), want chain_phase %q", recorder.Body.String(), err, chain.EpochPhasePoCGenerate)
 	}
 }
+
+// Test flow:
+//  1. Admit a chat request while the chain allows requests, and have the chain block them for proof-of-compute while the request waits in the limiter, with relaxed mode off.
+//  2. Assert the request is refused 503 once it leaves the limiter, its slot is given back, and no race starts: a nonce committed during the block would be voted against.
+func TestARequestThatWaitedOutABlockInTheLimiterIsRefused(t *testing.T) {
+	live := newHarness(t)
+	live.swapConfig(func(next *config.Config) { next.Modes.PoCMode = config.PoCModeOff })
+	live.limiter.onAcquire = func() {
+		live.snapshots.snapshot = chain.PhaseSnapshot{RequestsBlocked: true, BlockReason: chain.BlockReasonPoC, EpochPhase: chain.EpochPhasePoCGenerate}
+	}
+
+	recorder := live.request(t, http.MethodPost, "/v1/chat/completions", chatBody, nil)
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status %d (%s), want 503", recorder.Code, recorder.Body.String())
+	}
+	if acquired, released := live.limiter.acquires.Load(), live.limiter.releases.Load(); acquired != released {
+		t.Fatalf("limiter slots acquired %d, released %d, want every slot given back", acquired, released)
+	}
+	if got := live.inference.runs.Load(); got != 0 {
+		t.Fatalf("races started: got %d, want 0", got)
+	}
+}

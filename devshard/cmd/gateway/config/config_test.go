@@ -149,6 +149,8 @@ func TestValidateCatchesEveryRuleBreach(t *testing.T) {
 		{"max_concurrent_requests negative", func(c *Config) { c.Limits.Concurrency.MaxRequests = -1 }, "max_concurrent_requests"},
 		{"max_concurrent_requests_per_10000_weight negative", func(c *Config) { c.Limits.Concurrency.RequestsPer10000Weight = -1 }, "max_concurrent_requests_per_10000_weight"},
 		{"poc_max_concurrent_requests_per_10000_weight negative", func(c *Config) { c.Limits.Concurrency.PoCRequestsPer10000Weight = -1 }, "poc_max_concurrent_requests_per_10000_weight"},
+		{"max_concurrent_requests_per_10000_weight above the request cap", func(c *Config) { c.Limits.Concurrency.RequestsPer10000Weight = maxConcurrentRequests + 1 }, "max_concurrent_requests_per_10000_weight"},
+		{"poc_max_concurrent_requests_per_10000_weight above the request cap", func(c *Config) { c.Limits.Concurrency.PoCRequestsPer10000Weight = maxConcurrentRequests + 1 }, "poc_max_concurrent_requests_per_10000_weight"},
 		{"max_input_tokens_in_flight negative", func(c *Config) { c.Limits.MaxInputTokensInFlight = -1 }, "max_input_tokens_in_flight"},
 		{"admission_queue_wait_ms negative", func(c *Config) { c.Limits.AdmissionQueueWaitMS = -1 }, "admission_queue_wait_ms"},
 		{"host_input_window_min_requests too low", func(c *Config) { c.Limits.HostWindows.Input.MinRequests = 0 }, "host_input_window_min_requests"},
@@ -278,7 +280,7 @@ func TestValidateAcceptsAnUncappedConcurrency(t *testing.T) {
 
 // Test flow:
 //  1. Build a default config whose default max tokens exceeds a model's own token cap.
-//  2. Assert `Validate` accepts it, since the gateway clamps the default at request time rather than refusing to start.
+//  2. Assert `Validate` accepts it: a request naming no budget takes the operator's default by design, and only an explicit ask is held to the cap.
 func TestValidateAcceptsADefaultAboveTheCap(t *testing.T) {
 	configuration := Defaults()
 	configuration.Limits.DefaultMaxTokens = 10_000

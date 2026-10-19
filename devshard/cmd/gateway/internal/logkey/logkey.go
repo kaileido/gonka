@@ -126,6 +126,7 @@ const (
 	Recorded        = "recorded"
 	Used            = "used"
 	OpenModels      = "open_models"
+	GatewayDisabled = "gateway_disabled"
 	InFlight        = "in_flight"
 	Attempts        = "attempts"
 	EscrowBuilders  = "escrow_builders"
@@ -155,15 +156,16 @@ const (
 
 // Process and transport.
 const (
-	Port        = "port"
-	Addr        = "addr"
-	StorageDir  = "storage_dir"
-	Version     = "version"
-	RoutePrefix = "route_prefix"
-	Subsystem   = "subsystem"
-	Route       = "route"
-	Method      = "method"
-	Status      = "status"
+	Port             = "port"
+	Addr             = "addr"
+	StorageDir       = "storage_dir"
+	Version          = "version"
+	RoutePrefix      = "route_prefix"
+	Subsystem        = "subsystem"
+	IgnoredVariables = "ignored_variables"
+	Route            = "route"
+	Method           = "method"
+	Status           = "status"
 
 	SkippedLines = "skipped_lines"
 )

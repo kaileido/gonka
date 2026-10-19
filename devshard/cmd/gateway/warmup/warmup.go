@@ -106,15 +106,18 @@ func (w *Prober) warm(escrowID, model string) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), budget)
-	defer cancel()
+	// The budget bounds the wait for the group and the probe; the vote is due after the execution deadline, past it.
+	lifetime, endLifetime := context.WithCancel(context.Background())
+	defer endLifetime()
 	go func() {
 		select {
 		case <-w.stop:
-			cancel()
-		case <-ctx.Done():
+			endLifetime()
+		case <-lifetime.Done():
 		}
 	}()
+	ctx, cancel := context.WithTimeout(lifetime, budget)
+	defer cancel()
 
 	// A probe teaches nobody before the group is reachable and before the escrow's log carries a height.
 	if err := session.WaitRouterCatalog(ctx); err != nil {
@@ -152,7 +155,7 @@ func (w *Prober) warm(escrowID, model string) {
 	w.openLedger(escrowID, model, session)
 	w.record(escrowID, nonce, acknowledged, probeErr)
 	if probeErr != nil {
-		w.settleUnfinishedProbe(ctx, escrowID, model, params, nonce, acknowledged)
+		w.settleUnfinishedProbe(lifetime, escrowID, model, params, nonce, acknowledged)
 	}
 	// A fresh escrow may take no request for minutes, a reserve none at all, so nothing else would carry the probe's Finish.
 	session.ArmQuietSettle()

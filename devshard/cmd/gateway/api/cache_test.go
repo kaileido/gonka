@@ -494,7 +494,7 @@ func TestOneRecordedEntryIsBoundedByOneReplyNotByTheWholeCache(t *testing.T) {
 //  2. Assert the entry was accepted for storage.
 //  3. Assert the entry's body and bounds slices carry no spare capacity beyond their length.
 func TestAStoredEntryHoldsExactlyWhatItIsChargedFor(t *testing.T) {
-	recorder := newCacheRecorder(httptest.NewRecorder(), 1<<20, true)
+	recorder := newCacheRecorder(httptest.NewRecorder(), 1<<20, true, nil)
 	for range 40 {
 		if _, err := recorder.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"word \"}}]}\n\n")); err != nil {
 			t.Fatalf("Write(): %v", err)
@@ -775,5 +775,31 @@ func TestOneKeySpelledTwoWaysSharesOneCachePartition(t *testing.T) {
 
 	if got := live.inference.runs.Load(); got != 1 {
 		t.Fatalf("races = %d, want 1: the second spelling of the same key must hit the cache", got)
+	}
+}
+
+const budgetedReplyBytes = 64 * 1024
+
+// Test flow:
+//  1. Give the gateway a response buffer budget far smaller than one streamed reply.
+//  2. Stream that reply to a caller twice.
+//  3. Assert both reached the caller whole, neither was served from the cache, and nothing is left held: recording a reply for the cache spends the same budget as folding one.
+func TestRecordingAStreamedReplyForTheCacheSpendsTheBufferBudget(t *testing.T) {
+	live := newHarness(t)
+	live.server.buffers = NewBufferBudget(1024)
+	chunk := "data: {\"choices\":[{\"delta\":{\"content\":\"" + strings.Repeat("x", budgetedReplyBytes) + "\"},\"finish_reason\":\"stop\"}]}\n\n"
+	live.inference.chunks = []string{chunk, "data: [DONE]\n\n"}
+
+	first := live.request(t, http.MethodPost, "/v1/chat/completions", streamChatBody, callerHeaders("caller-a"))
+	second := live.request(t, http.MethodPost, "/v1/chat/completions", streamChatBody, callerHeaders("caller-a"))
+
+	if !strings.Contains(first.Body.String(), chunk) || !strings.Contains(second.Body.String(), chunk) {
+		t.Fatal("a streamed reply did not reach its caller whole")
+	}
+	if got := live.inference.runs.Load(); got != 2 {
+		t.Fatalf("races: got %d, want 2: a reply the budget could not hold must not be cached", got)
+	}
+	if held := live.server.buffers.Held(); held != 0 {
+		t.Fatalf("buffer budget held %d bytes after both requests, want 0", held)
 	}
 }

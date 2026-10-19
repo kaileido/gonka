@@ -82,7 +82,7 @@ func (e *escrowLedger) foldCost(money *SlotMoney, nonce uint64, cost nonceCost) 
 	if e.isGhost(nonce) {
 		return
 	}
-	if cost.status != types.StatusFinished {
+	if cost.status != types.StatusFinished && cost.status != types.StatusValidated {
 		money.EstimatedError += filters.EstimatedPromptTokens(int(cost.inputLength))
 		return
 	}

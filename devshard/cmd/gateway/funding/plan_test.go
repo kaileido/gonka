@@ -84,7 +84,7 @@ func creates(reasons ...Reason) []Create {
 }
 
 // Test flow:
-//  1. Table-driven: each case changes one input of a healthy two-escrow model — an escrow's money, demand, a signal, the budget, the bucket, a gate, a price.
+//  1. Table-driven: each case changes one input of a healthy two-escrow model — an escrow's money, demand, a signal, the budget, the bucket, a gate, a price, a create still landing.
 //  2. Plan the model.
 //  3. Assert the creates and their reasons, the planned retires, and the broken, misconfigured and budget flags the case expects.
 func TestPlanSizesCreatesAndRetiresFromMoneyDemandAndBudget(t *testing.T) {
@@ -103,6 +103,36 @@ func TestPlanSizesCreatesAndRetiresFromMoneyDemandAndBudget(t *testing.T) {
 			name:        "one full escrow short of the guarantee funds a guard create",
 			state:       modelWith(func(state *ModelState) { state.Escrows[1] = starvedEscrow("2", 40_000) }),
 			wantCreates: creates(ReasonGuard),
+		},
+		{
+			name: "an open create commitment covers a guard shortfall",
+			state: modelWith(func(state *ModelState) {
+				state.Escrows[1] = starvedEscrow("2", 40_000)
+				state.PendingRegularCreates = 1
+			}),
+		},
+		{
+			name: "an open create commitment covers the guard, so the create still owed is named for the spread",
+			state: modelWith(func(state *ModelState) {
+				state.Escrows[1] = starvedEscrow("2", 40_000)
+				state.TargetCount = 4
+				state.PendingRegularCreates = 1
+			}),
+			wantCreates: creates(ReasonSpread),
+		},
+		{
+			name: "an open create commitment covers a spread shortfall",
+			state: modelWith(func(state *ModelState) {
+				state.TargetCount = 3
+				state.PendingRegularCreates = 1
+			}),
+		},
+		{
+			name: "an open reserve commitment covers a standby shortfall",
+			state: modelWith(func(state *ModelState) {
+				state.ReserveCount = 1
+				state.PendingStandbyCreates = 1
+			}),
 		},
 		{
 			name:        "a money-short signal funds one capacity create",

@@ -1,6 +1,8 @@
 package nonces
 
 import (
+	"errors"
+
 	"devshard/cmd/gateway/accounting"
 	"devshard/cmd/gateway/engine"
 )
@@ -9,14 +11,14 @@ func (n *Recorder) NonceAssigned(escrowID string, nonce uint64, requestID string
 	if n == nil || nonce == 0 {
 		return
 	}
-	n.report(n.service.Book.RecordAssigned(escrowID, nonce, requestID))
+	n.reportFact(n.service.Book.RecordAssigned(escrowID, nonce, requestID))
 }
 
 func (n *Recorder) RecordGhost(escrowID string, nonce uint64, reason string) {
 	if n == nil || nonce == 0 {
 		return
 	}
-	n.report(n.service.Book.RecordGhost(escrowID, nonce, reason))
+	n.reportFact(n.service.Book.RecordGhost(escrowID, nonce, reason))
 }
 
 func (n *Recorder) RecordRace(outcome engine.RaceOutcome) {
@@ -45,7 +47,7 @@ func (n *Recorder) RecordRace(outcome engine.RaceOutcome) {
 			LogprobsDecoded: attempt.LogprobsDecoded,
 		})
 	}
-	n.report(n.service.Book.RecordRace(outcome.EscrowID, attempts))
+	n.reportFact(n.service.Book.RecordRace(outcome.EscrowID, attempts))
 }
 
 // slowReceipt needs both stamps: a missing receipt is a refusal already counted, not a second failure.
@@ -64,7 +66,7 @@ func clockDrifted(attempt engine.AttemptOutcome) bool {
 
 func (n *Recorder) RecordTimeout(event engine.TimeoutEvent) {
 	if n != nil {
-		n.report(n.service.Book.RecordTimeout(event.EscrowID, event.Nonce, event.Kind, event.Action, event.Reason))
+		n.reportFact(n.service.Book.RecordTimeout(event.EscrowID, event.Nonce, event.Kind, event.Action, event.Reason))
 	}
 }
 
@@ -76,13 +78,13 @@ func (n *Recorder) RecordDiffFacts(escrowID string, facts []accounting.DiffFact)
 	for _, fact := range facts {
 		switch fact.Kind {
 		case accounting.DiffFactValidation:
-			n.report(n.service.Book.RecordValidation(escrowID, fact.ValidatorSlot))
+			n.reportFact(n.service.Book.RecordValidation(escrowID, fact.ValidatorSlot))
 		case accounting.DiffFactInvalidVerdict:
-			n.report(n.service.Book.RecordInvalidVerdict(escrowID, fact.Nonce))
+			n.reportFact(n.service.Book.RecordInvalidVerdict(escrowID, fact.Nonce))
 		case accounting.DiffFactAppliedTimeout:
-			n.report(n.service.Book.RecordAppliedTimeout(escrowID, fact.Nonce))
+			n.reportFact(n.service.Book.RecordAppliedTimeout(escrowID, fact.Nonce))
 		case accounting.DiffFactServiceNonce:
-			n.report(n.service.Book.RecordServiceNonce(escrowID, fact.Nonce, fact.Purpose))
+			n.reportFact(n.service.Book.RecordServiceNonce(escrowID, fact.Nonce, fact.Purpose))
 		}
 	}
 }
@@ -92,7 +94,11 @@ func (n *Recorder) RecordProbe(escrowID string, attempt accounting.Attempt) erro
 	if n == nil {
 		return nil
 	}
-	return n.service.Book.RecordRace(escrowID, []accounting.Attempt{attempt})
+	err := n.service.Book.RecordRace(escrowID, []accounting.Attempt{attempt})
+	if errors.Is(err, accounting.ErrUnknownEscrow) {
+		n.unknownEscrowFacts.Add(1)
+	}
+	return err
 }
 
 // A winner crowned after its client left needs its own terminal, or that population is unfindable.

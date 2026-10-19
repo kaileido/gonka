@@ -246,3 +246,20 @@ func TestAVoteWhoseDeadlineMovedOutIsArmedAgainRatherThanPosted(t *testing.T) {
 	harness.fire(1)
 	require.Equal(t, "posted", harness.nextPosted(t))
 }
+
+// Test flow:
+//  1. Add a vote with no deadline at all, as a race whose escrow resolved no poster owes.
+//  2. Fire its timer.
+//  3. Assert the timer was armed to fire at once rather than at a saturated negative delay, and the vote was still posted.
+func TestAVoteWithNoDeadlineIsArmedToFireAtOnce(t *testing.T) {
+	harness := newQueueHarness()
+
+	harness.queue.Add(settleTask{
+		deadline: func() time.Time { return time.Time{} },
+		post:     func() { harness.posted <- "no-poster" },
+	}, 4)
+
+	require.Equal(t, []time.Duration{0}, harness.scheduledDelays())
+	harness.fire(0)
+	require.Equal(t, "no-poster", harness.nextPosted(t))
+}

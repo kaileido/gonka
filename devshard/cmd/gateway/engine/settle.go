@@ -3,6 +3,8 @@ package engine
 import (
 	"context"
 	"errors"
+	"slices"
+	"sync/atomic"
 	"time"
 
 	"devshard/logging"
@@ -45,7 +47,7 @@ const (
 	SettleByMissClaim
 )
 
-// TimeoutStep is one nonce's vote; StartedAt is the record's, not the attempt's dispatch. See README, "Timeout votes".
+// TimeoutStep is one nonce's vote; StartedAt is the race's start, the stamp every nonce it commits carries, not the attempt's dispatch. See README, "Timeout votes".
 type TimeoutStep struct {
 	Nonce     uint64
 	StartedAt time.Time
@@ -135,10 +137,10 @@ func (o RaceOutcome) TimeoutPlan() []TimeoutStep {
 	return steps
 }
 
-// SettleTimeouts reports a posted vote's started event before the post and its result after, and returns the refused votes worth a retry. See README, "Timeout votes".
-func SettleTimeouts(ctx context.Context, poster TimeoutPoster, outcome RaceOutcome, report func(TimeoutEvent)) []TimeoutStep {
+// settleSteps reports a posted vote's started event before the post and its result after, and returns the refused votes worth a retry. See README, "Timeout votes".
+func settleSteps(ctx context.Context, poster TimeoutPoster, steps []TimeoutStep, escrowMissing bool, report func(TimeoutEvent)) []TimeoutStep {
 	var retries []TimeoutStep
-	for _, step := range outcome.TimeoutPlan() {
+	for _, step := range steps {
 		// A started event for a vote nobody attempts reads as a hung settle when no completion follows.
 		if !step.Post || poster == nil {
 			skipped := step.Event
@@ -149,11 +151,59 @@ func SettleTimeouts(ctx context.Context, poster TimeoutPoster, outcome RaceOutco
 			report(skipped)
 			continue
 		}
-		if postTimeout(ctx, poster, step, outcome.Lifecycle.EscrowMissing, report) {
+		if postTimeout(ctx, poster, step, escrowMissing, report) {
 			retries = append(retries, step)
 		}
 	}
 	return retries
+}
+
+var postAtOnce time.Time
+
+type voteGroup struct {
+	deadline time.Time
+	steps    []TimeoutStep
+}
+
+func voteGroups(plan []TimeoutStep, poster TimeoutPoster) []voteGroup {
+	var groups []voteGroup
+	for _, step := range plan {
+		due := voteDue(step, poster)
+		index := slices.IndexFunc(groups, func(group voteGroup) bool { return group.deadline.Equal(due) })
+		if index < 0 {
+			groups = append(groups, voteGroup{deadline: due})
+			index = len(groups) - 1
+		}
+		groups[index].steps = append(groups[index].steps, step)
+	}
+	return groups
+}
+
+func earliestDue(steps []TimeoutStep, poster TimeoutPoster) time.Time {
+	earliest := voteDue(steps[0], poster)
+	for _, step := range steps[1:] {
+		if due := voteDue(step, poster); due.Before(earliest) {
+			earliest = due
+		}
+	}
+	return earliest
+}
+
+func voteDue(step TimeoutStep, poster TimeoutPoster) time.Time {
+	if !step.Post || poster == nil {
+		return postAtOnce
+	}
+	return poster.VoteDeadline(step.Nonce, step.StartedAt)
+}
+
+func afterAll(count int, done func()) func() {
+	var remaining atomic.Int64
+	remaining.Store(int64(count))
+	return func() {
+		if remaining.Add(-1) == 0 {
+			done()
+		}
+	}
 }
 
 func postTimeouts(ctx context.Context, poster TimeoutPoster, steps []TimeoutStep, escrowMissing bool, report func(TimeoutEvent)) []TimeoutStep {

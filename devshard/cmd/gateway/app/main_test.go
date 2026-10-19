@@ -454,6 +454,7 @@ func TestEveryOwnerCollectorIsRegisteredOnTheGatewaysRegistry(t *testing.T) {
 		{name: "transport", collector: metrics.NewTransportCollector(nil)},
 		{name: "accounting", collector: metrics.NewAccountingCollector(nil)},
 		{name: "journal", collector: metrics.NewJournalCollector(nil)},
+		{name: "nonce ledger", collector: metrics.NewNonceLedgerCollector(nil)},
 		{name: "funding", collector: metrics.NewFundingCollector(nil, nil)},
 	}
 	for _, testCase := range testCases {

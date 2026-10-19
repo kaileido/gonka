@@ -13,6 +13,9 @@ const (
 
 	errorObject = "error"
 
+	assistantRole = "assistant"
+	noText        = ""
+
 	maxIndexedElements = 256
 	maxTopLevelFields  = 64
 	maxAssembledEvents = 65_536
@@ -117,10 +120,13 @@ func encodeCompletion(merged map[string]any) []byte {
 
 // finalizeCompletion rewrites the accumulator in place, so it runs once at the end, never as part of measuring it.
 func finalizeCompletion(merged map[string]any) {
+	choices, _ := merged["choices"].([]any)
+	if _, carriesError := merged["error"]; carriesError && len(choices) == 0 {
+		return
+	}
 	if merged["object"] != errorObject {
 		merged["object"] = completionObject
 	}
-	choices, _ := merged["choices"].([]any)
 	for _, entry := range choices {
 		choice, isObject := entry.(map[string]any)
 		if !isObject {
@@ -129,11 +135,8 @@ func finalizeCompletion(merged map[string]any) {
 		if delta, held := choice["delta"]; held {
 			delete(choice, "delta")
 			choice["message"] = delta
-			// Upstream answers a tool call with a null content, never with the field absent.
 			if message, isObject := delta.(map[string]any); isObject {
-				if _, carries := message["content"]; !carries {
-					message["content"] = nil
-				}
+				finalizeMessage(message)
 			}
 		}
 	}
@@ -240,6 +243,41 @@ func growText(field string, accumulated any, incoming string) any {
 		return newGrowingText(previous + incoming)
 	}
 	return newGrowingText(incoming)
+}
+
+// finalizeMessage gives the folded message the shape a non-streamed OpenAI answer has. See README.md, "What the fold returns".
+func finalizeMessage(message map[string]any) {
+	if role, _ := message["role"].(string); role == noText {
+		message["role"] = assistantRole
+	}
+	toolCalls, _ := message["tool_calls"].([]any)
+	if _, carries := message["tool_calls"]; carries && len(toolCalls) == 0 {
+		delete(message, "tool_calls")
+	}
+	for _, entry := range toolCalls {
+		if call, isObject := entry.(map[string]any); isObject {
+			delete(call, "index")
+		}
+	}
+	content, carriesContent := message["content"]
+	switch {
+	case len(toolCalls) > 0 && (!carriesContent || isEmptyText(content)):
+		message["content"] = nil
+	case !carriesContent:
+		message["content"] = noText
+	}
+}
+
+func isEmptyText(value any) bool {
+	switch typed := value.(type) {
+	case nil:
+		return true
+	case string:
+		return typed == noText
+	case *growingText:
+		return typed.String() == noText
+	}
+	return false
 }
 
 func resentWhole(field, accumulated, incoming string) bool {

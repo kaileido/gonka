@@ -34,7 +34,7 @@ func (s *Server) routes() []route {
 		{pattern: "/healthz", alwaysOn: true, handler: s.handleHealthz},
 		{pattern: "/v1/models", label: "/v1/models", handler: s.handleModels},
 		{pattern: "/v1/chat/completions", label: "/v1/chat/completions", handler: s.handleChat},
-		{pattern: "/v1/status", label: "/v1/status", handler: s.handleStatus},
+		{pattern: "/v1/status", label: "/v1/status", alwaysOn: true, handler: s.handleStatus},
 		// Admin-only: the row has no caller to authorise against. See operations.md, "What is exposed".
 		{pattern: "/v1/requests/{id}", label: "/v1/requests/{id}", admin: true, alwaysOn: true, handler: s.handleRequestAccounting},
 
@@ -252,13 +252,20 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 		return
 	}
 	defer s.limiter.ReleaseForModel(normalized.Model, int64(inputTokens))
+	// The limiter can hold a request for minutes: a block that began meanwhile refuses it before any nonce is spent.
+	afterWait := s.config.Load()
+	if refusal := admission(s.snapshots.Snapshot(), afterWait.Modes, s.now(), afterWait.Chain.SnapshotMaxAgeSeconds); refusal != nil {
+		s.writeErrorFor(w, refusal)
+		return
+	}
 
 	if s.cache == nil {
 		// Nothing to store, so the outcome and the hidden failure the cache path reads are both moot.
 		_, _ = s.race(w, r, requestID, normalized, inputTokens, escrowPin, configuration.Limits.LogprobsOptimization)
 		return
 	}
-	recorder := newCacheRecorder(w, s.cache.entryLimit(), normalized.ClientStream)
+	recorder := newCacheRecorder(w, s.cache.entryLimit(), normalized.ClientStream, s.buffers)
+	defer recorder.releaseBudget()
 	outcome, hiddenFailure := s.race(recorder, r, requestID, normalized, inputTokens, escrowPin, configuration.Limits.LogprobsOptimization)
 	unstorable := cmp.Or(r.Context().Err(), hiddenFailure)
 	entry, storable := recorder.entry(outcome.EscrowID, normalized.ClientStream, unstorable)

@@ -9,6 +9,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"devshard/cmd/gateway/accounting"
 	"devshard/cmd/gateway/app"
 	"devshard/cmd/gateway/escrow"
 	"devshard/cmd/gateway/funding"
@@ -39,6 +40,7 @@ const (
 	inactiveEscrowUnroutableKey = "inactive escrow unroutable"
 	requestEndsKey              = "request ends"
 	ledgerMatchKey              = "ledger match"
+	ledgerClassifiedKey         = "ledger classifies every nonce"
 )
 
 const ledgerSweepInterval = 10 * time.Second
@@ -625,7 +627,7 @@ func retentionMayPrune(creationEpoch, currentEpoch uint64, retentionEpochs int64
 	return retentionEpochs > 0 && currentEpoch > uint64(retentionEpochs) && creationEpoch < currentEpoch-uint64(retentionEpochs)
 }
 
-// ledgerAtRest stops creating and retiring, then compares the ledger with every live session after each sweep interval, and reports a mismatch once no session's money moved for a whole interval or reservationReturnBound has passed.
+// ledgerAtRest stops creating and retiring, then compares the ledger with every live session after each sweep interval, and reports a mismatch once no session's money moved for a whole interval and no nonce waits to be classified, or reservationReturnBound has passed.
 func (h *gatewayHarness) ledgerAtRest() []violationReport {
 	running := h.currentGateway()
 	if running == nil || running.Nonces() == nil {
@@ -637,7 +639,7 @@ func (h *gatewayHarness) ledgerAtRest() []violationReport {
 		moved := sessionsMovedWithin(running, ledgerSweepInterval+time.Second)
 		synctest.Wait()
 		found := h.ledgerMismatches(running)
-		if len(found) == 0 || !moved || !time.Now().Before(deadline) {
+		if len(found) == 0 || (!moved && !awaitsClassification(found)) || !time.Now().Before(deadline) {
 			return found
 		}
 	}
@@ -701,6 +703,27 @@ func (h *gatewayHarness) ledgerMismatches(running *app.Composed) []violationRepo
 		if totals.InFlightReserved != reserved || totals.Challenged != challenged {
 			found = append(found, violationReport{key: ledgerMatchKey, detail: fmt.Sprintf("escrow %s ledger reserved %d challenged %d, session reserved %d challenged %d", state.ID, totals.InFlightReserved, totals.Challenged, reserved, challenged)})
 		}
+		found = append(found, ledgerClassificationGaps(book, state.ID, running.Nonces().UnknownEscrowFacts())...)
+	}
+	return found
+}
+
+func awaitsClassification(found []violationReport) bool {
+	return slices.ContainsFunc(found, func(violation violationReport) bool { return violation.key == ledgerClassifiedKey })
+}
+
+func ledgerClassificationGaps(book *accounting.Book, escrowID string, unknownEscrowFacts uint64) []violationReport {
+	var unclassified, overclassified uint64
+	for _, record := range book.Query(accounting.QueryFilter{EscrowIDs: []string{escrowID}}) {
+		unclassified += record.Unobserved
+		overclassified += record.Overcounted
+	}
+	var found []violationReport
+	if overclassified > 0 {
+		found = append(found, violationReport{key: ledgerClassifiedKey, detail: fmt.Sprintf("escrow %s ledger classified %d nonces more than the chain assigned; %d facts dropped for escrows the ledger did not hold", escrowID, overclassified, unknownEscrowFacts)})
+	}
+	if unclassified > 0 {
+		found = append(found, violationReport{key: ledgerClassifiedKey, detail: fmt.Sprintf("escrow %s ledger left %d assigned nonces unclassified; %d facts dropped for escrows the ledger did not hold", escrowID, unclassified, unknownEscrowFacts)})
 	}
 	return found
 }

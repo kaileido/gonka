@@ -97,12 +97,13 @@ func (p *stubPicker) blockHost(escrowID, participant string) {
 	p.blocked = append(p.blocked, [2]string{escrowID, participant})
 }
 
-// hostScript is one nonce's scripted host: arrive/release hold an attempt before it sends, streaming/resume hold it mid-stream, and flush flushes each chunk as it is written.
+// hostScript is one nonce's scripted host: arrive/release hold an attempt before it sends, streaming/resume hold it mid-stream, feed writes each chunk a test sends until it is closed, and flush flushes each chunk as it is written.
 type hostScript struct {
 	arrive      chan<- uint64
 	release     <-chan struct{}
 	streaming   chan<- uint64
 	resume      <-chan struct{}
+	feed        <-chan string
 	receipt     bool
 	chunks      []string
 	flush       bool
@@ -112,6 +113,16 @@ type hostScript struct {
 	finished    bool
 	err         error
 	catchUpHeld bool
+}
+
+// fed is the script's feed, or a closed channel when it has none, so a range over it ends at once.
+func (s *hostScript) fed() <-chan string {
+	if s.feed != nil {
+		return s.feed
+	}
+	closed := make(chan string)
+	close(closed)
+	return closed
 }
 
 type scriptedTarget struct {
@@ -171,6 +182,11 @@ func (t *scriptedTarget) Send(ctx context.Context, nonce scheduler.Prepared, str
 		case <-script.resume:
 		case <-ctx.Done():
 			return nil, ctx.Err()
+		}
+	}
+	for chunk := range script.fed() {
+		if _, err := stream.Write([]byte(chunk)); err != nil {
+			return nil, err
 		}
 	}
 	if script.hold {
@@ -1085,13 +1101,15 @@ func TestRunRaceSuppressesCrownForDeniedHostWhileARivalIsLive(t *testing.T) {
 }
 
 // Test flow:
-//  1. Start a race with a denied host and a picker that parks its escalation pick, using a classifier that reports the moment content is about to claim the crown.
+//  1. Start a race with a denied host, a receipt deadline the replacement cannot miss, and a picker that parks its escalation pick, using a classifier that reports the moment content is about to claim the crown.
 //  2. Let the denied host's content reach the point of claiming the crown while its replacement pick is still parked.
 //  3. Queue the replacement host and release the parked pick.
 //  4. Assert the replacement wins the race and it succeeded.
 //  5. Assert the client stream carries none of the denied host's bytes.
 func TestRunRaceSuppressesCrownForDeniedHostWhileItsReplacementIsBeingPicked(t *testing.T) {
-	fixture := newRaceFixture(racePolicy(2), 2)
+	policy := racePolicy(2)
+	policy.ReceiptTimeout = time.Hour
+	fixture := newRaceFixture(policy, 2)
 	fixture.crown.denied["host-0"] = true
 	fixture.picker.hold = make(chan struct{})
 	fixture.picker.parked = make(chan struct{}, 1)
@@ -2063,27 +2081,28 @@ func TestBudgetClampsOnlyWhenTheGatewayIsNotServingThroughTheBlock(t *testing.T)
 }
 
 // Test flow:
-//  1. Start a coordinator with four attempts: one silent since its first content, one with a recent chunk, one that never produced content, and one already done.
+//  1. Start a coordinator with five attempts: one silent since its first content, one silent since a role chunk with no content, one with a recent chunk, one that never streamed, and one already done.
 //  2. Set the clock two minutes past the attempts' timestamps and call `markStalls`.
-//  3. Assert only the silent, still-live, content-bearing attempt is flagged stalled.
-func TestMarkStallsFlagsOnlySilentContentAttempts(t *testing.T) {
+//  3. Assert only the two silent, still-live attempts that streamed are flagged stalled: the stall runs from the first chunk, whether or not it carried content.
+func TestMarkStallsFlagsSilentStreamingAttempts(t *testing.T) {
 	base := testEpoch
 	policy := settledPolicy()
 	policy.InterChunkStall = time.Minute
 
-	silent := &liveAttempt{nonce: 1, firstContent: base, lastChunk: base}
-	recent := &liveAttempt{nonce: 2, firstContent: base, lastChunk: base.Add(time.Hour)}
-	contentless := &liveAttempt{nonce: 3, lastChunk: base}
-	finished := &liveAttempt{nonce: 4, firstContent: base, lastChunk: base, done: true}
+	silent := &liveAttempt{nonce: 1, firstToken: base, firstContent: base, lastChunk: base}
+	roleOnly := &liveAttempt{nonce: 5, firstToken: base, lastChunk: base}
+	recent := &liveAttempt{nonce: 2, firstToken: base, firstContent: base, lastChunk: base.Add(time.Hour)}
+	neverStreamed := &liveAttempt{nonce: 3}
+	finished := &liveAttempt{nonce: 4, firstToken: base, firstContent: base, lastChunk: base, done: true}
 
-	coordinator := stalledFixtureCoordinator(policy, silent, recent, contentless, finished)
+	coordinator := stalledFixtureCoordinator(policy, silent, roleOnly, recent, neverStreamed, finished)
 	coordinator.deps.Now = func() time.Time { return base.Add(2 * time.Minute) }
 	coordinator.markStalls()
 
 	for _, expectation := range []struct {
 		attempt *liveAttempt
 		want    bool
-	}{{silent, true}, {recent, false}, {contentless, false}, {finished, false}} {
+	}{{silent, true}, {roleOnly, true}, {recent, false}, {neverStreamed, false}, {finished, false}} {
 		if expectation.attempt.stalled != expectation.want {
 			t.Fatalf("attempt %d stalled = %v, want %v", expectation.attempt.nonce, expectation.attempt.stalled, expectation.want)
 		}

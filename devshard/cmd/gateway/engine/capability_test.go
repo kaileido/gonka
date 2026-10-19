@@ -289,7 +289,7 @@ func TestRulesOutRetryOnlyForATrustedAnswerEveryHostWouldRepeat(t *testing.T) {
 			attempt.Suspicious = testCase.suspicious
 			attempt.ContentSource = testCase.contentSource
 
-			if got := rulesOutRetry(attempt, 0); got != testCase.want {
+			if got := rulesOutRetry(attempt, 0, noTokenEstimate); got != testCase.want {
 				t.Fatalf("rulesOutRetry = %v, want %v", got, testCase.want)
 			}
 		})
@@ -320,7 +320,7 @@ func TestAContextLengthRejectionRulesOutARetryOnlyWhenNoHostCouldServeTheRequest
 			t.Parallel()
 			attempt := errorEventAttempt(t, `{"error":{"code":400,"message":"`+testCase.message+`","type":"BadRequestError"}}`)
 
-			if got := rulesOutRetry(attempt, testCase.modelContextLength); got != testCase.want {
+			if got := rulesOutRetry(attempt, testCase.modelContextLength, noTokenEstimate); got != testCase.want {
 				t.Fatalf("rulesOutRetry = %v, want %v", got, testCase.want)
 			}
 		})
@@ -402,5 +402,30 @@ func TestAVersionRefusalIsRecordedAgainstTheParticipant(t *testing.T) {
 	}
 	if len(recorder.toolsUnsupported) != 0 || len(recorder.contextLimits) != 0 {
 		t.Error("a version refusal was recorded as some other capability")
+	}
+}
+
+// Test flow:
+//  1. Build a trusted host's context-length rejection that claims a limit as long as the model's and a request past it.
+//  2. Ask whether it rules out a retry, once for a request the gateway's own estimate puts far below the model's length and once for one close to it.
+//  3. Assert the claim stops the search only when the estimate makes it plausible: one host's word against the gateway's own count is that host's miss, not every host's answer.
+func TestAContextLengthClaimTheEstimateContradictsKeepsTheSearchGoing(t *testing.T) {
+	const modelContextLength = 400000
+	testCases := []struct {
+		name            string
+		estimatedTokens uint64
+		want            bool
+	}{
+		{name: "estimate_far_below_the_model", estimatedTokens: 2_000},
+		{name: "estimate_close_to_the_model", estimatedTokens: 300_000, want: true},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			attempt := errorEventAttempt(t, `{"error":{"code":400,"message":"`+contextRejection(modelContextLength, 450000)+`","type":"BadRequestError"}}`)
+
+			if got := rulesOutRetry(attempt, modelContextLength, testCase.estimatedTokens); got != testCase.want {
+				t.Fatalf("rulesOutRetry = %v, want %v", got, testCase.want)
+			}
+		})
 	}
 }

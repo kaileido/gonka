@@ -18,12 +18,11 @@ func (n *Recorder) watchDiffs(escrowID string, session registry.EscrowSession, d
 	if diffs == nil {
 		return
 	}
-	if _, already := n.observing.LoadOrStore(escrowID, struct{}{}); already {
-		return
-	}
 	underlying := session.UserSession()
 	if underlying == nil {
-		n.observing.Delete(escrowID)
+		return
+	}
+	if watched, already := n.observing.Swap(escrowID, underlying); already && watched == underlying {
 		return
 	}
 	underlying.SetDiffObserver(func(diff types.Diff) { diffs.DiffComposed(escrowID, &diff) })
@@ -65,6 +64,7 @@ func (n *Recorder) sweepUntil(ctx context.Context, escrows EscrowSource, diffs D
 		n.sweep(ctx, escrows, diffs)
 		select {
 		case <-ticker.C:
+		case <-n.wake:
 		case <-ctx.Done():
 			return
 		}

@@ -174,6 +174,26 @@ func TestReadingAModelCountsParkedAndSettlingRowsAsParking(t *testing.T) {
 }
 
 // Test flow:
+//  1. Read a model with three open create commitments: one regular, one reserve, one temp.
+//  2. Assert the regular and the reserve one enter the plan as creates still landing, and the temp one as neither: the bridge sizes its own temps.
+func TestReadingAModelCountsOpenCreatesByRole(t *testing.T) {
+	manager, _, _, _ := planningManager(t)
+	configuration := manager.config.Load()
+	models, _ := rotationModels(configuration.Rotation)
+	commitments := []store.Commitment{
+		{TxHash: "A", Model: "qwen", Role: roleRegular},
+		{TxHash: "B", Model: "qwen", Role: RoleReserve},
+		{TxHash: "C", Model: "qwen", Role: roleTemp},
+	}
+
+	reading := manager.readModel(models[0], nil, commitments, planningSnapshot(), configuration, manager.now())
+
+	if reading.state.PendingRegularCreates != 1 || reading.state.PendingStandbyCreates != 1 {
+		t.Fatalf("pending regular %d standby %d, want 1 and 1", reading.state.PendingRegularCreates, reading.state.PendingStandbyCreates)
+	}
+}
+
+// Test flow:
 //  1. Add three active rows no live session answers for: one whose stored amount covers the slot, one with no amount resolved, one below the slot.
 //  2. Read and plan the model.
 //  3. Assert all three count unread, the two with an amount enter the plan as unread escrows, and only the first counts as full.

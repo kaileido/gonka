@@ -55,6 +55,7 @@ const (
 func Main() {
 	observability.InstallLogger(env.LogFormat())
 	applyDialGuard()
+	warnIgnoredLegacyStore()
 	if err := serve(); err != nil {
 		logging.Error("gateway exited", logkey.Error, err)
 		os.Exit(1)
@@ -76,6 +77,13 @@ func warnOpenModels(configured config.Limits) {
 	if open := configured.OpenModels(); len(open) > 0 {
 		logging.Warn("models are open: any caller reaches them without a key and spends the escrows serving them",
 			logkey.Subsystem, "gateway", logkey.OpenModels, open)
+	}
+}
+
+func warnIgnoredLegacyStore() {
+	if ignored := env.LegacyPostgresVariablesSet(); len(ignored) > 0 {
+		logging.Warn("legacy Postgres settings are ignored: the gateway keeps its own store and runs as one process per escrow set",
+			logkey.Subsystem, "gateway", logkey.IgnoredVariables, ignored)
 	}
 }
 
@@ -358,6 +366,7 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 		metrics.NewTransportCollector(transport.DefaultHostConnectionTracker()),
 		metrics.NewAccountingCollector(ledger),
 		metrics.NewJournalCollector(journalCounts(events)),
+		metrics.NewNonceLedgerCollector(recorder.UnknownEscrowFacts),
 		metrics.NewFundingCollector(fundingModels(manager), deadlineCounts(manager)),
 	)
 

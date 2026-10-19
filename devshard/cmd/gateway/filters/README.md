@@ -160,7 +160,7 @@ A `*Profile` is one routed model's set of deltas from the default pipeline. A ni
 
 `ThinkingForceOn` handles both fields as the default does, then sets `chat_template_kwargs.enable_thinking` to `true` at `StagePostLimits`, once every lift into the kwargs has landed, whatever the caller sent. A caller's `chat_template_kwargs.thinking` passes through. Why, and why only on the exact GLM-5.3-Flash id: [`glm-5.3-flash.md`](../../../../docs/chat-api/glm-5.3-flash.md).
 
-`thinkingTokenBudgetResolve` runs after the token limits and clamps whatever budget the request carries, for every model, so content keeps room to be written: down to `thinkingBudgetAbsoluteMax` (96,000), and down to `max_tokens - thinkingBudgetContentHeadroom` (64). Only a profile that declares `ThinkingTokenBudget` gets a budget *invented* — `max_tokens / 2` — because a host on the V2 model runner rejects the field outright, and V2 is the default for every non-MoE model.
+`thinking_token_budget` reaches a host only for a profile that declares `ThinkingTokenBudget`, which only Kimi's does: `thinkingTokenBudgetScope` strips it everywhere else at `StagePreValidation`, because the engines behind the other models crash on it (vLLM `EngineCore` on Qwen3-Instruct-2507, [`qwen3-235b-a22b-instruct-2507.md`](../../../../docs/chat-api/qwen3-235b-a22b-instruct-2507.md)) and a host on the V2 model runner rejects it outright. For the profile that keeps it, `thinkingTokenBudgetResolve` runs after the token limits, invents `max_tokens / 2` when the request names none, and clamps the result so content keeps room to be written: down to `thinkingBudgetAbsoluteMax` (96,000), and down to `max_tokens - thinkingBudgetContentHeadroom` (64).
 
 ### Silencing Kimi's reasoning
 
@@ -240,7 +240,7 @@ Content is accepted as a non-blank string, or as a non-empty array of `{type: "t
 
 ## Response stripping
 
-`LogprobIntent` is what the client's own request asked for, read before the cap can narrow it. Without it the strip cannot tell a client who asked for logprobs from one who did not, and would answer both by removing them. `logprobs: true` without alternatives keeps `top_logprobs` as a present-but-empty array, which is OpenAI's shape for that ask.
+`LogprobIntent` is what the client's own request asked for, read before the cap can narrow it. Without it the strip cannot tell a client who asked for logprobs from one who did not, and would answer both by removing them. `logprobs: true` without alternatives keeps `top_logprobs` as a present-but-empty array, which is OpenAI's shape for that ask. The served hosts never send that shape, though: a host forwards logprobs only when both `logprobs` and a positive `top_logprobs` were asked (`completionapi.LogprobsAsked`, read by the host's response processor), so a client asking `logprobs: true` alone gets no logprobs at all, as from the legacy gateway, and the empty-array path serves only a host that sends logprobs it was not asked to.
 
 - A client that asked for nothing loses `clientStrippedFields`, at any depth: the whole logprob family plus `token_ids`, `prompt_token_ids`, `prompt_logprobs`.
 - A client that asked for logprobs loses only `alwaysStrippedFields`, which is *derived* by subtracting `requestableFields` from the full list. A hand-written second list can omit a field the full list gained, which exposes `top_logprobs`.
@@ -380,7 +380,7 @@ A client that asked for logprobs receives them on every chunk, so the template a
 - A failed carry-overflow, or a stream that framed events but carried no payload, returns `NoResponseDataBody`.
 - A fold that ran past `maxAssembledEvents` (65,536) returns `TruncatedResponseBody`. Returning the prefix would be a complete-looking answer missing its tail.
 - A complete `chat.completion` seen before any chunk was merged is returned stripped, as-is.
-- Otherwise the merged accumulator is finalised and encoded.
+- Otherwise the merged accumulator is finalised and encoded. Finalising turns each choice's `delta` into its `message` and gives it the shape a non-streamed OpenAI answer has (`finalizeMessage`): `role` defaults to `assistant`, an empty `tool_calls` list is dropped and each entry loses its streaming `index`, `content` becomes `null` beside tool calls when it is empty or absent and `""` when absent without them. A document holding nothing but an `error` keeps its own shape and is not relabelled `chat.completion`.
 - A stream that never framed a `data:` line at all is returned as the raw body, stripped — an unframed error page still reaches the caller.
 
 ### How the merge works

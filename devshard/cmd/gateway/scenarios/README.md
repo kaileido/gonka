@@ -48,6 +48,7 @@ Checked after every step by `invariants_test.go`. A test that legitimately break
 | `inactive escrow unroutable` | no inactive row is routable | I7 |
 | `request ends` | no request stays open past the execution timeout and its buffer | I8 |
 | `ledger match` | the nonce ledger's charged, reserved and challenged money equals the chain's settlement and the live sessions | I9 |
+| `ledger classifies every nonce` | at rest, the nonce ledger has classified every nonce the chain assigned a live escrow, and never more; a gap is read again until none remains or the reservation return bound passes, so a fact still on its way is not read as a lost one | I9 |
 
 ## The tests
 

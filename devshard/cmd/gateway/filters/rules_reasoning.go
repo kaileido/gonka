@@ -2,7 +2,7 @@ package filters
 
 import "devshard"
 
-// Clamps applied to any thinking_token_budget, whichever model it was sent for.
+// Clamps applied to the thinking_token_budget a profile keeps.
 const (
 	thinkingBudgetAbsoluteMax     uint64 = 96_000
 	thinkingBudgetContentHeadroom uint64 = 64
@@ -223,6 +223,18 @@ func thinkingTokenBudgetResolve() RuleFunc {
 		}
 		ctx.Document.Set("thinking_token_budget", budget)
 		return nil
+	}
+}
+
+// thinkingTokenBudgetScope keeps the budget only for a profile that declares it: elsewhere the engine crashes on the field. See README.md, "Reasoning and thinking".
+func thinkingTokenBudgetScope() RuleFunc {
+	validate := requireUint()
+	return func(ctx RuleContext) error {
+		if ctx.Profile == nil || !ctx.Profile.ThinkingTokenBudget {
+			ctx.Document.Delete(ctx.Param)
+			return nil
+		}
+		return validate(ctx)
 	}
 }
 

@@ -48,3 +48,19 @@ func TestABurnOnARetiredEscrowCommitsNothing(t *testing.T) {
 	_, _, commits := test.session.report()
 	require.Empty(t, commits, "a retired escrow commits nothing at all")
 }
+
+// Test flow:
+//  1. Build a harness whose escrow hold refuses, as an escrow retired between taking a host slot and holding the escrow is.
+//  2. Submit a fresh request that admits a host slot before the hold is asked for, and await its reply.
+//  3. Assert the waiter hears ErrEscrowGone and the admitted slot was given back: a slot no serve uses must never stay held.
+func TestASlotTakenForAnEscrowThatRetiresBeforeItsHoldIsGivenBack(t *testing.T) {
+	test := newHarness(t, harnessConfig{
+		escrowHold: func() (func(), bool) { return nil, false },
+	})
+
+	queued := test.submit(t, test.clock.Now())
+	result := awaitReply(t, queued)
+
+	require.ErrorIs(t, result.err, ErrEscrowGone)
+	test.wantSlots(t, 0, 1)
+}

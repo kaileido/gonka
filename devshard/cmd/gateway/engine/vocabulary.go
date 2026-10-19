@@ -22,6 +22,8 @@ const (
 	StartPrimaryDegraded   = "primary_degraded"
 )
 
+const noTokenEstimate uint64 = 0
+
 // EscalationStage names the condition that earned an attempt one more attempt beside it.
 const (
 	StageNone           EscalationStage = ""
@@ -30,6 +32,7 @@ const (
 	StageReceiptTimeout EscalationStage = "receipt_timeout_wait_elapsed"
 	StageFirstToken     EscalationStage = "first_token_timeout_wait_elapsed"
 	StageHedge          EscalationStage = "slow_start_wait_elapsed"
+	StageStall          EscalationStage = "stall_before_content"
 )
 
 // What carried an answer's first renderable bytes, reported on every attempt that produced content.
@@ -134,4 +137,5 @@ const (
 	EscalationReasonReceipt       = "receipt_timeout"
 	EscalationReasonFirstToken    = "first_token_timeout"
 	EscalationReasonHedge         = "slow_start"
+	EscalationReasonStall         = "stalled_before_content"
 )

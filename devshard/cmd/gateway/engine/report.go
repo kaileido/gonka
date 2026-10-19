@@ -33,6 +33,9 @@ func (c *raceCoordinator) apply(event AttemptEvent) {
 	case AttemptChunk:
 		attempt.lastChunk = event.At
 	case AttemptDone:
+		if event.Outcome != nil {
+			event.Outcome.MissProof.takeHeldFinish()
+		}
 		c.complete(attempt, event)
 	}
 }
@@ -57,7 +60,7 @@ func (c *raceCoordinator) complete(attempt *liveAttempt, event AttemptEvent) {
 		RecordCapability(c.deps.Perf, attempt.participant, c.request.Model, signal)
 		c.exclude(attempt.participant)
 	}
-	if rulesOutRetry(*attempt.outcome, c.deps.ModelContextLength) {
+	if rulesOutRetry(*attempt.outcome, c.deps.ModelContextLength, c.request.InputTokens+c.request.OutputTokens) {
 		c.retryRuledOut = true
 		c.stopPicking()
 	}
@@ -153,13 +156,44 @@ func (c *raceCoordinator) retire(attempt *liveAttempt) {
 }
 
 func (c *raceCoordinator) report() RaceOutcome {
-	close(c.done)
+	c.markReported()
+	c.releaseUnreadFinishes()
 	outcome := c.outcome()
 	outcome.observeCrowning(c.deps.Crown)
 	if c.deps.Report != nil {
 		c.deps.Report(outcome)
 	}
 	return outcome
+}
+
+func (c *raceCoordinator) markReported() {
+	c.reportOnce.Do(func() { close(c.done) })
+}
+
+// abandon frees what a panicking coordinator launched: no attempt waits on a race that will never read it.
+func (c *raceCoordinator) abandon() {
+	c.markReported()
+	if c.picking() {
+		c.pickCancel()
+	}
+	for _, attempt := range c.attempts {
+		if attempt.cancel != nil {
+			attempt.cancel()
+		}
+	}
+}
+
+func (c *raceCoordinator) releaseUnreadFinishes() {
+	for {
+		select {
+		case event := <-c.events:
+			if event.Kind == AttemptDone && event.Outcome != nil {
+				event.Outcome.MissProof.releaseUntakenFinish()
+			}
+		default:
+			return
+		}
+	}
 }
 
 func (c *raceCoordinator) outcome() RaceOutcome {

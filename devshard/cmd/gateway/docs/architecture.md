@@ -131,7 +131,7 @@ Three places, each with its own guard:
 
 | Risk | Guard |
 | --- | --- |
-| a committed nonce nobody settles | the race's drain barrier: shutdown waits for every owed vote |
+| a committed nonce nobody settles | the race's drain barrier: shutdown waits, within its grace period, for the owed votes that fall due inside it; a refusal vote due later is lost at the restart and finalize pays that nonce in full |
 | an escrow that pays for work it did not receive | [`accounting`](../accounting/) cross-checks its own counts against the chain's |
 | a reply held in memory until the process dies | a per-request cap, a process-wide ceiling, and folding as chunks arrive |
 

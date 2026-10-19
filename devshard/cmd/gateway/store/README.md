@@ -49,9 +49,10 @@ Only a locked database is retried. Everything else — a missing row, a constrai
 
 A row names the escrow, the environment variable holding the key that can act on it — never the key itself — its model, whether it is active, its rotation role and epoch, whether a settlement is queued, the hash and time of the settle transaction it last broadcast, the route prefix it was created under, the epoch the chain stamped on the escrow and the amount it locked (both 0 until read), and whether the chain answered that it no longer holds the escrow. An update or delete matching no row returns `ErrDevshardNotFound`, except `ParkForSettlementIfActive` below, which reports a boolean instead.
 
-`UpsertDevshard` replaces every field of an existing row except five:
+`UpsertDevshard` replaces every field of an existing row except six:
 
 - `settlement_pending`, so an unrelated upsert never clears a queued settlement — only `SetDevshardSettlementPending` moves it;
+- `settle_tx_hash`, which only `SetDevshardSettleTxHash` writes, beside the `settle_tx_at` stamp it is read against, so a re-registration can neither erase a broadcast hash nor leave a stamp for a hash it erased;
 - `route_prefix`, because a host binds an escrow to the first version that reaches it and refuses every other one for good, so the version an escrow was created under must never change;
 - `chain_epoch` and `amount`, which only `SetDevshardChainFacts` writes, from the chain's own answer; a re-registration cannot clear them, and a zero passed to `SetDevshardChainFacts` leaves its column as it was;
 - `gone_from_chain`, which only `MarkDevshardGoneFromChain` sets, in the same statement that clears `active`. Every statement that writes `active = 1` clears it in the same write — `SetDevshardActive(true)`, and an upsert that writes `active = 1` — so a row an operator reactivates is no longer gone, and a later park settles it like any other row.

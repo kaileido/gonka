@@ -43,7 +43,7 @@ The only package that speaks HTTP to a client, and the one that decides what a f
 
 `requireAdmin` is where the admin key comparison lives, on the operator routes themselves rather than in a blanket middleware. With no admin key configured the whole surface answers 404.
 
-`disabled` is the operator kill switch. Routes marked `alwaysOn` — `/metrics`, `/healthz` and the operator surface — stay reachable through it.
+`disabled` is the operator kill switch. Routes marked `alwaysOn` — `/metrics`, `/healthz`, `/v1/status` and the operator surface — stay reachable through it: `/v1/status` is what a container healthcheck from the legacy deployment reads, and a gateway disabled on purpose is not unhealthy.
 
 ## Reading a body
 
@@ -159,7 +159,7 @@ An entry is keyed on **everything that varies the answer**, and two of those are
 
 The caller and the escrow scope are in the key as well, so a cached reply never crosses a caller or an escrow boundary.
 
-**One entry is bounded by what a single reply may hold**, not by the cache's own ceiling: the recorder buffers into memory per in-flight request, so bounding it by the cache would let every concurrent request hold the whole cache on its own, outside every budget that reports held bytes. A reply past that bound is dropped as it streams rather than held to the end and refused by `put`.
+**One entry is bounded by what a single reply may hold**, not by the cache's own ceiling: the recorder buffers into memory per in-flight request, so bounding it by the cache would let every concurrent request hold the whole cache on its own, outside every budget that reports held bytes. A reply past that bound is dropped as it streams rather than held to the end and refused by `put`. The recording also spends the shared response buffer budget (`BufferBudget`, `max_buffered_response_bytes`) for as long as the request runs, so recordings are counted with the folded replies in every report of held bytes; a recording the budget cannot hold stops the same way, the client still receives every byte, and what it held goes back when the request ends (`cacheRecorder.releaseBudget`).
 
 **The recorder keeps the first status the handler chose**, so a write after the response has begun cannot turn a recorded failure into a 200. What the bytes cannot state themselves — a client that left, and a failure a committed 200 hid — is passed to `entry` as the unstorable reason.
 

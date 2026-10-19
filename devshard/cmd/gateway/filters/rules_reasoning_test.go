@@ -2,7 +2,6 @@ package filters
 
 import (
 	"encoding/json"
-	"fmt"
 	"reflect"
 	"testing"
 )
@@ -381,34 +380,12 @@ func TestThinkingAbsentIsNoOp(t *testing.T) {
 }
 
 // Test flow:
-//  1. Call NormalizeRequest once per model (deepseek, minimax, kimi, and an unrouted model) with an explicit `thinking_token_budget`.
-//  2. Assert the normalized body still carries that budget for every model, not only for a profile that resolves one of its own.
-func TestThinkingTokenBudgetSurvivesForEveryModel(t *testing.T) {
-	for _, model := range []string{deepseekModelID, minimaxModelID, kimiModelID, "Qwen/Unknown"} {
-		t.Run(model, func(t *testing.T) {
-			body := fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"x"}],"max_tokens":4096,"thinking_token_budget":128}`, model)
-			result, err := NormalizeRequest([]byte(body), Options{RoutedModel: model})
-			if err != nil {
-				t.Fatalf("NormalizeRequest() = %v, want nil", err)
-			}
-			var document map[string]any
-			if err := json.Unmarshal(result.Body, &document); err != nil {
-				t.Fatalf("unmarshal normalized body: %v", err)
-			}
-			if got := document["thinking_token_budget"]; got != float64(128) {
-				t.Errorf("thinking_token_budget = %v, want 128", got)
-			}
-		})
-	}
-}
-
-// Test flow:
-//  1. Call NormalizeRequest with a string-typed `thinking_token_budget`.
-//  2. Assert normalization rejects the request, since the budget is validated rather than silently stripped.
+//  1. Call NormalizeRequest for Kimi, whose profile keeps the budget, with a string-typed `thinking_token_budget`.
+//  2. Assert normalization rejects the request: a budget the profile keeps is validated rather than forwarded as sent.
 func TestThinkingTokenBudgetRejectsANonNumericValue(t *testing.T) {
-	body := `{"model":"Qwen/Unknown","messages":[{"role":"user","content":"x"}],"thinking_token_budget":"lots"}`
-	if _, err := NormalizeRequest([]byte(body), Options{RoutedModel: "Qwen/Unknown"}); err == nil {
-		t.Error("NormalizeRequest() = nil, want a rejection: the budget is no longer stripped, so it has to be validated")
+	body := `{"model":"moonshotai/Kimi-K2.6","messages":[{"role":"user","content":"x"}],"thinking_token_budget":"lots"}`
+	if _, err := NormalizeRequest([]byte(body), Options{RoutedModel: kimiModelID}); err == nil {
+		t.Error("NormalizeRequest() = nil, want a rejection of a budget Kimi keeps")
 	}
 }
 

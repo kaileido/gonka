@@ -52,9 +52,11 @@ func newRouting(deps routingDeps) (*registry.Registry, *scheduler.Scheduler, *wa
 		Now:              deps.Now,
 	}
 	prober := warmup.New(deps.Config, deps.Ledger.Book(), deps.Snapshots, deps.Now)
+	listeners := escrowPublications{deps.Ledger}
 	if prober != nil {
-		registryDeps.Publications = prober
+		listeners = append(listeners, prober)
 	}
+	registryDeps.Publications = listeners
 	escrows := registry.New(registryDeps)
 	prober.Serve(escrows)
 	prober.SetNarrator(deps.Journal)
@@ -89,4 +91,17 @@ func (e escrowExhaustion) Exhaustion(escrowID string) scheduler.ExhaustionReason
 		return scheduler.ExhaustionNone
 	}
 	return e.router.Exhaustion(candidate)
+}
+
+type publicationListener interface {
+	EscrowPublished(escrowID, model string)
+}
+
+// escrowPublications hands each publication to every listener; each only marks and returns, as the registry calls it under its lock.
+type escrowPublications []publicationListener
+
+func (listeners escrowPublications) EscrowPublished(escrowID, model string) {
+	for _, listener := range listeners {
+		listener.EscrowPublished(escrowID, model)
+	}
 }

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -203,6 +204,7 @@ type Server struct {
 	capture      *requestCapture
 
 	stopTokenVocabulary func(model string) int
+	settingsWrites      sync.Mutex
 
 	gates   atomic.Pointer[keyGates]
 	verify  func(authorization string) credentials

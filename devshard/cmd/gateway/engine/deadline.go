@@ -122,7 +122,7 @@ func (p deadlinePlan) stall() time.Time {
 	for index := range p.Attempts {
 		attempt := &p.Attempts[index]
 		if attempt.Done || attempt.Stalled ||
-			attempt.FirstContent.IsZero() || attempt.LastChunk.IsZero() {
+			attempt.FirstToken.IsZero() || attempt.LastChunk.IsZero() {
 			continue
 		}
 		earliest = earlierSet(earliest, attempt.LastChunk.Add(p.Policy.InterChunkStall))
@@ -222,7 +222,7 @@ func (c *raceCoordinator) escalate(armed ArmedEscalation) {
 func (c *raceCoordinator) markStalls() {
 	silentSince := c.deps.Now().Add(-c.deps.Policy.InterChunkStall)
 	for _, attempt := range c.attempts {
-		if attempt.done || attempt.firstContent.IsZero() || attempt.lastChunk.After(silentSince) {
+		if attempt.done || attempt.firstToken.IsZero() || attempt.lastChunk.After(silentSince) {
 			continue
 		}
 		attempt.stalled = true

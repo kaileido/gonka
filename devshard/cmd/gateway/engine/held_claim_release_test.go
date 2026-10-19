@@ -5,9 +5,9 @@ import (
 )
 
 // Test flow:
-//  1. Hold a suspicious host's finished claim beside one rival: one that missed its first-token or its receipt deadline without a token, one still inside its deadlines, one that missed but has started streaming, and one whose deadline was excused.
+//  1. Hold a suspicious host's finished claim beside one rival: one that missed its first-token or its receipt deadline without a token, one that missed with only a role chunk, one still inside its deadlines, one that missed but has streamed content, and one whose deadline was excused.
 //  2. Settle the held claims.
-//  3. Assert only the rival that missed with nothing to show releases the claim: a silent rival past its deadline cannot be waited on for minutes.
+//  3. Assert only the rival that missed with no content to show releases the claim: a silent rival past its deadline cannot be waited on for minutes, and a role chunk is not content.
 func TestAHeldClaimIsReleasedOnceEveryRivalMissedItsDeadline(t *testing.T) {
 	for _, testCase := range []struct {
 		name         string
@@ -17,7 +17,8 @@ func TestAHeldClaimIsReleasedOnceEveryRivalMissedItsDeadline(t *testing.T) {
 		{"a rival past its first-token deadline with nothing", &liveAttempt{nonce: 501, participant: "host-1", firstTokenDeadline: deadlineMissed, cancel: func() {}}, true},
 		{"a rival past its receipt deadline", &liveAttempt{nonce: 501, participant: "host-1", receiptDeadline: deadlineMissed, cancel: func() {}}, true},
 		{"a rival still inside its deadlines", &liveAttempt{nonce: 501, participant: "host-1", cancel: func() {}}, false},
-		{"a rival past its deadline that has started streaming", &liveAttempt{nonce: 501, participant: "host-1", firstTokenDeadline: deadlineMissed, firstToken: testEpoch, cancel: func() {}}, false},
+		{"a rival past its deadline with only a role chunk", &liveAttempt{nonce: 501, participant: "host-1", firstTokenDeadline: deadlineMissed, firstToken: testEpoch, cancel: func() {}}, true},
+		{"a rival past its deadline that has streamed content", &liveAttempt{nonce: 501, participant: "host-1", firstTokenDeadline: deadlineMissed, firstToken: testEpoch, firstContent: testEpoch, cancel: func() {}}, false},
 		{"a rival whose deadline was excused", &liveAttempt{nonce: 501, participant: "host-1", firstTokenDeadline: deadlineExcused, cancel: func() {}}, false},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {

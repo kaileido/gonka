@@ -72,16 +72,24 @@ func defaultJitter(base time.Duration) time.Duration {
 	return time.Duration(rand.Int63n(span))
 }
 
-// Reconfigure keeps a window already earned and lifts one below the new initial size. See capacity.md, "The participant limiter: IOCW".
+// Reconfigure keeps a window already earned or narrowed, lifts one only past a raised initial size, and never leaves one under the new floor. See capacity.md, "The participant limiter: IOCW".
 func (l *ParticipantLimiter) Reconfigure(cfg ParticipantConfig) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.cfg = cfg
 	for tracked, state := range l.states {
+		previous := state.bounds
 		state.bounds = l.windowsForLocked(tracked.participant, tracked.model)
-		state.input.raiseTo(state.bounds.Input.Initial)
-		state.output.raiseTo(state.bounds.Output.Initial)
+		state.input.raiseTo(liftedFloor(previous.Input, state.bounds.Input))
+		state.output.raiseTo(liftedFloor(previous.Output, state.bounds.Output))
 	}
+}
+
+func liftedFloor(previous, next WindowBounds) int64 {
+	if next.Initial > previous.Initial {
+		return next.Initial
+	}
+	return next.Min
 }
 
 func (l *ParticipantLimiter) stateLocked(k key) *hostState {

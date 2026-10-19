@@ -40,7 +40,7 @@ func unsettledAttempt() AttemptOutcome {
 
 func settleEvents(outcome RaceOutcome, poster TimeoutPoster) []TimeoutEvent {
 	var events []TimeoutEvent
-	SettleTimeouts(context.Background(), poster, outcome, func(event TimeoutEvent) { events = append(events, event) })
+	settleSteps(context.Background(), poster, outcome.TimeoutPlan(), outcome.Lifecycle.EscrowMissing, func(event TimeoutEvent) { events = append(events, event) })
 	return events
 }
 
@@ -71,7 +71,7 @@ func TestAStartedEventIsReportedBeforeItsVoteIsPosted(t *testing.T) {
 	var reported []TimeoutEvent
 	poster := &countingPoster{reported: &reported}
 
-	SettleTimeouts(context.Background(), poster, outcome, func(event TimeoutEvent) { reported = append(reported, event) })
+	settleSteps(context.Background(), poster, outcome.TimeoutPlan(), outcome.Lifecycle.EscrowMissing, func(event TimeoutEvent) { reported = append(reported, event) })
 
 	require.Equal(t, []int{1, 3}, poster.seenAtPost)
 	require.Equal(t, TimeoutActionStarted, reported[0].Action)

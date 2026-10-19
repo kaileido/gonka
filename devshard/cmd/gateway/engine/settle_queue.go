@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+const firesAtOnce time.Duration = 0
+
 // settleTask is one race's owed votes. See race.md, "The timeout-vote queue".
 type settleTask struct {
 	deadline func() time.Time
@@ -39,7 +41,7 @@ func (q *settleQueue) Add(task settleTask, limit int) {
 }
 
 func (q *settleQueue) arm(task settleTask, limit int) {
-	delay := task.deadline().Sub(q.now())
+	delay := max(task.deadline().Sub(q.now()), firesAtOnce)
 	if task.wake == nil {
 		q.after(delay, func() { q.fire(task, limit) })
 		return

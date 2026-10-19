@@ -9,7 +9,8 @@ Three tiers, and the tier decides both who may call it and whether the kill swit
 | Route | Auth | Survives the kill switch |
 | --- | --- | --- |
 | `/v1/chat/completions` | per-model (below) | no |
-| `/v1/models`, `/v1/status` | none — they list what is routable, nothing caller-specific | no |
+| `/v1/models` | none — it lists what is routable, nothing caller-specific | no |
+| `/v1/status` | none, as above | yes — the deployed compose healthcheck reads it, and a gateway disabled on purpose is not unhealthy |
 | `/devshard/{id}/v1/chat/completions`, `.../models`, `.../status` | as above, pinned to one escrow | no |
 | `/metrics`, `/healthz` | none | yes |
 | `/v1/requests/{id}` | admin | yes |
@@ -42,13 +43,13 @@ The `/devshard/{id}/…` prefix pins a request to one escrow instead of letting 
 - A model **not listed** in `model_access` is `admin_only`, an empty map included. A deployment starts with no entries, so until the operator names a model `open` or `api_key` only the admin reaches it, and setting `DEVSHARD_API_KEYS` alone opens nothing. While any model is `open` the gateway logs a warning naming it, at startup and after every admin override, since an open model spends the operator's escrows for any caller.
 - With `DEVSHARD_ADMIN_API_KEY` unset the whole admin surface answers **404, not 401** — the routes do not exist rather than rejecting the caller. A "route not found" on `/v1/admin/…` usually means the key is missing, not the path. Without it no one can set `model_access` either, so every model stays admin-only and the gateway serves no client.
 
-An admin key satisfies every tier, so admin calls never need a second key. A settings write replaces the whole override set, so one that leaves out `model_access` closes every model to clients again; repeat the map in every write.
+An admin key satisfies every tier, so admin calls never need a second key. A `PUT` of the settings replaces the whole override set, so a `PUT` that leaves out `model_access` closes every model to clients again; a `POST` changes only the fields it names ("Configuration").
 
 `limits.model_access`, together with `limits.model_limits`, is also the list of models the gateway offers (`config.Limits.Offers`): a model named in either one answers 503 when nothing currently routes to it, and a model named in neither answers 400 while any model is routable — an empty registry answers 503 for every model instead.
 
 ### The kill switch
 
-`modes.disabled` (env `DEVSHARD_GATEWAY_DISABLED`, or `disabled` through the admin settings endpoint) stops serving clients while leaving `/metrics`, `/healthz`, the admin surface and the recovery surface up — so a gateway can be taken out of service and still be inspected, settled and drained.
+`modes.disabled` (env `DEVSHARD_GATEWAY_DISABLED`, or `disabled` through the admin settings endpoint) stops serving clients while leaving `/metrics`, `/healthz`, `/v1/status`, the admin surface and the recovery surface up — so a gateway can be taken out of service and still be inspected, settled and drained.
 
 With `disabled_redirect_url` set it answers **308** with the new URL in both the header and the body; without one, **503** with `disabled_message`. The distinction matters to clients: a 308 is a permanent move, a 503 is "come back later".
 
@@ -58,7 +59,7 @@ Three layers, later wins:
 
 1. **Defaults** — `config/defaults.go`, `Defaults()`. The only place a default lives.
 2. **Environment** — read once at boot, in `env/` and nowhere else. `env.Load` returns *what is set* (a nil pointer is unset), so an unset variable can never overwrite a default with a zero.
-3. **Admin overrides** — the fields of `config.Overrides`, written through `PUT /v1/admin/settings`, persisted in the store and reloaded at boot. These take effect without a restart: the config is an immutable snapshot swapped whole, and every reader loads it per request.
+3. **Admin overrides** — the fields of `config.Overrides`, written through `/v1/admin/settings`, persisted in the store and reloaded at boot. A `POST` is a patch over the stored overrides (`Overrides.Merged`): a field it names replaces the stored one, a field it sets to `null` is cleared back to the layers below, and every other field stays. A `PUT` is the whole document and replaces the stored one. Writes are applied one at a time, so two operators patching at once cannot lose each other's fields. They take effect without a restart: the config is an immutable snapshot swapped whole, and every reader loads it per request. The `settings written` audit line carries the method, the open models, the kill switch and both routing lists as they stand after the call.
 
 Parse failures are accumulated, so a boot reports **every** misconfigured variable at once rather than one per restart.
 
@@ -187,7 +188,7 @@ These are read the same way and rarely need changing. Where a knob has a longer 
 | # | Step | Why here |
 | --- | --- | --- |
 | 1 | http server | stop taking new work first |
-| 2 | races | in-flight requests finish, and the losers pay the votes they owe |
+| 2 | races | in-flight requests finish, and the losers post the votes they owe if those fall due inside the grace period (10 s); a refused nonce's vote falls due about 65 s after its refusal, so one refused in the last minute before a restart is not voted and finalize pays it in full |
 | 3 | dispatchers | nothing new reaches a host |
 | 4 | escrow lifecycle | no rotation starts mid-drain |
 | 5 | chain observer | nothing above still needs a snapshot |
@@ -303,7 +304,7 @@ Admin lines carry the action and its subject, **never the request body** — an 
 
 ## Metrics
 
-`/metrics`, Prometheus: 79 gateway families beside the Go runtime and process collectors. The nonce ledger adds none; it is served by its own JSON API (see [accounting.md](./accounting.md)). Grouped by the question they answer:
+`/metrics`, Prometheus: 95 gateway families beside the Go runtime and process collectors. The nonce ledger adds one, the facts it dropped for an escrow it does not hold; everything else it knows is served by its own JSON API (see [accounting.md](./accounting.md)). Grouped by the question they answer:
 
 | Question | Series |
 | --- | --- |
@@ -319,6 +320,7 @@ Admin lines carry the action and its subject, **never the request body** — an 
 | is memory bounded | `devshard_gateway_buffered_response_bytes`, `devshard_gateway_cache_bytes`, `devshard_gateway_capture_bytes_held` |
 | are the request records keeping up | `devshard_gateway_accounting_rows_written_total`, `devshard_gateway_accounting_rows_lost_total`, `devshard_gateway_accounting_retention_sweeps_failed_total` |
 | is the journal keeping up | `devshard_gateway_journal_money_refused_total`, `devshard_gateway_journal_progress_dropped_total`, `devshard_gateway_journal_late_events_total` |
+| is the nonce ledger losing facts | `devshard_gateway_nonce_ledger_unknown_escrow_facts_total`: facts about an escrow the ledger does not hold — one its sweep has not opened yet, which a published escrow's wake keeps to the first sweep's latency, or one its retention pruned |
 | where does a request wait inside the gateway | `devshard_gateway_escrow_queue_wait_seconds`, `devshard_gateway_session_step_seconds{step}` (below) |
 
 A race the client left counts as `devshard_gateway_requests_total{reason="client_cancelled"}` unless the escrow itself failed first, which outranks a departure as `reason="escrow_missing"` or `reason="balance_exhausted"`; the faults of its hosts stay on `devshard_gateway_attempt_failures_total{reason}` instead.
@@ -349,7 +351,7 @@ Route labels are **templated** (`/devshard/{id}/…`), never per-escrow, so card
 
 ### Metric changes
 
-A dashboard or alert outside this repository may query a family this gateway does not emit; each row names the one to query instead.
+A dashboard or alert outside this repository may query a family this gateway does not emit; each row names the one to query instead, or says why none exists. The legacy gateway emits 95 families, and 19 `devshard_accounting_*` more with its stats on; 53 of the 95, and all 19, are not emitted here. The `participant_window_*` and `escalation_decisions_total` rows are this gateway's own former families.
 
 | Not emitted | Query instead |
 | --- | --- |
@@ -361,11 +363,81 @@ A dashboard or alert outside this repository may query a family this gateway doe
 | `devshard_gateway_participant_window_size` | `GET /v1/admin/hosts`, `input_window_tokens` and `output_window_tokens`. A host's admission window is two windows counted in tokens, per model; a gauge for each would add a per-participant, per-model series to every scrape for a number an operator reads when a host is behaving oddly, so the window state lives on the admin view alone. |
 | `devshard_gateway_participant_window_inflight` | `GET /v1/admin/hosts`, `inflight_input_tokens` and `inflight_output_tokens`, for the same reason. `devshard_gateway_participants_exhausted` is the scrape's answer to "how many pairs would refuse an attempt right now". |
 | `devshard_gateway_escalation_decisions_total` | `devshard_gateway_attempts_started_total{role="speculative"}` by `reason`; that family carried the race's start plan, never what triggered an escalation |
+| `devshard_gateway_heightsync_seconds_since_contact` | `GET /v1/debug/heightsync`, `escrows[].contacts[].since_contact` (milliseconds) |
+| `devshard_gateway_heightsync_arming_predicted` | `GET /v1/debug/heightsync`: `contacts[].since_contact` past `idle_timeout` |
+| `devshard_gateway_heightsync_host_height` | `GET /v1/debug/heightsync`, `tips[].height` with `originator`, where `fresh` is true |
+| `devshard_gateway_heightsync_host_height_lag` | `GET /v1/debug/heightsync`: the highest fresh `tips[].height` minus each fresh slot's |
+| `devshard_gateway_heightsync_height_spread` | `GET /v1/debug/heightsync`: highest minus lowest non-zero `tips[].height` |
+| `devshard_gateway_heightsync_host_claim_age_seconds` | `GET /v1/debug/heightsync`, `tips[].age` (milliseconds) |
+| `devshard_gateway_heightsync_host_sync_state` | `GET /v1/debug/heightsync`, `sync_states[].state` |
+| `devshard_gateway_heightsync_cadence_events_total` | `GET /v1/debug/heightsync`, `cadence_counts` |
+| `devshard_gateway_heightsync_seconds_since_turnover` | `GET /v1/debug/heightsync`, `seconds_since_turnover` |
+| `devshard_gateway_heightsync_turns_abandoned_total` | `GET /v1/debug/heightsync`, `abandoned_turns` |
+| `devshard_gateway_heightsync_anchors_last_block` | `GET /v1/debug/heightsync`, `anchors_last_sealed.by_kind` |
+| `devshard_gateway_heightsync_anchors_per_block` | `GET /v1/debug/heightsync`, `anchors_per_block` |
+| `devshard_gateway_heightsync_turnovers_per_block` | `GET /v1/debug/heightsync`, `turnovers_per_block` |
+| `devshard_gateway_heightsync_blocks_without_anchor_total` | `GET /v1/debug/heightsync`, `blocks_without_anchor` |
+| `devshard_gateway_heightsync_peer_seen` | `GET /v1/debug/heightsync`, `peer_seen[].bits`; `DEVSHARD_GATEWAY_HEIGHTSYNC_PEER_MATRIX` is not read |
+| `devshard_gateway_heightsync_peer_seen_count` | `GET /v1/debug/heightsync`, `peer_seen[].count` |
+| `devshard_gateway_heightsync_peer_seen_unseen_total` | `GET /v1/debug/heightsync`: observers whose `peer_seen[].bits` lack the slot |
+| `devshard_gateway_heightsync_exchanges_total` | `GET /v1/debug/heightsync`, `overlap` (`total`, `with_section`, `with_stamp`, `agreed`) |
+| `devshard_gateway_heightsync_gateway_tip` | `GET /v1/debug/heightsync`, `gateway_tip` |
+| `devshard_gateway_rpc_requests_last_minute` | not emitted, non-goal: the gateway does not scrape the hosts' `GET /devshard/stats/rpc`; read it on the host |
+| `devshard_gateway_rpc_banned_last_minute` | not emitted, non-goal: same, a host's own rate-limit counts |
+| `devshard_gateway_rpc_endpoint_requests_last_minute` | not emitted, non-goal: same |
+| `devshard_gateway_rpc_endpoint_banned_last_minute` | not emitted, non-goal: same |
+| `devshard_gateway_rpc_zone_requests_last_minute` | not emitted, non-goal: same |
+| `devshard_gateway_rpc_zone_banned_last_minute` | not emitted, non-goal: same |
+| `devshard_gateway_rpc_attach_attempts_last_minute` | not emitted, non-goal: same |
+| `devshard_gateway_rpc_attach_banned_last_minute` | not emitted, non-goal: same |
+| `devshard_gateway_rpc_reconnects_last_minute` | not emitted, non-goal: same |
+| `devshard_gateway_rpc_stats_up` | not emitted, non-goal: there is no scrape whose health to report |
+| `devshard_gateway_rpc_minute_unix` | not emitted, non-goal: same |
+| `devshard_gateway_rpc_stats_partial` | not emitted, non-goal: same |
+| `devshard_gateway_capacity_scale` | `devshard_gateway_capacity_scale_by_model`: caps are scaled per model, so there is no gateway-wide scale |
+| `devshard_gateway_capacity_total_weight` | `devshard_gateway_capacity_total_weight_by_model`, for the same reason |
+| `devshard_gateway_capacity_baseline_weight` | `devshard_gateway_capacity_baseline_weight_by_model`, for the same reason |
+| `devshard_runtime_reserved_tokens` | not emitted, non-goal: the escrow pick no longer scores by reserved prompt tokens; input tokens in flight are `devshard_gateway_inflight_input_tokens_by_model`, an escrow's load `devshard_runtime_active_requests` |
+| `devshard_gateway_picker_choice_total` | not emitted, non-goal: no per-escrow pick counter; how load spreads across escrows is `devshard_runtime_active_requests{devshard_id,model}` |
+| `devshard_gateway_participant_limit_rejections_total` | a send a host's window or cut-off refuses is `devshard_gateway_ghost_nonces_burned_total{reason=~"participant_window_full_no_send\|participant_cut_off_no_send"}` by `participant`; a request no host could take is `devshard_gateway_requests_total{outcome="failure",reason="no_attempts"}` |
+| `devshard_gateway_participant_quarantine_state` | `devshard_gateway_participant_breaker_state{state!="closed"} == 1` and `devshard_gateway_host_ejected == 1`: a per-host window with a cut-off replaced quarantine |
+| `devshard_gateway_participant_quarantine_transitions_total` | `changes(devshard_gateway_participant_breaker_state{state="open"}[...])`, with the journal lines `host cut off after transport faults` and `host back after its cut-off` |
+| `devshard_speculative_decisions_total` | `devshard_gateway_attempts_started_total{role="primary"}` by `reason`: `primary` started alone, `primary_suspicious` and `primary_degraded` were hedged from the start |
+| `devshard_speculative_attempt_starts_total` | `devshard_gateway_attempts_started_total{role="speculative"}` by `reason` |
+| `devshard_gateway_slot_decisions_total` | `decision="real_send"` is `devshard_gateway_attempts_started_total`; `decision="ghost_no_send"` is `devshard_gateway_ghost_nonces_burned_total`; a warmup probe is the journal line `escrow warmed` |
+| `devshard_gateway_error_miss_rejects_total` | not emitted, non-goal: the legacy gateway never incremented it; a rejected error miss is `devshard_gateway_error_miss_verify_rejects_total{cause,completeness}` |
+| `devshard_gateway_chat_cache_total` | `result="hit"` is `devshard_gateway_cache_hits_total` (no `model`); `stored` and each `skipped_<reason>` are `devshard_gateway_cache_results_total{model,result}`, the refusal named without the `skipped_` prefix |
+| `devshard_gateway_startup_skipped_escrow` | not emitted, non-goal: an escrow whose session will not open is retried every lifecycle tick rather than disabled for the process's life; the journal line `devshard could not be opened, retrying` names it |
+| `devshard_gateway_host_ping_ticks_skipped_total` | `devshard_gateway_host_ping_ticks_total{outcome="skipped"}` |
+| `devshard_gateway_host_ping_participant_info` | not emitted, non-goal: every ping series is already labelled `participant_key` |
+| `devshard_gateway_host_ping_probe_kind` | not emitted, non-goal: the `source` label on `devshard_gateway_host_clock_divergence_seconds` says how a host's time was read |
+| `devshard_accounting_assigned_nonces` | `GET /api/v1/epochs/current/participants` on `DEVSHARD_STATS_PORT`, `assigned_nonces` |
+| `devshard_accounting_disposition` | the same route, `dispositions` and `counters[]` |
+| `devshard_accounting_delivery` | the same route, `counters[]` by `terminal` and `usage` |
+| `devshard_accounting_timeout_outcome` | the same route, `timeout_outcomes` and the timeout fields of `counters[]` |
+| `devshard_accounting_protocol_misses` | the same route, `protocol_misses` |
+| `devshard_accounting_protocol_invalid` | the same route, `protocol_invalid` |
+| `devshard_accounting_unresolved_challenges` | the same route, `unresolved_challenges` |
+| `devshard_accounting_in_flight` | the same route, `in_flight` |
+| `devshard_accounting_in_flight_requests` | the same route, `in_flight_requests`; the scrape's nearest is `devshard_gateway_host_inflight_requests{participant_key}` |
+| `devshard_accounting_timeout_pending` | the same route, `timeout_pending` |
+| `devshard_accounting_pending_classification` | the same route, `pending_classification` |
+| `devshard_accounting_unclassified` | the same route, `unclassified` |
+| `devshard_accounting_overclassified` | the same route, `overclassified` |
+| `devshard_accounting_unknown_reason_total` | the same route, `unknown_reason_total` |
+| `devshard_accounting_cross_check_error` | the same route, `cross_checks` |
+| `devshard_accounting_finding` | the same route, `findings` |
+| `devshard_accounting_disposition_drops` | `devshard_gateway_journal_money_refused_total`, facts the journal refused past its ceiling before they reached the ledger, and `devshard_gateway_nonce_ledger_unknown_escrow_facts_total`, facts the ledger dropped for an escrow it does not hold |
+| `devshard_accounting_writer_errors` | not emitted, non-goal: the ledger serves no Prometheus; a failed save is the log line `nonce accounting save failed` |
+| `devshard_accounting_recording_errors` | not emitted, non-goal: the same; a refused fact is the log line `nonce accounting refused a fact`, except one about an escrow the ledger does not hold, which `devshard_gateway_nonce_ledger_unknown_escrow_facts_total` counts instead |
 
 The gateway emits neither label nor the value below, so a selector that names one matches nothing:
 
 - `devshard_gateway_participant_transport_errors_total` has no `path_kind`: every error it counts is an inference request.
 - `devshard_gateway_user_requests_with_hidden_failure_total` has no `severity`: every hidden failure it counts is on a protected request.
+- `devshard_gateway_host_ping_up`, `devshard_gateway_host_ping_rtt_seconds`, `devshard_gateway_host_ping_last_probe_timestamp_seconds` and `devshard_gateway_host_clock_divergence_seconds` have no `host`: the host is `participant_key`, the participant's key rather than the dial address.
+- `devshard_gateway_attempts_started_total` has no `quarantine_mode`: the per-host window and cut-off replaced quarantine.
+- `devshard_gateway_host_ping_ticks_total` counts skipped waves too: what the legacy family counted is `{outcome="started"}`.
 - `outcome="due"` on `devshard_gateway_timeout_sweep_total`: `applied` plus `failed` is what a tick found, short of it only on a tick that shutdown cut off mid-round.
 
 Participant-labelled race series — `devshard_gateway_attempts_*`, `devshard_gateway_attempt_failures_total`, `devshard_gateway_timeout_actions_total`, `devshard_gateway_stream_carry_overflow_total` and every `devshard_gateway_participant_*` family except the breaker gauge — are deleted once their participant and model go unwritten for `perf_host_staleness_seconds`. A host that returns afterwards starts from fresh counters, which `rate()` reads as a reset.
@@ -385,7 +457,7 @@ How each escrow reaches its hosts is in two series: `devshard_gateway_escrow_ses
 | To see | Call |
 | --- | --- |
 | what is routable, and the config in force | `GET /v1/admin/state` |
-| the effective settings including overrides | `GET /v1/admin/settings` |
+| the stored admin overrides, as a `PUT` would write them back | `GET /v1/admin/settings` |
 | every escrow row the process owns | `GET /v1/admin/devshards` |
 | the full participant keys to paste into either routing list | `GET /v1/admin/hosts` — never a log line's short host label, which is the last eight characters and matches nobody |
 | rotation's last outcome per model | `GET /v1/debug/rotation` |
@@ -455,11 +527,26 @@ A request's `stop_token_ids` are checked against the vocabulary the chain pins f
 | what shuts down when | `app/lifecycle.go`, `shutdownOrder` |
 | a metric or its labels | `metrics/` |
 
+## One process per escrow set
+
+The gateway is one process per set of escrows. It keeps its state in its own SQLite store under `DEVSHARD_STORAGE_DIR` and shares it with no other process: two gateways given the same escrows, through `DEVSHARDS_JSON` or the admin API, would each sequence their nonces and each ledger would see only its own share, which the chain rejects as diverged state. The legacy gateway's Postgres settings (`PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`, `PG_CONNECT_TIMEOUT`) are not read; when any is set the gateway logs `legacy Postgres settings are ignored` at boot, naming them (`env.LegacyPostgresVariablesSet`).
+
+## Moving from the legacy gateway
+
+The gateway reads none of the legacy gateway's state: its own store starts empty ([`rules.md`](./rules.md), "Migrated state"), so whatever the legacy store alone remembers is lost at the switch. That is its open create commitments, its parked and settle-pending escrows, and every escrow it served without a session directory the new gateway can import. An escrow nobody settles is pruned by the chain two epochs after the one that funded it and its amount split across its group, so the operator loses the refund. Cut over in this order:
+
+1. Stop new work on the legacy gateway (its kill switch), and let its in-flight requests finish.
+2. Settle every escrow it holds, or let it drain and settle them, and wait until it reports no open create commitment and no settle-pending escrow.
+3. Copy the session directory of every escrow still worth serving and import each through `POST /v1/admin/devshards/import`, naming the variable that holds its key; an escrow with nothing left to serve is settled in step 2 instead.
+4. Set `model_access` through the settings override before opening the gateway to clients: every model starts admin-only ("Who may call what").
+
+Do not seed or import an escrow the legacy gateway already settled. The settle path drops it without a second broadcast once the chain reports it settled, and an escrow check that finds it settled parks it, but until then it is routed like any other.
+
 ## The two routing lists
 
-`participant_allowlist` narrows **which participants this gateway routes to**. `unthrottled_participants` names participants whose congestion window and ejection it declines to apply, and admits them whether or not the allowlist names them. Both are set through `PUT /v1/admin/settings` and nowhere else: there is no env value and no default behind them.
+`participant_allowlist` narrows **which participants this gateway routes to**. `unthrottled_participants` names participants whose congestion window and ejection it declines to apply, and admits them whether or not the allowlist names them. Both are set through `/v1/admin/settings`, by `PUT` or `POST`, and nowhere else: there is no env value and no default behind them.
 
-**That makes them one admin call away from being cleared.** The settings endpoint replaces the stored overrides document whole, so a call that does not resend a list drops it, and a dropped narrowing fails open: the gateway routes to everybody again without refusing anything. The same is true of a fresh or lost store. So send both lists in every document that touches either, and read them back: the `settings replaced` audit line carries `participant_allowlist` and `unthrottled_participants` as they stand after the call, which is the record of what a PUT actually left in force.
+**That makes them one `PUT` away from being cleared.** A `PUT` replaces the stored overrides document whole, so a `PUT` that does not resend a list drops it, and a dropped narrowing fails open: the gateway routes to everybody again without refusing anything. The same is true of a fresh or lost store. A `POST` leaves a list it does not name in place. Read the lists back either way: the `settings written` audit line carries `participant_allowlist` and `unthrottled_participants` as they stand after the call.
 
 An entry must look like an address. The shape is checked when the settings document is built, so a short host label pasted from a log or a Grafana `host=` tag is refused at the settings call rather than narrowing dispatch to nobody.
 
@@ -469,7 +556,7 @@ Neither list restrains anything but routing. Host pings, catch-up, finalize, the
 
 `POST /v1/admin/devshards/{id}/settle` answers 409 `devshard busy` while requests are still spending the escrow's nonces. By then the escrow has already been parked and taken out of routing, so it is draining: calling again once it has drained settles it.
 
-`POST /v1/admin/devshards/{id}/settle?force=true` does not wait. It crosses the busy check and nothing else — a second concurrent settlement of the same escrow is still refused, and an escrow already settled is still not rebroadcast. **The requests still in flight are failed for their callers, and their full reserved cost is paid to the hosts that held them**, because finalize closes the door on new nonces and the records still live take the settlement default. The forced call is written to the audit log as `escrow settled under force`, with `in_flight` naming how many requests it overrode.
+`POST /v1/admin/devshards/{id}/settle?force=true` does not wait. This route reads `force` from the query alone and takes no body; only the batch route below also reads it from its body. It crosses the busy check and nothing else — a second concurrent settlement of the same escrow is still refused, and an escrow already settled is still not rebroadcast. **The requests still in flight are failed for their callers, and their full reserved cost is paid to the hosts that held them**, because finalize closes the door on new nonces and the records still live take the settlement default. The forced call is written to the audit log as `escrow settled under force`, with `in_flight` naming how many requests it overrode.
 
 A forced settlement runs on an escrow that still has requests, so the one that finishes last would close the escrow's store while finalize is still collecting signatures. Finalizing, building the settlement, inspecting and the admin finalize and signature-collection routes therefore each take a settlement hold, and the draining escrow closes only after they return. The hold is counted apart from requests, so it neither makes the escrow busy nor moves routing (`registry/views.go`, `Registry.HoldSettlement`).
 
