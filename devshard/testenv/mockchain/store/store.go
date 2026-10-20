@@ -49,6 +49,9 @@ type Store struct {
 	// devshardd escrow long-poll warm cache is exercised.
 	escrowQueryFault      bool
 	participantQueryFault bool
+	// participantModes overrides the Participant query per address; a missing
+	// entry means ParticipantModeOK.
+	participantModes map[string]ParticipantMode
 }
 
 // Account holds Cosmos auth sequence state for LCD tx signing (Phase 3c).
@@ -310,6 +313,39 @@ func (s *Store) SetParticipantQueryFault(faulted bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.participantQueryFault = faulted
+}
+
+// ParticipantMode is how the Participant query answers for one address.
+type ParticipantMode string
+
+const (
+	ParticipantModeOK          ParticipantMode = "ok"
+	ParticipantModeUnavailable ParticipantMode = "unavailable" // codes.DeadlineExceeded
+	ParticipantModeAbsent      ParticipantMode = "absent"      // codes.NotFound
+)
+
+// SetParticipantMode sets the Participant query mode for address. ok clears it.
+func (s *Store) SetParticipantMode(address string, mode ParticipantMode) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if mode == ParticipantModeOK {
+		delete(s.participantModes, address)
+		return
+	}
+	if s.participantModes == nil {
+		s.participantModes = make(map[string]ParticipantMode)
+	}
+	s.participantModes[address] = mode
+}
+
+// GetParticipantMode returns the Participant query mode for address.
+func (s *Store) GetParticipantMode(address string) ParticipantMode {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if mode, ok := s.participantModes[address]; ok {
+		return mode
+	}
+	return ParticipantModeOK
 }
 
 // AdvanceBlock increments the latest block height and returns the new value.
