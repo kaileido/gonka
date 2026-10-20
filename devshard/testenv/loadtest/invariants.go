@@ -1631,7 +1631,7 @@ type trendRow struct {
 	Samples         int    `json:"steady_samples"`
 	Restarts        int    `json:"restarts"`
 	AllowedRestarts int    `json:"allowed_restarts"`
-	// SteadyFrom is set when a host started serving late, so its steady samples start later.
+	// SteadyFrom is set when a host started serving late or the process restarted, so its steady samples start later.
 	SteadyFrom        string  `json:"steady_from,omitempty"`
 	EscrowsCreated    int     `json:"escrows_created_between_windows,omitempty"`
 	EarlyGoroutines   float64 `json:"early_goroutines_median"`
@@ -1724,16 +1724,25 @@ func evalNoRestartsOrResourceGrowth(c *invariantContext) ([]AssertionResult, any
 			row.SteadyFrom = steadyFrom.Sub(c.in.Started).Round(time.Second).String()
 		}
 		var steady []MetricsSample
+		chosenFrom := steadyFrom
 		for _, segment := range segments {
+			// A restarted process is cold again: its first SteadyAfter is warm-up, as at the run start.
+			from := steadyFrom
+			if warm := segment[0].At.Add(c.in.Settings.SteadyAfter); warm.After(from) {
+				from = warm
+			}
 			var candidate []MetricsSample
 			for _, s := range segment {
-				if s.Phase == "workload" && !s.At.Before(steadyFrom) {
+				if s.Phase == "workload" && !s.At.Before(from) {
 					candidate = append(candidate, s)
 				}
 			}
 			if len(candidate) > len(steady) {
-				steady = candidate
+				steady, chosenFrom = candidate, from
 			}
+		}
+		if chosenFrom.After(steadyFrom) {
+			row.SteadyFrom = chosenFrom.Sub(c.in.Started).Round(time.Second).String()
 		}
 		row.Samples = len(steady)
 		earlyWindow, lateWindow := c.in.Settings.TrendEarly, c.in.Settings.TrendLate

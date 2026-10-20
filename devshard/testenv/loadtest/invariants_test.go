@@ -696,6 +696,61 @@ func TestInvariantHeapSlopeLeavesOutTheGatewayCache(t *testing.T) {
 }
 
 // Test flow:
+// 1. Restart the gateway at 4 min and let the new process warm its heap up by 50 MiB a minute for 2 min, then stay flat.
+// 2. Require heap_slope to pass, judged from 6 min on, and the gateway row to report that steady start.
+// 3. Keep the new process growing by 5 MiB a minute after its warm-up.
+// 4. Require heap_slope to fail on the gateway live heap.
+func TestInvariantHeapSlopeWaitsOutARestartedProcessWarmUp(t *testing.T) {
+	restarted := func(after func(warm time.Duration) float64) InvariantInputs {
+		in := passingInputs()
+		in.Events[1].StartedAt, in.Events[1].EndedAt = atPtr(4*time.Minute), atPtr(4*time.Minute+5*time.Second)
+		for i := range in.Metrics {
+			s := &in.Metrics[i]
+			offset := s.At.Sub(fixtureT0)
+			if s.Target != "gateway" {
+				continue
+			}
+			if s.Domain == nil {
+				s.Domain = map[string]float64{}
+			}
+			s.Domain["devshard_gateway_cache_bytes{}"] = 0
+			if offset < 4*time.Minute {
+				continue
+			}
+			s.Values["loadtest_process_pid"], s.Values["loadtest_process_start_ticks"] = 2, 2
+			warm := offset - 4*time.Minute
+			s.Values["go_memstats_heap_alloc_bytes"] = float64(50<<20) + min(warm, 2*time.Minute).Minutes()*float64(50<<20)
+			if warm > 2*time.Minute {
+				s.Values["go_memstats_heap_alloc_bytes"] += after(warm - 2*time.Minute)
+			}
+		}
+		return in
+	}
+
+	checks, report := evaluateInvariants(restarted(func(time.Duration) float64 { return 0 }))
+	check := checksNamed(t, checks, "no-restarts-or-resource-growth.heap_slope")[0]
+	require.True(t, check.Passed, "actual=%s details=%s", check.Actual, check.Details)
+	body, err := json.Marshal(report.Tables["no-restarts-or-resource-growth"])
+	require.NoError(t, err)
+	var rows []map[string]any
+	require.NoError(t, json.Unmarshal(body, &rows))
+	var gateway map[string]any
+	for _, row := range rows {
+		if row["target"] == "gateway" {
+			gateway = row
+		}
+	}
+	require.NotNil(t, gateway)
+	require.Equal(t, "6m0s", gateway["steady_from"])
+	require.InDelta(t, 0, gateway["heap_live_slope_bytes_per_min"], 1)
+
+	checks, _ = evaluateInvariants(restarted(func(grown time.Duration) float64 { return grown.Minutes() * float64(5<<20) }))
+	check = checksNamed(t, checks, "no-restarts-or-resource-growth.heap_slope")[0]
+	require.False(t, check.Passed)
+	require.Contains(t, check.Details, "gateway live heap +")
+}
+
+// Test flow:
 // 1. Leave one event unapplied, strip the ML fault's strikes and transitions, and keep the gateway PID through its restart.
 // 2. Require the faults-fired-and-ml-nodes-bound check of that event to fail and to carry no case.
 func TestInvariantFaultFired(t *testing.T) {
