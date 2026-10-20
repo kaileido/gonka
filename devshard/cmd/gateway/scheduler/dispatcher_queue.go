@@ -3,6 +3,7 @@ package scheduler
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 )
 
@@ -30,9 +31,13 @@ type offer struct {
 // drain assigns nonces until the queue empties, a nonce is held, or the burn budget trips. See README, "The drain".
 func (d *dispatcher) drain() (time.Time, bool) {
 	participants := d.session.ParticipantKeys()
-	avail := freeze(d.predicates(d.snapshots.Snapshot()), len(participants))
+	snapshot := d.snapshots.Snapshot()
+	avail := freeze(d.predicates(snapshot), len(participants))
 	acquire := admit(&avail, d.acquireSlot)
-	burnBudget := d.session.GroupSize() * (len(d.waiting) + 1)
+	groupSize := d.session.GroupSize()
+	burnBudget := groupSize * (len(d.waiting) + 1)
+	// Read before Advance: decide runs under the session's lock.
+	escalationBound := escalationNonceBound(snapshot.MaxNonce, groupSize)
 	burnLimit := d.maxConsecutiveBurns()
 
 	var offered offer
@@ -64,6 +69,9 @@ func (d *dispatcher) drain() (time.Time, bool) {
 		}
 		var held bool
 		if offered.taken.escrowHold, held = d.holdEscrow(); !held {
+			offered.taken.escrowHold, held = d.holdForEscalations(binding.Nonce, escalationBound)
+		}
+		if !held {
 			offered.taken.releaseSlot()
 			offered.escrowRetired = true
 			return NonceIntent{}
@@ -82,6 +90,9 @@ func (d *dispatcher) drain() (time.Time, bool) {
 		var spent *SpentNonceError
 		switch {
 		case offered.escrowRetired:
+			if d.failNewRequests(ErrEscrowGone) {
+				continue
+			}
 			d.failWaiting(ErrEscrowGone)
 			return time.Time{}, false
 		case errors.As(err, &spent):
@@ -132,6 +143,32 @@ func (d *dispatcher) drain() (time.Time, bool) {
 		}
 	}
 }
+
+// holdForEscalations holds an escrow its live hold refused for a queue of escalations alone, while the nonce stays below the escalation bound. See routing.md, "Picking an escrow".
+func (d *dispatcher) holdForEscalations(nonce, bound uint64) (func(), bool) {
+	if d.escalationHold == nil || nonce >= bound || slices.ContainsFunc(d.waiting, isNewRequest) {
+		return nil, false
+	}
+	return d.escalationHold()
+}
+
+// failNewRequests answers every waiter but the escalations, and reports whether it answered any and escalations are left.
+func (d *dispatcher) failNewRequests(err error) bool {
+	kept := d.waiting[:0]
+	for _, queued := range d.waiting {
+		if isNewRequest(queued) {
+			queued.deliver(pickResult{err: err})
+			continue
+		}
+		kept = append(kept, queued)
+	}
+	answered := len(kept) < len(d.waiting)
+	clear(d.waiting[len(kept):])
+	d.waiting = kept
+	return answered && len(kept) > 0
+}
+
+func isNewRequest(queued *waiter) bool { return !queued.profile.Escalation }
 
 func (d *dispatcher) spendBurnBudget(budget *int) (tripped bool) {
 	*budget--

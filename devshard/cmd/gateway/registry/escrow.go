@@ -23,11 +23,14 @@ type escrowEntry struct {
 	holds        atomic.Uint64
 	isReserve    atomic.Bool
 	hold         func() (func(), bool)
+	rescueHold   func() (func(), bool)
 	openRecords  openRecordIndex
 
 	settlementHolds atomic.Int64
 	sweepHolds      atomic.Int64
 	closeClaimed    bool
+	// nonceCapped is set under the registry lock as the entry leaves routing for its nonce cap.
+	nonceCapped bool
 }
 
 func newEscrowEntry(escrowID, model string, sessionID uint64, session EscrowSession, now func() time.Time) *escrowEntry {

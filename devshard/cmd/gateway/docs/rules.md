@@ -64,7 +64,7 @@ Status reads → published or draining, without counting
 
 Dispatch is the step between the two: the pick committed the nonce on a published escrow, and a rotation in the moment before the race resolves its target must not strand it, so the target is taken with a request hold on the published or the draining entry (`registry.AcquireCommitted`; `api/dispatch.go`, `Sessions.Target`). The assignment's own hold keeps that entry from closing until then.
 
-Routing must refuse a retired escrow. The nonces it already committed still owe votes, and the draining entry holds the storage those votes settle through. Unifying the two lookups — the obvious tidy-up — either dispatches into an escrow that is going away or strands the votes of one that already did.
+Routing must refuse a retired escrow, to every new request. The one exception is a race's own escalation on an escrow retired for its nonce cap, while that race still holds it and below the escalation bound ([routing.md](./routing.md), "Picking an escrow"): the race's hold keeps the escrow busy, so nothing that waits for its drain has finalized it. The nonces it already committed still owe votes, and the draining entry holds the storage those votes settle through. Unifying the two lookups — the obvious tidy-up — either dispatches into an escrow that is going away or strands the votes of one that already did.
 
 The narrow interfaces make the mistake hard to express: swapping one lookup for the other at the API layer does not compile, because that layer declares only the settlement lookup. The read-only status handle is a third case precisely because it must **not** take a hold — an operator inspecting an escrow must not keep it from retiring.
 

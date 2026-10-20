@@ -135,7 +135,7 @@ func (m *Manager) parkAs(ctx context.Context, escrowID string, narration parkNar
 	}); err != nil {
 		return fmt.Errorf("parking escrow %s for settlement: %w", escrowID, err)
 	}
-	return m.stopRouting(escrowID, narration)
+	return m.stopRouting(ctx, escrowID, narration)
 }
 
 // parkIfServing parks only a serving escrow and reports whether this call parked it. See README.md, "Depletion marks".
@@ -151,11 +151,15 @@ func (m *Manager) parkIfServing(ctx context.Context, escrowID string) (bool, err
 	if !parked {
 		return false, nil
 	}
-	return true, m.stopRouting(escrowID, narratePark)
+	return true, m.stopRouting(ctx, escrowID, narratePark)
 }
 
-func (m *Manager) stopRouting(escrowID string, narration parkNarration) error {
-	if err := m.settlementSource.Retire(escrowID); err != nil {
+func (m *Manager) stopRouting(ctx context.Context, escrowID string, narration parkNarration) error {
+	retire := m.settlementSource.Retire
+	if capped, ok := m.settlementSource.(nonceCapRetirer); ok && atNonceCap(ctx) {
+		retire = capped.RetireAtNonceCap
+	}
+	if err := retire(escrowID); err != nil {
 		return fmt.Errorf("retiring escrow %s from routing: %w", escrowID, err)
 	}
 	if narration == narratePark && m.narrator != nil {

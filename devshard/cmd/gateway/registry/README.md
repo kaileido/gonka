@@ -15,7 +15,7 @@ Which escrows exist right now, what each serves, and who its hosts are.
 ## Boundaries
 
 - **A retired escrow does not disappear.** Its nonces still owe votes, and the session that can post them outlives its routability.
-- **The in-flight hold is taken with the nonce commit and refused once retired**, so an escrow cannot start work it will not be able to settle. The race of a nonce already committed still takes one on a draining escrow, since that work is owed either way.
+- **The in-flight hold is taken with the nonce commit and refused once retired**, so an escrow cannot start work it will not be able to settle. The race of a nonce already committed still takes one on a draining escrow, since that work is owed either way. An escrow retired with `RetireAtNonceCap` also grants its `EscalationHold` to that race's escalations while it is busy and its session active (`views.go`, `escalationHoldFor`); `Retire` grants none.
 
 ## The published set and its readers
 

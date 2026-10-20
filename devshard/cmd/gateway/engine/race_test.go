@@ -2598,6 +2598,36 @@ func TestRunRaceExcludesEveryHostItAlreadyDispatchedTo(t *testing.T) {
 }
 
 // Test flow:
+//  1. Start a race with two hosts: one scripted to fail with a connection reset, one scripted to answer with content.
+//  2. Run the race to completion.
+//  3. Assert only the escalation's pick is marked an escalation, pinned to the escrow the primary was served from.
+func TestOnlyARacesEscalationPickIsMarkedAnEscalation(t *testing.T) {
+	fixture := newRaceFixture(refusalPolicy(), 3)
+	fixture.host(122, 0, "host-0", &hostScript{receipt: true, err: errors.New("connection reset")})
+	fixture.host(123, 1, "host-1", &hostScript{
+		receipt:   true,
+		chunks:    []string{contentChunk(123)},
+		confirmed: true,
+		finished:  true,
+	})
+
+	if _, err := fixture.run(context.Background()); err != nil {
+		t.Fatalf("runRace error = %v", err)
+	}
+	<-fixture.reported
+
+	fixture.picker.mu.Lock()
+	profiles := fixture.picker.profiles
+	fixture.picker.mu.Unlock()
+	if len(profiles) != 2 {
+		t.Fatalf("picks = %d, want the primary and its escalation", len(profiles))
+	}
+	if profiles[0].Escalation || !profiles[1].Escalation || profiles[1].Escrow != "escrow-1" {
+		t.Fatalf("profiles = %+v, want only the second marked an escalation on escrow-1", profiles)
+	}
+}
+
+// Test flow:
 //  1. Start a race whose request is pinned to a specific escrow.
 //  2. Run the race to completion.
 //  3. Assert the first pick asked the scheduler for that pinned escrow.

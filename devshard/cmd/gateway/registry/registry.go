@@ -156,6 +156,7 @@ func (r *Registry) add(ctx context.Context, escrowID, model string, flags entryF
 	entry := newEscrowEntry(escrowID, model, r.sessions.Add(1), session, r.now)
 	entry.isReserve.Store(flags.isReserve)
 	entry.hold = r.holdFor(entry)
+	entry.rescueHold = r.escalationHoldFor(entry)
 	r.live.Store(published.with(entry))
 	r.pushMembershipLocked()
 	if r.publications != nil {
@@ -191,7 +192,16 @@ func (r *Registry) refuseIfDrainingLocked(escrowID string) error {
 
 // Retire stops routing to an escrow; its session is released once the requests already running end.
 func (r *Registry) Retire(escrowID string) error {
-	entry, closing := r.unpublish(escrowID)
+	return r.retire(escrowID, false)
+}
+
+// RetireAtNonceCap is Retire for an escrow at its nonce cap, whose running races may still escalate on it. See routing.md, "Picking an escrow".
+func (r *Registry) RetireAtNonceCap(escrowID string) error {
+	return r.retire(escrowID, true)
+}
+
+func (r *Registry) retire(escrowID string, nonceCapped bool) error {
+	entry, closing := r.unpublish(escrowID, nonceCapped)
 	if !closing {
 		return nil
 	}
@@ -199,7 +209,7 @@ func (r *Registry) Retire(escrowID string) error {
 }
 
 // unpublish takes an escrow out of routing and reports whether the caller owns its close.
-func (r *Registry) unpublish(escrowID string) (*escrowEntry, bool) {
+func (r *Registry) unpublish(escrowID string, nonceCapped bool) (*escrowEntry, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	published := r.live.Load()
@@ -207,6 +217,7 @@ func (r *Registry) unpublish(escrowID string) (*escrowEntry, bool) {
 	if !known {
 		return nil, false
 	}
+	entry.nonceCapped = nonceCapped
 	r.live.Store(published.without(escrowID))
 	if r.membership != nil {
 		r.membership.RemoveEscrow(escrowID)

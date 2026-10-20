@@ -48,6 +48,8 @@ type benchEscrows struct{ byModel map[string][]Escrow }
 
 func (b *benchEscrows) Candidates(model string) []Escrow { return b.byModel[model] }
 
+func (b *benchEscrows) RetiredAtNonceCap(string) (Escrow, bool) { return Escrow{}, false }
+
 type benchWeights struct{ byEscrow map[string]float64 }
 
 func (b *benchWeights) EscrowWeight(escrowID, model string) float64 { return b.byEscrow[escrowID] }

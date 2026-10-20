@@ -57,7 +57,10 @@ func (s *Scheduler) pickEscrow(profile RequestProfile, snapshot chain.PhaseSnaps
 			ceiling := nonceCeilingReason(candidate, snapshot.MaxNonce)
 			if ceiling == ExhaustionNonceCap {
 				s.reportExhausted(candidate.ID, ceiling)
-				return Escrow{}, noCapacity(ceiling)
+				if !escalationFits(profile, candidate, snapshot.MaxNonce) {
+					return Escrow{}, noCapacity(ceiling)
+				}
+				ceiling = ExhaustionNone
 			}
 			if belowBalanceFloor(candidate, request) {
 				return Escrow{}, pinnedEscrowShort()
@@ -66,6 +69,12 @@ func (s *Scheduler) pickEscrow(profile RequestProfile, snapshot chain.PhaseSnaps
 				return Escrow{}, noCapacity(ceiling)
 			}
 			return candidate, nil
+		}
+		if retired, ok := s.retiredForEscalation(profile, snapshot.MaxNonce); ok {
+			if belowBalanceFloor(retired, request) {
+				return Escrow{}, pinnedEscrowShort()
+			}
+			return retired, nil
 		}
 		return Escrow{}, fmt.Errorf("escrow %q for model %q: %w", profile.Escrow, profile.Model, ErrEscrowGone)
 	}
@@ -307,6 +316,33 @@ func nonceCeilingReason(candidate Escrow, maxNonce uint64) ExhaustionReason {
 		return ExhaustionNone
 	}
 	return reason
+}
+
+// escalationNonceBound is the hosts' cap less half the in-flight margin, zero without a max_nonce read from the chain:
+// escalations past the cutoff spend at most that half, and the races in flight keep the other for their timeout and validation diffs.
+func escalationNonceBound(maxNonce uint64, groupSize int) uint64 {
+	if maxNonce == 0 {
+		return 0
+	}
+	hostsCap := types.MaxActiveNonce(uint32(min(maxNonce, math.MaxUint32)), groupSize)
+	return hostsCap - min(nonceInFlightMargin, hostsCap/nonceCeilingPerMaxMargin)/2
+}
+
+// escalationFits lets a race's escalation past the cutoff on the escrow it already holds. See routing.md, "Picking an escrow".
+func escalationFits(profile RequestProfile, candidate Escrow, maxNonce uint64) bool {
+	return profile.Escalation && candidate.Session != nil &&
+		candidate.Session.LatestNonce() < escalationNonceBound(maxNonce, candidate.Session.GroupSize())
+}
+
+func (s *Scheduler) retiredForEscalation(profile RequestProfile, maxNonce uint64) (Escrow, bool) {
+	if !profile.Escalation {
+		return Escrow{}, false
+	}
+	retired, ok := s.escrows.RetiredAtNonceCap(profile.Escrow)
+	if !ok || retired.Model != profile.Model || !escalationFits(profile, retired, maxNonce) {
+		return Escrow{}, false
+	}
+	return retired, true
 }
 
 // exhaustionReason is ExhaustionNone while the escrow may still be picked; a balance never retires an escrow. See routing.md, "Picking an escrow".
