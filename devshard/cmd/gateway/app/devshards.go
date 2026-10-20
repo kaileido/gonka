@@ -84,11 +84,15 @@ func resolveStorageDir(explicit *string) (string, error) {
 
 // publishEscrows brings the registry to what the store calls active, builders at a time. See operations.md, "Boot".
 func (g *gateway) publishEscrows(ctx context.Context) (int, error) {
+	// Taken before the list, so an escrow parked after the list read its row active is not reopened from it.
+	listing := g.escrows.Listing()
+	defer listing.Close()
 	records, err := g.store.ListDevshards(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("listing devshards: %w", err)
 	}
-	return publishEscrows(ctx, records, g.builders, g.addEscrow, g.escrows.Retire, unservableDeactivation(ctx, g.store), g.events.EscrowUnservable, g.events.EscrowUnopened)
+	add := func(ctx context.Context, record store.DevshardRecord) error { return addServing(ctx, listing, record) }
+	return publishEscrows(ctx, records, g.builders, add, g.escrows.Retire, unservableDeactivation(ctx, g.store), g.events.EscrowUnservable, g.events.EscrowUnopened)
 }
 
 type devshardDeactivator interface {
@@ -110,12 +114,13 @@ func unservableDeactivation(ctx context.Context, records devshardDeactivator) fu
 	}
 }
 
-func (g *gateway) addEscrow(ctx context.Context, record store.DevshardRecord) error {
-	return addServing(ctx, g.escrows, record)
+type escrowAdder interface {
+	Add(ctx context.Context, escrowID, model string) error
+	AddReserve(ctx context.Context, escrowID, model string) error
 }
 
 // addServing publishes an active row, a reserve as one, so every path that routes a row reads its role.
-func addServing(ctx context.Context, escrows *registry.Registry, record store.DevshardRecord) error {
+func addServing(ctx context.Context, escrows escrowAdder, record store.DevshardRecord) error {
 	if record.RotationRole == escrow.RoleReserve {
 		return escrows.AddReserve(ctx, record.EscrowID, record.Model)
 	}
@@ -321,6 +326,19 @@ func (w devshardWrites) MarkDevshardGoneFromChain(ctx context.Context, escrowID 
 
 func (w devshardWrites) DeleteDevshard(ctx context.Context, escrowID string) error {
 	return w.report(w.Store.DeleteDevshard(ctx, escrowID))
+}
+
+// ParkForSettlement reports the park, so a pass that listed the row active before it is followed by one that does not.
+func (w devshardWrites) ParkForSettlement(ctx context.Context, escrowID string) error {
+	return w.report(w.Store.ParkForSettlement(ctx, escrowID))
+}
+
+func (w devshardWrites) ParkForSettlementIfActive(ctx context.Context, escrowID string) (bool, error) {
+	parked, err := w.Store.ParkForSettlementIfActive(ctx, escrowID)
+	if parked {
+		w.changed()
+	}
+	return parked, err
 }
 
 func (w devshardWrites) report(err error) error {
