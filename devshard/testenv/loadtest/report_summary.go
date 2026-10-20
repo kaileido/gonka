@@ -29,6 +29,7 @@ type RunSummary struct {
 	Processes       map[string]ProcessSummary `json:"processes"`
 	FailedChecks    []string                  `json:"failed_checks"`
 	NotApplicable   []string                  `json:"not_applicable_checks"`
+	Spend           RunSummarySpend           `json:"spend"`
 }
 
 // RunSummaryRequests counts the client side of a run.
@@ -97,6 +98,8 @@ func writeRunSummary(outputDir string, run runReport) (RunSummary, error) {
 			}
 		}
 	}
+	ledger, inferences, ledgerErr := spendSources(run.inputs)
+	summary.Spend = buildSpend(ledger, inferences, ledgerErr, run.summary.Completed)
 	var metrics MetricsSummary
 	if err := readReportArtifact(outputDir, "metrics-summary.json", false, &metrics); err != nil {
 		return summary, err

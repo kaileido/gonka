@@ -401,6 +401,13 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		end := invariants.collectEndState(ctx, rotationModels, filepath.Join(opts.OutputDir, "compose-pre-drain.log"))
 		inputs.Invariants = &end
 	}
+	if inputs.Invariants == nil {
+		ledger := chainLedger{}
+		if ledger.SettleTxs, ledger.Escrows, err = fetchChainLedger(ctx, fmt.Sprintf("http://127.0.0.1:%d", cfg.MockChain.TestenvPort)); err != nil {
+			ledger.Error = err.Error()
+		}
+		inputs.ChainLedger = &ledger
+	}
 	if err := writeRunInputs(opts.OutputDir, inputs); err != nil {
 		return result, fmt.Errorf("write %s: %w", runInputsFile, err)
 	}

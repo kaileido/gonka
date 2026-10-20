@@ -38,6 +38,8 @@ type RunInputs struct {
 	Accounting         *AccountingReport  `json:"accounting"`
 	AccountingError    string             `json:"accounting_error,omitempty"`
 	Invariants         *invariantEndState `json:"invariants"`
+	// ChainLedger is the run-summary spend source when Invariants did not read the chain.
+	ChainLedger *chainLedger `json:"chain_ledger,omitempty"`
 }
 
 // invariantEndState is what the invariants read once after drain, from the stack and the logs.
