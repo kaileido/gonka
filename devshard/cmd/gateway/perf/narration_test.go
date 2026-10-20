@@ -81,6 +81,27 @@ func TestReturnToRoutingIsNarrated(t *testing.T) {
 }
 
 // Test flow:
+//  1. Build a tracker and eject participant-a/model-a via consecutive failures, then attach a recording narrator.
+//  2. Advance the clock past the ejection window and record one failure, which finds the ejection lapsed and trips it again.
+//  3. Assert the renewal was narrated as a withholding at ejection count 2 for the second rung's 60 seconds, and no return was narrated.
+func TestAnEjectionRenewedByTheSampleThatFindsItLapsedIsNarrated(t *testing.T) {
+	perf := noCap(testPerf())
+	instant := testEpoch
+	tracker := newTestTracker(perf, func() time.Time { return instant })
+	failAllConsecutive(tracker, "participant-a", "model-a", perf.ConsecutiveFailThreshold)
+	narrator := &recordingHostNarrator{}
+	tracker.SetNarrator(narrator)
+
+	instant = instant.Add(time.Duration(perf.EjectionBaseSeconds)*time.Second + time.Second)
+	tracker.RecordSample(Sample{ParticipantKey: "participant-a", Model: "model-a", Responsive: false})
+
+	require.Len(t, narrator.withheld, 1)
+	require.Equal(t, 2, narrator.withheld[0].EjectionCount)
+	require.Equal(t, 60*time.Second, narrator.withheld[0].WithheldFor)
+	require.Empty(t, narrator.returned)
+}
+
+// Test flow:
 //  1. Build a tracker with a recording narrator attached.
 //  2. Drive participant-a/model-a to one failure short of the ejection threshold.
 //  3. Assert nothing was narrated as withheld.
