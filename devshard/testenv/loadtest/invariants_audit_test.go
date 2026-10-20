@@ -232,3 +232,33 @@ func TestInvariantFinalNonceTable(t *testing.T) {
 	require.Equal(t, uint64(40), finals["10"])
 	require.Equal(t, uint64(590), finals["11"], "the highest of resident, settled and observed nonces")
 }
+
+// Test flow:
+// 1. Run the whole-run budget marker on p2, which expects sender_rate quarantines, and let the gateway quarantine p2 for http at 1 min, outside any other fault, and again at 3m40s inside p2's empty-stream fault.
+// 2. Require the empty-stream fault's reason check to pass, since the marker alone produced http before, and the marker's reason check to name both http transitions.
+func TestInvariantQuarantineReasonFollowsTheBackgroundWindowThatProducesIt(t *testing.T) {
+	in := budgetInputs()
+	key := transitionKey("p2", "shadow", "http_throttle_quarantine")
+	for i := range in.Metrics {
+		s := &in.Metrics[i]
+		if s.Target != "gateway" || s.Domain == nil {
+			continue
+		}
+		offset := s.At.Sub(fixtureT0)
+		s.Domain[key] = 0
+		if offset >= time.Minute {
+			s.Domain[key] = 1
+		}
+		if offset >= 3*time.Minute+40*time.Second {
+			s.Domain[key] = 2
+		}
+	}
+
+	checks, _ := evaluateInvariants(in)
+
+	fault := checksNamed(t, checks, "quarantines-match-faults.e1.reason")[0]
+	require.True(t, fault.Passed, "actual=%s details=%s", fault.Actual, fault.Details)
+	marker := checksNamed(t, checks, "quarantines-match-faults.bg.reason")[0]
+	require.False(t, marker.Passed)
+	require.Equal(t, "mismatched=2", marker.Actual)
+}

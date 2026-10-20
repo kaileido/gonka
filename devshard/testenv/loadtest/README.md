@@ -252,7 +252,7 @@ no grace, so its grace is the default 4m10s (5 s + 90 s + 2m5s + 30 s).
 P4's budget is set at boot, so `host-over-peer-chat-budget` is a
 `background: true` marker over the whole workload. A background window may
 overlap other events on its host; misses and quarantines inside those events'
-windows count for them, not for the marker. It is left out of the
+windows count for them, not for the marker, except a quarantine transition whose reason family the marker produced on its own, outside every foreground window of that host: that transition counts for the marker, since the marker's long tail of `http_throttle_quarantine` transitions would otherwise land in whichever fault window it reaches by timing. It is left out of the
 per-event and quiet split of `error-rate-and-latency`, out of
 `recovery-after-fault` and out of the catch-up exclusion of
 `honest-hosts-agree-on-state`. `observe: host_rate_limited` makes

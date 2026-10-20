@@ -1244,9 +1244,26 @@ func evalQuarantinesMatchFaults(c *invariantContext) ([]AssertionResult, any) {
 	var honestSpans, unattributedSpans []timeSpan
 	eventBad := map[string][]string{}
 	eventBadSpans := map[string][]timeSpan{}
+	// A background window produces the reason families it shows outside every foreground window;
+	// a transition of such a family is its, even inside a foreground fault of the same participant.
+	windowsAt := make([][]faultWindow, len(transitions))
+	foregroundAt := make([]bool, len(transitions))
+	produced := map[string]map[string]bool{}
+	for i, t := range transitions {
+		windowsAt[i] = c.faultyDuring(t.Participant, t.At.Add(-hostStatsPollEvery), t.At)
+		foregroundAt[i] = c.inForegroundWindow(t.Participant, t.At.Add(-hostStatsPollEvery), t.At)
+		for _, w := range windowsAt[i] {
+			if w.Background && !foregroundAt[i] {
+				if produced[w.Event.ID] == nil {
+					produced[w.Event.ID] = map[string]bool{}
+				}
+				produced[w.Event.ID][quarantineReasonFamily(t.Reason)] = true
+			}
+		}
+	}
 	for i := range transitions {
 		t := &transitions[i]
-		windows := c.faultyDuring(t.Participant, t.At.Add(-hostStatsPollEvery), t.At)
+		windows := windowsAt[i]
 		if c.honest[t.Participant] {
 			honestHits = append(honestHits, fmt.Sprintf("%s %s/%s at %s", t.Participant, t.Mode, t.Reason, t.At.Format(time.RFC3339)))
 			honestSpans = append(honestSpans, timeSpan{From: t.At, To: t.At})
@@ -1258,13 +1275,18 @@ func evalQuarantinesMatchFaults(c *invariantContext) ([]AssertionResult, any) {
 			continue
 		}
 		t.Event = windows[0].Event.ID
-		foreground := c.inForegroundWindow(t.Participant, t.At.Add(-hostStatsPollEvery), t.At)
+		family := quarantineReasonFamily(t.Reason)
+		background := false
 		for _, w := range windows {
-			if w.Background && foreground {
+			if w.Background && produced[w.Event.ID][family] {
+				background, t.Event = true, w.Event.ID
+			}
+		}
+		for _, w := range windows {
+			if (w.Background && foregroundAt[i] && !background) || (!w.Background && background) {
 				continue
 			}
 			allowed, forbidden, specified := expectedQuarantine(w.Event)
-			family := quarantineReasonFamily(t.Reason)
 			if specified && (forbidden[family] || (allowed != nil && !allowed[family])) {
 				eventBad[w.Event.ID] = append(eventBad[w.Event.ID], fmt.Sprintf("%s/%s", t.Mode, t.Reason))
 				eventBadSpans[w.Event.ID] = append(eventBadSpans[w.Event.ID], timeSpan{From: t.At, To: t.At})
