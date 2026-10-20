@@ -99,15 +99,15 @@ func TestAnEscrowIsRetiredToReopenOnlyWhenItsModelStaysServed(t *testing.T) {
 }
 
 // Test flow:
-//  1. Mark host h1 absent on two busy escrows of one model that a third escrow also serves.
+//  1. Mark host h1 absent on two busy escrows of one model and host h2, still unlisted, on the third that serves it.
 //  2. List h1 and run one probe, then a second while the retired escrow still drains.
-//  3. Assert the first probe retired one of the two and the second retired none, so the model loses one escrow at a time.
-func TestABusyEscrowIsRetiredToReopenOneAtATimePerModel(t *testing.T) {
-	hosts := &chainListing{asked: map[string]int{}}
-	marks := absentMarks{"first": {"h1"}, "second": {"h1"}}
+//  3. Assert the first probe retired one of the two and the second retired none, so a model served only by marked escrows loses one at a time.
+func TestABusyEscrowWithOnlyMarkedSiblingsIsRetiredToReopenOneAtATime(t *testing.T) {
+	hosts := &chainListing{unlisted: map[string]bool{"h2": true}, asked: map[string]int{}}
+	marks := absentMarks{"first": {"h1"}, "second": {"h1"}, "sibling": {"h2"}}
 	escrows := &drainingEscrows{
 		live:    map[string]string{"first": "m1", "second": "m1", "sibling": "m1"},
-		busy:    map[string]bool{"first": true, "second": true},
+		busy:    map[string]bool{"first": true, "second": true, "sibling": true},
 		retired: map[string]string{},
 	}
 
@@ -117,5 +117,31 @@ func TestABusyEscrowIsRetiredToReopenOneAtATimePerModel(t *testing.T) {
 
 	if afterFirst != 1 || len(escrows.retired) != 1 {
 		t.Fatalf("retired after each probe = %d, %d; want 1, 1", afterFirst, len(escrows.retired))
+	}
+}
+
+// Test flow:
+//  1. Mark host h1 absent on three busy escrows of one model that an unmarked escrow also serves, while a fifth escrow of the model drains after rotation.
+//  2. List h1 and run one probe.
+//  3. Assert the probe retired all three marked escrows and forgot their marks, and the unmarked escrow still routes.
+func TestEveryMarkedEscrowIsRetiredToReopenAtOnceWhileAnUnmarkedOneServesItsModel(t *testing.T) {
+	hosts := &chainListing{asked: map[string]int{}}
+	marks := absentMarks{"first": {"h1"}, "second": {"h1"}, "third": {"h1"}}
+	escrows := &drainingEscrows{
+		live:    map[string]string{"first": "m1", "second": "m1", "third": "m1", "clean": "m1"},
+		busy:    map[string]bool{"first": true, "second": true, "third": true, "clean": true, "rotated": true},
+		retired: map[string]string{"rotated": "m1"},
+	}
+
+	retired := retireListedAbsentHosts(hosts, marks, escrows)
+
+	if want := []string{"first", "rotated", "second", "third"}; !retired || !slices.Equal(slices.Sorted(maps.Keys(escrows.retired)), want) {
+		t.Fatalf("retired %v (reported %v), want %v", slices.Sorted(maps.Keys(escrows.retired)), retired, want)
+	}
+	if len(marks) != 0 {
+		t.Fatalf("marks left = %v, want none", marks)
+	}
+	if _, routes := escrows.Routable("clean"); !routes {
+		t.Fatal("the unmarked escrow no longer routes")
 	}
 }

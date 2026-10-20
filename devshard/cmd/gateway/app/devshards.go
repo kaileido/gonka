@@ -206,13 +206,14 @@ func retireListedAbsentHosts(hosts HostDirectory, marks absentHostMarks, escrows
 		return known
 	}
 	retired := false
-	for escrowID, participants := range marks.AbsentHosts() {
+	marked := marks.AbsentHosts()
+	for escrowID, participants := range marked {
 		candidate, live := escrows.Routable(escrowID)
 		if !live {
 			marks.ForgetAbsentHosts(escrowID)
 			continue
 		}
-		if !slices.ContainsFunc(participants, isListed) || !modelServedThroughDrain(escrows, candidate) {
+		if !slices.ContainsFunc(participants, isListed) || !modelServedThroughDrain(escrows, marked, candidate) {
 			continue
 		}
 		logging.Info("reopening escrow: a participant absent at its open is listed again", logkey.Escrow, escrowID)
@@ -231,9 +232,13 @@ const unopenedEscrowRetryDelay = escrow.TickInterval
 // absentHostProbeInterval bounds the chain lookups for dead slots to one per marked participant per lifecycle tick.
 const absentHostProbeInterval = escrow.TickInterval
 
-// modelServedThroughDrain reports whether retiring the escrow leaves its model served: it closes at once, or another of the model's escrows routes while none is out of routing.
-func modelServedThroughDrain(escrows liveEscrows, candidate scheduler.Escrow) bool {
+// modelServedThroughDrain reports whether retiring the escrow leaves its model served: it closes at once, another of the model's escrows with no absent mark routes, or another routes while none is out of routing.
+func modelServedThroughDrain(escrows liveEscrows, marked map[string][]string, candidate scheduler.Escrow) bool {
 	if !escrows.IsBusy(candidate.ID) {
+		return true
+	}
+	others := slices.DeleteFunc(escrows.Candidates(candidate.Model), func(other scheduler.Escrow) bool { return other.ID == candidate.ID })
+	if slices.ContainsFunc(others, func(other scheduler.Escrow) bool { return len(marked[other.ID]) == 0 }) {
 		return true
 	}
 	for _, state := range escrows.Snapshot() {
@@ -241,7 +246,7 @@ func modelServedThroughDrain(escrows liveEscrows, candidate scheduler.Escrow) bo
 			return false
 		}
 	}
-	return slices.ContainsFunc(escrows.Candidates(candidate.Model), func(other scheduler.Escrow) bool { return other.ID != candidate.ID })
+	return len(others) > 0
 }
 
 // republishEscrows republishes on every devshard write, on a timer while an active escrow is left unopened, and once reopen retires an escrow to reopen it. See operations.md, "Boot".
