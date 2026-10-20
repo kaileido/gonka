@@ -12,6 +12,8 @@ Every structural choice below follows from one of those.
 
 ## Layers
 
+An arrow points from a package to one it imports.
+
 ```mermaid
 graph TD
     subgraph boundary["boundary"]
@@ -60,8 +62,8 @@ graph TD
     NON --> ENG
     NON --> CHN
     WRM --> REG
-    ENV --> CFG
-    CFG --> API
+    CFG --> ENV
+    API --> CFG
     MET --> LIM
 ```
 
@@ -86,7 +88,7 @@ sequenceDiagram
     A->>A: admission slot + token budget
     A->>E: race this request
     E->>S: pick an escrow, host and nonce
-    S-->>E: assignment (nonce committed on chain)
+    S-->>E: assignment (nonce committed in the escrow's local diff)
     E->>H: dispatch attempt 1
     Note over E: deadline elapses without a first token
     E->>S: pick again
@@ -97,8 +99,8 @@ sequenceDiagram
     A->>F: fold and strip as chunks arrive
     A-->>C: the answer
     Note over E,N: the race is not over
-    E->>H: settle every losing nonce (timeout vote)
     E->>N: one outcome, recorded
+    E->>H: vote on every nonce left unfinished, once due
 ```
 
 Two things in that diagram are the whole design:
@@ -117,13 +119,18 @@ graph LR
     P --> BURN["burned:<br/>nobody could serve it"]
     P --> STR["stranded:<br/>the race could not use it"]
     SRV --> FIN["finished on chain"]
-    LOST --> VOTE["timeout vote"]
+    LOST --> FIN
+    SRV --> OPEN["left unfinished<br/>by the race"]
+    LOST --> OPEN
+    STR --> OPEN
+    OPEN --> VOTE["timeout vote or<br/>error-miss claim"]
+    OPEN --> SKIP["vote skipped:<br/>phase aborted or a long response"]
+    VOTE --> APP["applied"]
+    VOTE --> FAIL["failed: retried or swept,<br/>otherwise settlement decides"]
     BURN --> REF["paid at settlement:<br/>a ghost stays pending and<br/>the drain credits its floor reserve"]
-    STR --> VOTE
-    VOTE --> APP["timeout applied"]
 ```
 
-A nonce that reaches none of the bottom row is money the escrow paid for silence. That is the failure mode the whole accounting layer exists to make visible.
+Losing the race is not a failure: a loser whose host finished its nonce owes no vote, and the race posts only for the nonces it left unfinished, after its outcome is recorded (`engine/engine.go`, `Engine.record`; `engine/settle.go`, `RaceOutcome.TimeoutPlan`). A posted vote is not a timeout applied either, so the ledger records each vote as completed, skipped or failed (`engine/settle.go`, `TimeoutOutcome`). A nonce the ledger cannot place on this graph is money the escrow paid for silence. That is the failure mode the whole accounting layer exists to make visible.
 
 ## Where the money is
 

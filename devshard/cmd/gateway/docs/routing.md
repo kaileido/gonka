@@ -16,7 +16,7 @@ This document covers `scheduler/` (which escrow, which participant, which nonce)
 
 `Pick` is called once per request and once per escalation attempt inside a race. An escalation passes the escrow it is already pinned to; only a fresh request goes through escrow selection (`request_pick.go`, `Scheduler.Pick`).
 
-**A pin skips the score, not the gates** (`escrow_pick.go`, the pin branch of `pickEscrow`). A request that names an escrow — an escalation, or a client calling `/devshard/{id}/v1/chat/completions` — is matched against the candidate list by id and returned without a weight lookup, a load score or a tie-break, and without the allowlist reachability walk that filters the unpinned candidate set. It is still checked against the nonce ceiling below, and a pinned escrow at the chain's nonce cap still fires the exhaustion callback that schedules a replacement, exactly as an unpinned one does. That is deliberate: a pinned escrow id is untrusted client input on `/devshard/{id}/v1/chat/completions`, and the nonce ceiling is what reserves room for the finalize and settlement, so skipping it here would be the one route by which a client could push an escrow past the point the chain will settle it. The retirement floor is not checked on a pin; only this attempt's price is, and a pin is never reported for its balance: a hedge or retry runs on the escrow its race already holds, so the only question is whether the escrow's balance, already net of every attempt the race started, pays this one. One it cannot pay is declined with `ErrPinnedEscrowShort`, which still reads as `ErrNoEscrowCapacity` and `ErrInsufficientBalance` and marks nothing; the race treats it as a hedge not sent (see [race.md](./race.md), "Escalation"). The same holds for a client pin on `/devshard/{id}`: the escrow is served while it can pay this attempt, even below its retirement floor, and routing and the tick still retire it. A pin that names an escrow the gateway no longer routes to is refused with `ErrEscrowGone`.
+**A pin skips the score, not the gates** (`escrow_pick.go`, the pin branch of `pickEscrow`). A request that names an escrow — an escalation, or a client calling `/devshard/{id}/v1/chat/completions` — is matched against the candidate list by id and returned without a weight lookup, a load score or a tie-break, and without the allowlist reachability walk that filters the unpinned candidate set. It is still checked against the nonce ceiling below, and a pinned escrow at the chain's nonce cap still fires the exhaustion callback that schedules a replacement, exactly as an unpinned one does. That is deliberate: a pinned escrow id is untrusted client input on `/devshard/{id}/v1/chat/completions`, and the nonce ceiling is what reserves room for the finalize and settlement, so skipping it here would be the one route by which a client could push an escrow past the point the chain will settle it. The retirement floor is not checked on a pin; only this attempt's price is, and a pin is never reported for its balance: a hedge or retry runs on the escrow its race already holds, so the only question is whether the escrow's balance, already net of every attempt the race started, pays this one. One it cannot pay is declined with `ErrPinnedEscrowShort`, which still reads as `ErrNoEscrowCapacity` and `ErrInsufficientBalance` and marks nothing; the race treats it as a hedge not sent (see [race.md](./race.md), "Escalation"). The same holds for a client pin on `/devshard/{id}`: the escrow is served while it can pay this attempt, even below its retirement floor, and a pin does not keep it from retirement: a balance never retires an escrow, and the funding planner retires a starved one by its own rules whether a client pins it or not ([escrows.md](./escrows.md), "The funding planner"). A pin that names an escrow the gateway no longer routes to is refused with `ErrEscrowGone`.
 
 Selection (`escrow_pick.go`, `pickEscrow`) runs over `registry.Candidates(model)`, which is already filtered to escrows whose session phase accepts new inferences, and against a single chain snapshot taken once for the call.
 
@@ -135,18 +135,27 @@ flowchart TD
     E -->|yes| Z[return]
     E -->|no| F[session.Advance: peek the next nonce's host]
     F --> G[match binding, queue, availability]
-    G -->|serve| H[acquire participant slot<br/>then take escrow hold]
-    G -->|burn| I[commit a ghost nonce, record the reason]
+    G -->|serve| H{acquire participant slot}
+    H -->|acquired| HS{take escrow hold}
+    H -->|refused: becomes a burn| HB{take escrow hold}
+    G -->|burn| HB
+    HS -->|taken| K[commit the nonce, hand the assignment to the waiter]
+    HB -->|taken| I[commit a ghost nonce, record the reason]
+    HS -->|refused: escrow retired| X[give back any slot taken,<br/>fail the queue with ErrEscrowGone]
+    HB -->|refused: escrow retired| X
+    X --> Z
     G -->|hold| J[decline the nonce, re-arm the timer]
     G -->|decline| M[give the nonce back,<br/>drop the abandoned waiters]
     M --> Z
-    H --> K[commit the nonce, hand the assignment to the waiter]
     I --> L{budget spent?}
-    L -->|yes| Z
+    L -->|yes| N[fail the remaining waiters<br/>with ErrNoAvailableHost]
+    N --> Z
     L -->|no| D
     K --> D
     J --> Z
 ```
+
+A commit that fails is not on the diagram. One that spent the nonce anyway burns it as `ghostPrepareFailed`, fails only the waiter it was for and spends the budget like any burn (`dispatcher.burnSpentNonce`, "Ghost burns"); any other failure gives back the slot and the hold and fails the queue (`dispatcher.go`, `dispatcher.failAdvance`).
 
 **Predicates are frozen for the whole drain.** The whole ladder — allowlist, `pocRequired`, `congested`, `ejected`, `stateBlocked` — is memoised per participant as the one reason it produced, and every later ask in that drain reads the memo (`match.go`, `availability.participantBlocked`; `dispatcher.go`, `freeze`). This is not a caching optimisation. Reading them live lets a host look usable to the sweep that keeps a waiter and unusable to the binding that would serve it, one iteration later — which burns a nonce every turn, forever. The memo key is the participant alone, so a predicate that reads a field of the request profile must carry that field in its key. The underlying predicates themselves stay live, so a host blocked while the drain runs is blocked for every participant the drain has not asked yet; only a participant already asked keeps the answer it was given.
 
