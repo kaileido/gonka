@@ -29,6 +29,8 @@ The state is not a column; it is the combination of four:
 | row deleted | — | — | settled and confirmed; the escrow is finished |
 | false | false | `""` | deactivated by hand, or gone from chain (`gone_from_chain` set) |
 
+A deleted row leaves nothing for `escrows_json` to recognise, so the boot seed writes a settled escrow back as serving; publication reads the chain, refuses to open an escrow it reports settled and deletes the row again ([`operations.md`](./operations.md), "Boot", steps 4 and 5).
+
 *Starved*, *full* and *idle* are not states of a row: `liquidity.Classify` computes them from the escrow's money each tick and nothing stores them (see [`liquidity/README.md`](../liquidity/README.md), "Flags"). A starved escrow stays serving and routing spends it first on requests it can afford; only a nonce cap, a planned retire or the settlement deadline takes a row out of service.
 
 `rotation_role` (`regular` / `temp`) and `rotation_epoch` say which set the escrow belongs to — a regular is labelled with the latest epoch, a temp with the epoch it bridges into, the effective epoch plus one; `route_prefix` is the URL path this escrow's hosts serve on, falling back to the gateway's own prefix when empty.

@@ -94,13 +94,17 @@ func (g *gateway) publishEscrows(ctx context.Context) (int, error) {
 type devshardDeactivator interface {
 	MarkDevshardGoneFromChain(ctx context.Context, escrowID string) error
 	SetDevshardActive(ctx context.Context, escrowID string, active bool) error
+	DeleteDevshard(ctx context.Context, escrowID string) error
 }
 
-// unservableDeactivation marks a row the chain lacks gone from chain, so it leaves the unsettled count; any other unservable row is only deactivated.
+// unservableDeactivation marks a row the chain lacks gone from chain and drops one it holds settled, as settlement would, so neither stays in the unsettled count; any other unservable row is only deactivated.
 func unservableDeactivation(ctx context.Context, records devshardDeactivator) func(escrowID string, cause error) error {
 	return func(escrowID string, cause error) error {
-		if errors.Is(cause, bridge.ErrEscrowNotFound) {
+		switch {
+		case errors.Is(cause, bridge.ErrEscrowNotFound):
 			return records.MarkDevshardGoneFromChain(ctx, escrowID)
+		case errors.Is(cause, bridge.ErrEscrowSettled):
+			return records.DeleteDevshard(ctx, escrowID)
 		}
 		return records.SetDevshardActive(ctx, escrowID, false)
 	}
@@ -158,7 +162,7 @@ func publishEscrows(
 		escrowID := active[index].EscrowID
 		switch {
 		case err == nil:
-		case errors.Is(err, bridge.ErrEscrowNotFound), errors.Is(err, env.ErrPrivateKeyMissing):
+		case errors.Is(err, bridge.ErrEscrowNotFound), errors.Is(err, bridge.ErrEscrowSettled), errors.Is(err, env.ErrPrivateKeyMissing):
 			unservable(escrowID, err)
 			if deactivateErr := deactivate(escrowID, err); deactivateErr != nil {
 				problems = append(problems, fmt.Errorf("deactivating escrow %s: %w", escrowID, deactivateErr))
@@ -490,12 +494,21 @@ func servingSessions(records devshardLookup, storageDir string, escrowBridge bri
 		if err != nil {
 			return nil, err
 		}
+		// A boot seed writes back the row settlement dropped, so the chain decides. See ../docs/operations.md, "Boot".
+		onChain, err := escrowBridge.GetEscrow(escrowID)
+		switch {
+		case err != nil:
+			return nil, fmt.Errorf("get escrow: %w", err)
+		case onChain.Settled:
+			return nil, fmt.Errorf("escrow %s: %w", escrowID, bridge.ErrEscrowSettled)
+		}
 		sessionTimeouts := env.LoadE2E().SessionTimeouts
 		session, machine, err := user.NewHTTPSession(user.HTTPSessionConfig{
 			OpenAbsentHostsAsDeadSlots: true,
 			PrivateKeyHex:              keyHex,
 			EscrowID:                   escrowID,
 			Bridge:                     escrowBridge,
+			Escrow:                     onChain,
 			StoragePath:                storagePath,
 			RoutePrefix:                escrowRoutePrefix(record, routePrefix),
 			RefusalTimeoutSeconds:      sessionTimeouts.RefusalTimeoutSeconds,

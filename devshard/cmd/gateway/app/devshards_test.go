@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"devshard/bridge"
 	"devshard/cmd/gateway/chain"
+	"devshard/cmd/gateway/config"
 	"devshard/cmd/gateway/env"
 	"devshard/cmd/gateway/store"
 	"devshard/transport"
@@ -97,6 +99,11 @@ func (recorder *deactivationRecorder) SetDevshardActive(_ context.Context, escro
 	return nil
 }
 
+func (recorder *deactivationRecorder) DeleteDevshard(_ context.Context, escrowID string) error {
+	recorder.calls = append(recorder.calls, "delete "+escrowID)
+	return nil
+}
+
 // Test flow:
 //  1. Deactivate one row boot found absent on chain and one whose key the environment lacks.
 //  2. Assert the first is marked gone from chain and the second only deactivated.
@@ -169,5 +176,64 @@ func TestPeerRPCClientConfigCarriesTheChatCompressionThreshold(t *testing.T) {
 	}
 	if courier.ChatCompressMinBytes != chatCompressMinBytes || courier.QueryTimeout != time.Second || courier.RPCAdoption != adoption {
 		t.Fatalf("courier config = %+v, want its own fields, the tracker and the threshold %d", courier, chatCompressMinBytes)
+	}
+}
+
+type settledChain struct {
+	bridge.MainnetBridge
+	escrow bridge.EscrowInfo
+}
+
+func (chain settledChain) GetEscrow(string) (*bridge.EscrowInfo, error) {
+	escrow := chain.escrow
+	return &escrow, nil
+}
+
+func (settledChain) GetHostInfo(address string) (*bridge.HostInfo, error) {
+	return nil, fmt.Errorf("%s: %w", address, bridge.ErrParticipantNotFound)
+}
+
+// Test flow:
+//  1. Store an active row for an escrow the chain reports settled, as a boot seed writes it again after settlement dropped the row.
+//  2. Open a serving session for it.
+//  3. Assert the open is refused with bridge.ErrEscrowSettled and no session is returned.
+func TestAServingSessionRefusesAnEscrowTheChainSettled(t *testing.T) {
+	t.Setenv("SETTLED_ESCROW_KEY", strings.Repeat("11", 32))
+	rows := rowLister{{EscrowID: "1", PrivateKeyEnv: "SETTLED_ESCROW_KEY", Model: "model-a", Active: true}}
+	chain := settledChain{escrow: bridge.EscrowInfo{EscrowID: "1", Slots: []string{"host-a", "host-b", "host-c"}, Amount: 5_000_000_000, TokenPrice: 1, Settled: true}}
+	open := servingSessions(rows, t.TempDir(), chain, config.HeightSync{}, nil, nil, "/devshard/v2", nil, nil)
+
+	session, err := open(context.Background(), "1")
+
+	if session != nil {
+		_ = session.Close()
+	}
+	if session != nil || !errors.Is(err, bridge.ErrEscrowSettled) {
+		t.Fatalf("open(settled escrow) = %v, %v, want no session and bridge.ErrEscrowSettled", session, err)
+	}
+}
+
+// Test flow:
+//  1. Publish an active row whose session open is refused because the chain settled the escrow.
+//  2. Assert it is reported unservable rather than left unopened for a retry.
+//  3. Assert its row is dropped, as settlement drops the row of an escrow it settled.
+func TestABootDropsTheRowOfAnEscrowTheChainSettled(t *testing.T) {
+	recorder := &deactivationRecorder{}
+	var unservable []string
+	refuse := func(context.Context, store.DevshardRecord) error {
+		return fmt.Errorf("opening session: %w", bridge.ErrEscrowSettled)
+	}
+	noRetire := func(string) error { return nil }
+
+	unopened, err := publishEscrows(context.Background(), []store.DevshardRecord{{EscrowID: "1", Model: "model-a", Active: true}}, 1, refuse, noRetire,
+		unservableDeactivation(context.Background(), recorder),
+		func(escrowID string, _ error) { unservable = append(unservable, escrowID) },
+		func(string, error) {})
+
+	if err != nil || unopened != 0 || !slices.Equal(unservable, []string{"1"}) {
+		t.Fatalf("publishEscrows = %d, %v with unservable %v, want 0, nil with [1]", unopened, err, unservable)
+	}
+	if want := []string{"delete 1"}; !slices.Equal(recorder.calls, want) {
+		t.Fatalf("deactivation calls = %v, want %v", recorder.calls, want)
 	}
 }
