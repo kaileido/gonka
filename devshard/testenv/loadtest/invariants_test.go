@@ -479,7 +479,7 @@ func dropRequests(from, to time.Duration, every int) func(*InvariantInputs) {
 // Test flow:
 // 1. Add errors in quiet time, slow quiet requests, and errors inside the empty-stream window.
 // 2. Add non-503 errors inside an epoch-advance window and remove the baseline.
-// 3. Add generator drops in quiet time and errors where two fault windows overlap.
+// 3. Add generator drops in quiet time, errors where two fault windows overlap, and errors begun in an earlier fault's grace tail that run into the next fault.
 // 4. Require each error-rate-and-latency check to fail on its fixture, and drops and overlaps to stay out of the single-fault bounds.
 func TestInvariantLatencyAndErrors(t *testing.T) {
 	fail := failRequests
@@ -503,6 +503,14 @@ func TestInvariantLatencyAndErrors(t *testing.T) {
 			}
 		}},
 		{name: "an earlier fault's grace tail does not shield an active fault", check: "error-rate-and-latency.e3.error_rate", passed: false, mutate: fail(6*time.Minute, 6*time.Minute+45*time.Second, 5, 502)},
+		{name: "requests begun in an earlier fault's grace tail and running when the next fault starts are that pair's overlap", check: "error-rate-and-latency.e3.error_rate", passed: true, mutate: func(in *InvariantInputs) {
+			for i := range in.Requests {
+				offset := in.Requests[i].StartedAt.Sub(fixtureT0)
+				if offset >= 5*time.Minute+50*time.Second && offset < 6*time.Minute {
+					in.Requests[i].Duration, in.Requests[i].Outcome, in.Requests[i].Status = 15*time.Second, "error", 502
+				}
+			}
+		}},
 		{name: "pass quiet errors", check: "error-rate-and-latency.quiet_error_rate", passed: true},
 		{name: "quiet errors", check: "error-rate-and-latency.quiet_error_rate", passed: false, mutate: fail(8*time.Minute+40*time.Second, 10*time.Minute, 20, 500)},
 		{name: "pass latency", check: "error-rate-and-latency.quiet_latency", passed: true},

@@ -1477,8 +1477,10 @@ func evalErrorRateAndLatency(c *invariantContext) ([]AssertionResult, any) {
 	}
 	var baseline, quiet []RequestResult
 	// A request belongs to the faults active while it ran, else to the graced
-	// tails its start falls in. One fault judges it against that fault's
-	// bound; several report it under their overlap, judged by none.
+	// tails its start falls in; one already running when an active fault began
+	// belongs to both, since the fault it started under may have caused it.
+	// One fault judges it against that fault's bound; several report it under
+	// their overlap, judged by none.
 	perEvent := map[string][]RequestResult{}
 	perOverlap := map[string][]RequestResult{}
 	overlapsByEvent := map[string][]string{}
@@ -1488,17 +1490,22 @@ func evalErrorRateAndLatency(c *invariantContext) ([]AssertionResult, any) {
 			excluded++
 			continue
 		}
-		var events, tails []string
+		active, tail := make([]bool, len(spans)), make([]bool, len(spans))
+		anyActive, joined := false, false
 		for i, s := range spans {
 			switch {
 			case !r.StartedAt.Add(r.Duration).Before(s.span.From) && !r.StartedAt.After(activeEnds[i]):
-				events = append(events, s.record.ID)
+				active[i], anyActive = true, true
+				joined = joined || r.StartedAt.Before(s.span.From)
 			case s.span.contains(r.StartedAt):
-				tails = append(tails, s.record.ID)
+				tail[i] = true
 			}
 		}
-		if len(events) == 0 {
-			events = tails
+		var events []string
+		for i, s := range spans {
+			if active[i] || (tail[i] && (!anyActive || joined)) {
+				events = append(events, s.record.ID)
+			}
 		}
 		switch len(events) {
 		case 0:
