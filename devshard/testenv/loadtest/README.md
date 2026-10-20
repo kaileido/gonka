@@ -276,7 +276,7 @@ and `payload-files-are-zstd` must fail.
 sqlite hosts keep no validation leases (the sqlite lease store is a no-op,
 `storage/leases.go`), so `no-skipped-validation-leases` excludes them by name, logs the exclusion and
 lists it in the check's expected value and in the `no-skipped-validation-leases` table.
-The check reads the lease table from every Postgres service of the stack: one `devshard-postgres-<host>` per on-chain participant with `topology.storage: per_participant`, the single `devshard-postgres` otherwise. A service it cannot read fails the check as `unavailable` and names the service in the details; the rows from the services it could read are still judged.
+The check reads the lease table from every Postgres service of the stack: one `devshard-postgres-<host>` per on-chain participant with `topology.storage: per_participant`, the single `devshard-postgres` otherwise. It does not probe a service whose hosts are all excluded, since a sqlite host's Postgres never gets the lease table; a service shared with an included host is still read. A service it cannot read fails the check as `unavailable` and names the service in the details; the rows from the services it could read are still judged.
 
 | Invariant | What it checks |
 | --- | --- |

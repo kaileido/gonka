@@ -77,20 +77,67 @@ func TestQueryLeaseCountsPerParticipant(t *testing.T) {
 	ctx := context.Background()
 
 	t.Setenv("FAKE_PG_RUNNING", "devshard-postgres-versiond-0 devshard-postgres-versiond-2")
-	rows, err := queryLeaseCounts(ctx, t.TempDir(), "project", "compose.yaml", cfg)
+	rows, err := queryLeaseCounts(ctx, t.TempDir(), "project", "compose.yaml", cfg, nil)
 	require.NoError(t, err)
 	require.Equal(t, []LeaseCount{{"devshard-postgres-versiond-0", "skipped", 1}, {"devshard-postgres-versiond-2", "skipped", 1}}, rows)
 
 	t.Setenv("FAKE_PG_RUNNING", "devshard-postgres-versiond-0")
-	rows, err = queryLeaseCounts(ctx, t.TempDir(), "project", "compose.yaml", cfg)
+	rows, err = queryLeaseCounts(ctx, t.TempDir(), "project", "compose.yaml", cfg, nil)
 	require.ErrorContains(t, err, `service "devshard-postgres-versiond-2" is not running`)
 	require.Equal(t, []LeaseCount{{"devshard-postgres-versiond-0", "skipped", 1}}, rows)
 
 	cfg.Postgres.PerParticipant = false
 	t.Setenv("FAKE_PG_RUNNING", "devshard-postgres")
-	rows, err = queryLeaseCounts(ctx, t.TempDir(), "project", "compose.yaml", cfg)
+	rows, err = queryLeaseCounts(ctx, t.TempDir(), "project", "compose.yaml", cfg, nil)
 	require.NoError(t, err)
 	require.Equal(t, []LeaseCount{{"devshard-postgres", "skipped", 1}}, rows)
+}
+
+// Test flow:
+// 1. Fake docker compose so versiond-4's Postgres has no lease table and every other running Postgres returns 0 skipped leases.
+// 2. Exclude versiond-4 as a sqlite host from the scenario, query the leases and evaluate no_skipped_leases: require a pass.
+// 3. Stop versiond-2's Postgres too: require no_skipped_leases to fail as unavailable, naming versiond-2 and not versiond-4.
+func TestQueryLeaseCountsSkipsExcludedHosts(t *testing.T) {
+	binDir := t.TempDir()
+	script := "#!/bin/sh\ncase \" $FAKE_PG_RUNNING \" in\n*\" $8 \"*) printf '%s\\tsubmitted\\t1\\n' \"$8\" ;;\n*) echo \"ERROR:  relation \\\"devshard_validation_leases\\\" does not exist ($8)\" >&2; exit 1 ;;\nesac\n"
+	require.NoError(t, os.WriteFile(filepath.Join(binDir, "docker"), []byte(script), 0o755))
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	cfg := &config.File{
+		Versiond: config.VersiondCfg{Mode: config.VersiondModeMulti},
+		Hosts:    []config.HostCfg{{ID: "versiond-0"}, {ID: "versiond-1"}, {ID: "versiond-2"}, {ID: "versiond-3"}, {ID: "versiond-4"}},
+		Postgres: config.PostgresCfg{Enabled: true, PerParticipant: true},
+	}
+	cfg.ApplyDefaults()
+	var scenario Scenario
+	for _, h := range cfg.Hosts {
+		scenario.Topology.Hosts = append(scenario.Topology.Hosts, TopologyHost{ID: h.ID})
+	}
+	scenario.Topology.Hosts[4].Env = map[string]string{"DEVSHARD_STORAGE_MODE": "sqlite"}
+	excluded := leaseExcludedHosts(scenario)
+	require.Equal(t, map[string]string{"versiond-4": sqliteLeaseExclusion}, excluded)
+	evaluate := func() AssertionResult {
+		in := passingInputs()
+		in.LeaseExcluded = excluded
+		rows, err := queryLeaseCounts(context.Background(), t.TempDir(), "project", "compose.yaml", cfg, excluded)
+		in.Leases, in.LeasesError = rows, ""
+		if err != nil {
+			in.LeasesError = err.Error()
+		}
+		checks, _ := evaluateInvariants(in)
+		return checksNamed(t, checks, "no-skipped-validation-leases.no_skipped_leases")[0]
+	}
+
+	t.Setenv("FAKE_PG_RUNNING", "devshard-postgres-versiond-0 devshard-postgres-versiond-1 devshard-postgres-versiond-2 devshard-postgres-versiond-3")
+	check := evaluate()
+	require.True(t, check.Passed, check.Details)
+	require.Contains(t, check.Expected, "versiond-4 excluded")
+
+	t.Setenv("FAKE_PG_RUNNING", "devshard-postgres-versiond-0 devshard-postgres-versiond-1 devshard-postgres-versiond-3")
+	check = evaluate()
+	require.False(t, check.Passed)
+	require.Equal(t, "unavailable", check.Actual)
+	require.Contains(t, check.Details, "devshard-postgres-versiond-2")
+	require.NotContains(t, check.Details, "devshard-postgres-versiond-4")
 }
 
 // Test flow:

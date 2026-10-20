@@ -591,15 +591,26 @@ const leaseCountQuery = "SELECT instance_address, status, count(*) FROM devshard
 
 // queryLeaseCounts reads the lease table of every Postgres service of the stack
 // (one per participant with per_participant storage) and returns the rows it
-// could read, with an error naming each service it could not.
-func queryLeaseCounts(ctx context.Context, dir, project, compose string, cfg *config.File) ([]LeaseCount, error) {
+// could read, with an error naming each service it could not. A service whose
+// hosts are all in excluded (e.g. sqlite hosts) is not probed.
+func queryLeaseCounts(ctx context.Context, dir, project, compose string, cfg *config.File, excluded map[string]string) ([]LeaseCount, error) {
 	services := config.PostgresServices(cfg)
 	if len(services) == 0 {
 		return nil, fmt.Errorf("no Postgres service in the stack")
 	}
+	// A service shared with an included host (an HA replica) is still probed.
+	included := map[string]bool{}
+	for _, host := range cfg.Hosts {
+		if _, skip := excluded[host.ID]; !skip {
+			included[config.PostgresServiceFor(cfg, host)] = true
+		}
+	}
 	rows := []LeaseCount{}
 	var failures []string
 	for _, service := range services {
+		if !included[service] {
+			continue
+		}
 		cmd := exec.CommandContext(ctx, "docker", "compose", "-p", project, "-f", compose, "exec", "-T", service,
 			"psql", "-U", cfg.Postgres.User, "-d", cfg.Postgres.Database, "-tA", "-F", "\t", "-c", leaseCountQuery)
 		cmd.Dir = dir
