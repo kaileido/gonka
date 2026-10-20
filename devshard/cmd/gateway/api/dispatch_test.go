@@ -208,8 +208,8 @@ func TestCatchUpHandsThePreparedNonceToTheSession(t *testing.T) {
 	recorded := &recordingSession{catchUpErr: errCatchUp}
 	target := escrowTarget{session: recorded}
 
-	err := target.CatchUp(context.Background(), prepared)
-	foreignErr := target.CatchUp(context.Background(), foreignNonce{})
+	err := target.CatchUp(context.Background(), prepared, nil)
+	foreignErr := target.CatchUp(context.Background(), foreignNonce{}, nil)
 
 	if !errors.Is(err, errCatchUp) || recorded.caughtUp != prepared {
 		t.Fatalf("CatchUp = %v on %p, want the session's error on the prepared nonce %p", err, recorded.caughtUp, prepared)

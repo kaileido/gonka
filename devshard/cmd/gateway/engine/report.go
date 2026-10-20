@@ -23,6 +23,10 @@ func (c *raceCoordinator) apply(event AttemptEvent) {
 		if c.feedsFleet(attempt) {
 			c.deps.Fleet.recordDispatch(attempt, attempt.clockStart(), c.request.InputTokens)
 		}
+	case AttemptCatchUpFaulted:
+		if attempt.catchUpFault.IsZero() {
+			attempt.catchUpFault = event.At
+		}
 	case AttemptReceipt:
 		attempt.receiptTime = event.At
 	case AttemptFirstToken:

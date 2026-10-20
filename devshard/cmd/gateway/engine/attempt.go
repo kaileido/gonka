@@ -22,7 +22,8 @@ var (
 
 // dispatcher is the engine's only route to a host; an adapter over devshard/user.Session satisfies it. See race.md, "Deadlines".
 type dispatcher interface {
-	CatchUp(ctx context.Context, nonce scheduler.Prepared) error
+	// CatchUp runs onFault at most once, on the caller's goroutine, when the catch-up finds the host unreachable.
+	CatchUp(ctx context.Context, nonce scheduler.Prepared, onFault func()) error
 	Send(ctx context.Context, nonce scheduler.Prepared, stream io.Writer, onReceipt func()) (Response, error)
 }
 
@@ -91,6 +92,7 @@ type AttemptEventKind int
 
 const (
 	AttemptDispatched AttemptEventKind = iota
+	AttemptCatchUpFaulted
 	AttemptReceipt
 	AttemptFirstToken
 	AttemptContent
@@ -162,7 +164,9 @@ func runAttempt(ctx context.Context, spec AttemptSpec) {
 	defer releaseSlot()
 
 	nonce := spec.Nonce.Nonce()
-	catchUpErr := spec.Dispatch.CatchUp(ctx, spec.Nonce)
+	catchUpErr := spec.Dispatch.CatchUp(ctx, spec.Nonce, func() {
+		spec.emit(AttemptEvent{Kind: AttemptCatchUpFaulted, Nonce: nonce, At: spec.Now()})
+	})
 	state := &attemptState{sendTime: spec.Now()}
 	spec.emit(AttemptEvent{Kind: AttemptDispatched, Nonce: nonce, At: state.sendTime})
 

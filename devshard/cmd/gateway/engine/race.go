@@ -111,6 +111,7 @@ type liveAttempt struct {
 	cancel      context.CancelFunc
 
 	launchTime   time.Time
+	catchUpFault time.Time
 	sendTime     time.Time
 	receiptTime  time.Time
 	firstToken   time.Time

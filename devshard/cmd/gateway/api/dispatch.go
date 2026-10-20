@@ -63,11 +63,12 @@ func (t escrowTarget) RewindHostCatchUp(hostIdx int, cause string) bool {
 }
 func (t escrowTarget) NonceFinished(nonce uint64) bool { return t.session.IsNonceFinished(nonce) }
 
-func (t escrowTarget) CatchUp(ctx context.Context, nonce scheduler.Prepared) error {
+func (t escrowTarget) CatchUp(ctx context.Context, nonce scheduler.Prepared, onFault func()) error {
 	prepared, err := preparedInference(nonce)
 	if err != nil {
 		return err
 	}
+	prepared.OnCatchUpFault(onFault)
 	return t.session.CatchUpBeforeSend(ctx, prepared)
 }
 

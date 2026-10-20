@@ -121,6 +121,14 @@ type hostScript struct {
 	finished    bool
 	err         error
 	catchUpHeld bool
+	catchUp     *catchUpScript
+}
+
+// catchUpScript holds an attempt in its catch-up: it reports the host unreachable once fault closes and fails once fail closes.
+type catchUpScript struct {
+	arrive chan<- uint64
+	fault  <-chan struct{}
+	fail   <-chan struct{}
 }
 
 // fed is the script's feed, or a closed channel when it has none, so a range over it ends at once.
@@ -147,12 +155,33 @@ func (t *scriptedTarget) script(nonce uint64) *hostScript {
 	return t.scripts[nonce]
 }
 
-func (t *scriptedTarget) CatchUp(ctx context.Context, nonce scheduler.Prepared) error {
-	if script := t.script(nonce.Nonce()); script != nil && script.catchUpHeld {
+func (t *scriptedTarget) CatchUp(ctx context.Context, nonce scheduler.Prepared, onFault func()) error {
+	script := t.script(nonce.Nonce())
+	switch {
+	case script == nil:
+	case script.catchUpHeld:
 		<-ctx.Done()
 		return ctx.Err()
+	case script.catchUp != nil:
+		return script.catchUp.run(ctx, nonce.Nonce(), onFault)
 	}
 	return nil
+}
+
+func (s *catchUpScript) run(ctx context.Context, nonce uint64, onFault func()) error {
+	s.arrive <- nonce
+	select {
+	case <-s.fault:
+		onFault()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case <-s.fail:
+		return errors.New("catch-up chunk: http2: client connection lost")
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (t *scriptedTarget) Send(ctx context.Context, nonce scheduler.Prepared, stream io.Writer, onReceipt func()) (Response, error) {

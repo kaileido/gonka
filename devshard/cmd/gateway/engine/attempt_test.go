@@ -76,7 +76,7 @@ type fakeDispatcher struct {
 	catchUp  func() error
 }
 
-func (d *fakeDispatcher) CatchUp(context.Context, scheduler.Prepared) error {
+func (d *fakeDispatcher) CatchUp(context.Context, scheduler.Prepared, func()) error {
 	if d.catchUp == nil {
 		return nil
 	}
