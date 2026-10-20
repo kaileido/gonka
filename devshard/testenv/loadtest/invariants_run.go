@@ -171,10 +171,8 @@ func (r *invariantRun) collectEndState(ctx context.Context, rotationModels []str
 			end.LeaseExcluded[host] = sqliteLeaseExclusion
 			log.Printf("loadtest: invariants no-skipped-validation-leases excludes %s: %s", host, sqliteLeaseExclusion)
 		}
-		if end.Leases, err = queryLeaseCounts(ctx, r.opts.TestenvDir, r.project, r.compose, r.cfg.Postgres); err != nil {
+		if end.Leases, err = queryLeaseCounts(ctx, r.opts.TestenvDir, r.project, r.compose, r.cfg); err != nil {
 			end.LeasesError = err.Error()
-		} else if end.Leases == nil {
-			end.Leases = []LeaseCount{}
 		}
 	}
 	if count, err := countLogLines(logPath, "did not compress"); err == nil {

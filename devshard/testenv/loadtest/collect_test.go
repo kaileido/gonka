@@ -59,6 +59,41 @@ func TestParseLeaseCounts(t *testing.T) {
 }
 
 // Test flow:
+// 1. Fake docker compose so only the listed Postgres services run, each returning one lease row named after itself.
+// 2. Query a per_participant stack: require one row from each participant's Postgres and no error.
+// 3. Stop one participant's Postgres: require the other's rows and an error naming the stopped service.
+// 4. Query a shared stack: require the single devshard-postgres to be read.
+func TestQueryLeaseCountsPerParticipant(t *testing.T) {
+	binDir := t.TempDir()
+	script := "#!/bin/sh\ncase \" $FAKE_PG_RUNNING \" in\n*\" $8 \"*) printf '%s\\tskipped\\t1\\n' \"$8\" ;;\n*) echo \"service \\\"$8\\\" is not running\" >&2; exit 1 ;;\nesac\n"
+	require.NoError(t, os.WriteFile(filepath.Join(binDir, "docker"), []byte(script), 0o755))
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	cfg := &config.File{
+		Versiond: config.VersiondCfg{Mode: config.VersiondModeMulti},
+		Hosts:    []config.HostCfg{{ID: "versiond-0"}, {ID: "versiond-1"}, {ID: "versiond-2"}},
+		Postgres: config.PostgresCfg{Enabled: true, PerParticipant: true},
+	}
+	cfg.ApplyDefaults()
+	ctx := context.Background()
+
+	t.Setenv("FAKE_PG_RUNNING", "devshard-postgres-versiond-0 devshard-postgres-versiond-2")
+	rows, err := queryLeaseCounts(ctx, t.TempDir(), "project", "compose.yaml", cfg)
+	require.NoError(t, err)
+	require.Equal(t, []LeaseCount{{"devshard-postgres-versiond-0", "skipped", 1}, {"devshard-postgres-versiond-2", "skipped", 1}}, rows)
+
+	t.Setenv("FAKE_PG_RUNNING", "devshard-postgres-versiond-0")
+	rows, err = queryLeaseCounts(ctx, t.TempDir(), "project", "compose.yaml", cfg)
+	require.ErrorContains(t, err, `service "devshard-postgres-versiond-2" is not running`)
+	require.Equal(t, []LeaseCount{{"devshard-postgres-versiond-0", "skipped", 1}}, rows)
+
+	cfg.Postgres.PerParticipant = false
+	t.Setenv("FAKE_PG_RUNNING", "devshard-postgres")
+	rows, err = queryLeaseCounts(ctx, t.TempDir(), "project", "compose.yaml", cfg)
+	require.NoError(t, err)
+	require.Equal(t, []LeaseCount{{"devshard-postgres", "skipped", 1}}, rows)
+}
+
+// Test flow:
 // 1. Parse a /metrics body with gateway counters, a histogram, the fork counter and runtime series.
 // 2. Check only domain series are kept and their keys round-trip through parseDomainKey.
 func TestParseDomainMetrics(t *testing.T) {
