@@ -225,6 +225,7 @@ func TestJSONLPollerSchedule(t *testing.T) {
 // Test flow:
 // 1. Serve a fake gateway with an active resident escrow, a deactivated resident one and a retired one.
 // 2. Fetch devshards and collect throttle and pending samples for resident escrows only.
+// 3. Check that the pending poller hands on the inference list it read for each resident escrow.
 func TestGatewayPollersAgainstFake(t *testing.T) {
 	var paths []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -256,11 +257,13 @@ func TestGatewayPollersAgainstFake(t *testing.T) {
 	require.Len(t, throttle, 2)
 	require.True(t, throttle[0].Participants[0].inQuarantine())
 	require.Equal(t, 3, throttle[1].Participants[0].FailureStrikes)
-	pending := collectPending(server.URL, "key", config.GatewayDriverDevshardctl)(context.Background(), "")
+	seen := map[string]int{}
+	pending := collectPending(server.URL, "key", config.GatewayDriverDevshardctl, func(escrowID string, inferences map[string]DebugInference) { seen[escrowID] = len(inferences) })(context.Background(), "")
 	require.Len(t, pending, 2)
 	require.Empty(t, pending[0].Error)
 	require.Equal(t, 1, pending[0].PendingTxs)
 	require.Equal(t, 1, pending[0].Open)
 	require.InDelta(t, 60, pending[0].MaxAgeSeconds, 2)
+	require.Equal(t, map[string]int{"11": 1, "12": 1}, seen)
 	require.NotContains(t, paths, "/v1/admin/devshards/10/participants")
 }

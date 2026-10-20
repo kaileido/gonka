@@ -293,7 +293,8 @@ func fetchDebugInferences(ctx context.Context, runtimeURL, apiKey string) (map[s
 	return decodeInferenceRecords(body.Inferences)
 }
 
-func collectPending(gatewayURL, apiKey string, driver config.GatewayDriver) func(context.Context, string) []PendingSample {
+// collectPending samples the pending view of each resident escrow and hands seen every inference list it reads.
+func collectPending(gatewayURL, apiKey string, driver config.GatewayDriver, seen func(escrowID string, inferences map[string]DebugInference)) func(context.Context, string) []PendingSample {
 	return func(ctx context.Context, _ string) []PendingSample {
 		devshards, err := fetchGatewayDevshards(ctx, gatewayURL, apiKey)
 		if err != nil {
@@ -314,6 +315,8 @@ func collectPending(gatewayURL, apiKey string, driver config.GatewayDriver) func
 			inferences, err := fetchDebugInferences(ctx, base, apiKey)
 			if err != nil {
 				errs = append(errs, err.Error())
+			} else if seen != nil {
+				seen(d.ID, inferences)
 			}
 			summarizePending(&sample, inferences)
 			sample.Error = strings.Join(errs, "; ")

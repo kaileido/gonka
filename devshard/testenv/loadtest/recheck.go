@@ -51,6 +51,8 @@ type invariantEndState struct {
 	ReconcileTicks     map[string][]time.Time               `json:"reconcile_ticks"`
 	Devshards          []GatewayDevshard                    `json:"devshards"`
 	Inferences         map[string]map[string]DebugInference `json:"inferences"`
+	// LastLiveInferences is the last list the pending poller read for each escrow Inferences lacks, such as one settled and pruned before drain.
+	LastLiveInferences map[string]map[string]DebugInference `json:"last_live_inferences,omitempty"`
 	SettleTxs          []ledgerface.TxView                  `json:"settle_txs"`
 	Escrows            []ledgerface.EscrowView              `json:"escrows"`
 	ChainError         string                               `json:"chain_error,omitempty"`

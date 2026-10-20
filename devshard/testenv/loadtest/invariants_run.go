@@ -27,6 +27,8 @@ type invariantRun struct {
 	hostStats  *jsonlPoller[HostStatsSample]
 	dapiHosts  *jsonlPoller[DapiHostSample]
 	accounting *jsonlPoller[AccountingSnapshot]
+	// liveInferences is the last inference list the pending poller read for each escrow; only that poller writes it.
+	liveInferences map[string]map[string]DebugInference
 	// bindingChecked is set once warnBinding has judged the warm-up sample.
 	bindingChecked bool
 }
@@ -34,7 +36,7 @@ type invariantRun struct {
 // startInvariantRun starts the pollers right before the workload; started is
 // the workload start the event timeline is planned against.
 func startInvariantRun(ctx context.Context, opts RunnerConfig, cfg *config.File, project, compose, gatewayURL, statsURL, apiKey string, scenario Scenario, started time.Time) (*invariantRun, error) {
-	r := &invariantRun{opts: opts, cfg: cfg, scenario: scenario, project: project, compose: compose, gatewayURL: gatewayURL, apiKey: apiKey, settings: resolveInvariantSettings(scenario), started: started}
+	r := &invariantRun{opts: opts, cfg: cfg, scenario: scenario, project: project, compose: compose, gatewayURL: gatewayURL, apiKey: apiKey, settings: resolveInvariantSettings(scenario), started: started, liveInferences: map[string]map[string]DebugInference{}}
 	planned, _, err := planEvents(scenario, cfg)
 	if err != nil {
 		return nil, err
@@ -49,7 +51,9 @@ func startInvariantRun(ctx context.Context, opts RunnerConfig, cfg *config.File,
 			return nil, err
 		}
 	}
-	if r.pending, err = startJSONLPoller(ctx, out("pending.jsonl"), "start", everyInterval(pendingPollEvery), collectPending(gatewayURL, apiKey, cfg.Devshardctl.Driver)); err != nil {
+	if r.pending, err = startJSONLPoller(ctx, out("pending.jsonl"), "start", everyInterval(pendingPollEvery), collectPending(gatewayURL, apiKey, cfg.Devshardctl.Driver, func(escrowID string, inferences map[string]DebugInference) {
+		r.liveInferences[escrowID] = inferences
+	})); err != nil {
 		r.stop()
 		return nil, err
 	}
@@ -125,6 +129,7 @@ func (r *invariantRun) collectEndState(ctx context.Context, rotationModels []str
 			end.Inferences[d.ID] = inferences
 		}
 	}
+	end.LastLiveInferences = listsNotServed(r.liveInferences, end.Inferences)
 	chainURL := fmt.Sprintf("http://127.0.0.1:%d", r.cfg.MockChain.TestenvPort)
 	if end.SettleTxs, end.Escrows, err = fetchChainLedger(ctx, chainURL); err != nil {
 		end.ChainError = err.Error()

@@ -3,6 +3,7 @@ package loadtest
 import (
 	"cmp"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -12,7 +13,7 @@ import (
 
 const (
 	ngonkaPerGNK = 1e9
-	spendSource  = "mock-chain /testenv/escrows and /testenv/txs?type=settle (spent = last settle's sum(host_stats.cost) + fees); inferences_completed from each escrow's /v1/debug/inferences"
+	spendSource  = "mock-chain /testenv/escrows and /testenv/txs?type=settle (spent = last settle's sum(host_stats.cost) + fees); inferences_completed from each escrow's /v1/debug/inferences after drain, else the last one read while the run was live"
 )
 
 // chainLedger is the mock-chain ledger read after drain by a run whose invariants did not read it.
@@ -64,12 +65,29 @@ type SpendTotals struct {
 // because it also carries the inference lists.
 func spendSources(inputs RunInputs) (*chainLedger, map[string]map[string]DebugInference, string) {
 	if end := inputs.Invariants; end != nil && end.ChainError != notSaved {
-		return &chainLedger{SettleTxs: end.SettleTxs, Escrows: end.Escrows}, end.Inferences, end.ChainError
+		inferences := end.Inferences
+		if len(end.LastLiveInferences) > 0 {
+			inferences = listsNotServed(end.LastLiveInferences, end.Inferences)
+			maps.Insert(inferences, maps.All(end.Inferences))
+		}
+		return &chainLedger{SettleTxs: end.SettleTxs, Escrows: end.Escrows}, inferences, end.ChainError
 	}
 	if inputs.ChainLedger != nil {
 		return inputs.ChainLedger, nil, inputs.ChainLedger.Error
 	}
 	return nil, nil, notSaved
+}
+
+// listsNotServed returns the live lists of the escrows the after-drain read did not serve; a
+// gateway may prune a settled escrow's list before drain.
+func listsNotServed(live, afterDrain map[string]map[string]DebugInference) map[string]map[string]DebugInference {
+	lists := map[string]map[string]DebugInference{}
+	for escrowID, inferences := range live {
+		if _, served := afterDrain[escrowID]; !served {
+			lists[escrowID] = inferences
+		}
+	}
+	return lists
 }
 
 // buildSpend builds the spend block; completed is the client's completed request count.
@@ -133,7 +151,7 @@ func buildSpend(ledger *chainLedger, inferences map[string]map[string]DebugInfer
 			if inferences == nil {
 				row.Unavailable["inferences_completed"] = "the chain carries no inference count and the run read no gateway inference lists (invariants off)"
 			} else {
-				row.Unavailable["inferences_completed"] = "the chain carries no inference count and the gateway served no inference list for this escrow after drain"
+				row.Unavailable["inferences_completed"] = "the chain carries no inference count and the gateway served no inference list for this escrow, after drain or while the run was live"
 			}
 		}
 		if len(row.Unavailable) == 0 {

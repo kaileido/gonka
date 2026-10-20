@@ -2,6 +2,7 @@ package loadtest
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"testing"
@@ -63,14 +64,7 @@ func TestBuildSpendPerEscrowFromChainLedger(t *testing.T) {
 // 4. Build it again with no inference counts, and check that the ratios give a reason instead of dividing by the requests.
 // 5. Build it from the settled escrows only with 10 completed requests, and check that the ratios divide by the requests and nothing is partial.
 func TestBuildSpendTotals(t *testing.T) {
-	finished := func(n int) map[string]DebugInference {
-		records := map[string]DebugInference{}
-		for i := range n {
-			records[string(rune('a'+i))] = DebugInference{Status: "finished"}
-		}
-		return records
-	}
-	spend := buildSpend(spendFixtureLedger(), map[string]map[string]DebugInference{"10": finished(6), "11": finished(4), "12": finished(5)}, "", 20)
+	spend := buildSpend(spendFixtureLedger(), map[string]map[string]DebugInference{"10": finishedInferences(6), "11": finishedInferences(4), "12": finishedInferences(5)}, "", 20)
 	totals := spend.Totals
 	if totals.Escrows != 3 || totals.SettledEscrows != 2 || *totals.SpentNgonka != 610 || *totals.NoncesUsed != 50 {
 		t.Fatalf("totals = %+v", totals)
@@ -92,6 +86,49 @@ func TestBuildSpendTotals(t *testing.T) {
 	settled := buildSpend(ledger, nil, "", 10).Totals
 	if settled.Partial != nil || *settled.NgonkaPerCompletedRequest != 61 || *settled.NoncesPerCompletedRequest != 5 {
 		t.Fatalf("settled = %+v", settled)
+	}
+}
+
+func finishedInferences(n int) map[string]DebugInference {
+	records := map[string]DebugInference{}
+	for i := range n {
+		records[string(rune('a'+i))] = DebugInference{Status: "finished"}
+	}
+	return records
+}
+
+// Test flow:
+// 1. Save an end state whose after-drain read served only the unsettled escrow 12, with the last live lists of the settled escrows 10 and 11 and an older one of 12.
+// 2. Build the spend block from the saved sources with 20 completed requests.
+// 3. Check that escrows 10 and 11 count their last live lists and escrow 12 its after-drain list, and that the ratios divide by the settled escrows' 10 inferences.
+// 4. Check that the after-drain lists the run saved were left as they were.
+func TestSpendCountsTheLastLiveListOfAnEscrowNotServedAfterDrain(t *testing.T) {
+	fixture := spendFixtureLedger()
+	end := &invariantEndState{
+		SettleTxs:          fixture.SettleTxs,
+		Escrows:            fixture.Escrows,
+		Inferences:         map[string]map[string]DebugInference{"12": finishedInferences(5)},
+		LastLiveInferences: map[string]map[string]DebugInference{"10": finishedInferences(6), "11": finishedInferences(4), "12": finishedInferences(2)},
+	}
+
+	ledger, inferences, reason := spendSources(RunInputs{Invariants: end})
+	spend := buildSpend(ledger, inferences, reason, 20)
+
+	counts := map[string]int{}
+	for _, escrow := range spend.Escrows {
+		if escrow.InferencesCompleted != nil {
+			counts[escrow.EscrowID] = *escrow.InferencesCompleted
+		}
+	}
+	if want := map[string]int{"10": 6, "11": 4, "12": 5}; !maps.Equal(counts, want) {
+		t.Fatalf("inferences completed = %v, want %v", counts, want)
+	}
+	totals := spend.Totals
+	if totals.NgonkaPerCompletedRequest == nil || *totals.NgonkaPerCompletedRequest != 61 || *totals.NoncesPerCompletedRequest != 5 || totals.Unavailable != nil {
+		t.Fatalf("totals = %+v", totals)
+	}
+	if len(end.Inferences) != 1 {
+		t.Fatalf("after-drain lists = %v, want only escrow 12", end.Inferences)
 	}
 }
 
