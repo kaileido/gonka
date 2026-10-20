@@ -1562,6 +1562,13 @@ func evalErrorRateAndLatency(c *invariantContext) ([]AssertionResult, any) {
 	checks = append(checks,
 		invariantCheck("error-rate-and-latency.quiet_error_rate", caseID, calm.ErrorRate <= quietErrorRate, fmt.Sprintf("error rate <= %.1f%%", quietErrorRate*100), fmt.Sprintf("%.2f%% (%d/%d)", calm.ErrorRate*100, calm.Errors, calm.Requests), ""),
 		invariantCheck("error-rate-and-latency.quiet_empty_streams", caseID, calm.EmptyStreams == 0, "no streamed request ends empty outside fault windows", fmt.Sprintf("empty_streams=%d", calm.EmptyStreams), ""))
+	if calm.Requests == 0 {
+		for i := range checks {
+			if checks[i].Passed {
+				checks[i].Status, checks[i].Details = statusNotJudged, "no request fell outside the baseline and every fault window"
+			}
+		}
+	}
 	checks = append(checks, gatewayErrorClassChecks(c)...)
 	for _, s := range spans {
 		stats := windowStats(s.record.ID, perEvent[s.record.ID])

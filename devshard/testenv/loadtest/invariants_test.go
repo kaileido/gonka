@@ -568,6 +568,30 @@ func TestInvariantRestartWindowEndsWhenTheGatewayServesAgain(t *testing.T) {
 }
 
 // Test flow:
+// 1. Keep only the requests of the baseline and of the fault windows, so no quiet request is left.
+// 2. Require quiet_latency, quiet_error_rate and quiet_empty_streams to be NOT_JUDGED, not PASS, naming the missing quiet requests.
+func TestInvariantQuietChecksNeedQuietRequests(t *testing.T) {
+	in := passingInputs()
+	var kept []RequestResult
+	for _, r := range in.Requests {
+		offset := r.StartedAt.Sub(fixtureT0)
+		if offset < 2*time.Minute || (offset >= 3*time.Minute && offset <= 8*time.Minute+35*time.Second) {
+			kept = append(kept, r)
+		}
+	}
+	in.Requests = kept
+
+	checks, _ := evaluateInvariants(in)
+
+	for _, name := range []string{"error-rate-and-latency.quiet_latency", "error-rate-and-latency.quiet_error_rate", "error-rate-and-latency.quiet_empty_streams"} {
+		check := checksNamed(t, checks, name)[0]
+		require.Equal(t, statusNotJudged, check.Status, "%s actual=%s", name, check.Actual)
+		require.True(t, check.Passed, name)
+		require.Equal(t, "no request fell outside the baseline and every fault window", check.Details, name)
+	}
+}
+
+// Test flow:
 // 1. Add a fault active inside the challenge window, then evaluate.
 // 2. Require the overlap to get its own report row and the challenge row to hold only its own time.
 func TestInvariantReportsOverlappingFaultsApart(t *testing.T) {
