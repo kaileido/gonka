@@ -44,10 +44,23 @@ type RunSummaryRequests struct {
 	CompletedRPS float64 `json:"completed_rps"`
 }
 
-// RunSummaryLatency holds the client latency quantiles of completed requests.
+// RunSummaryLatency holds the client latency quantiles of every request sent and timed, errors included, with
+// the p95 of completed requests alone and each max_tokens class's own figures. See runLatency.
 type RunSummaryLatency struct {
-	P50 float64 `json:"p50"`
-	P95 float64 `json:"p95"`
+	P50          float64                  `json:"p50"`
+	P95          float64                  `json:"p95"`
+	P95Completed float64                  `json:"p95_completed"`
+	Classes      []RunSummaryLatencyClass `json:"by_max_tokens"`
+}
+
+// RunSummaryLatencyClass is one max_tokens value's latency; 0 is a request without max_tokens.
+type RunSummaryLatencyClass struct {
+	MaxTokens    int64   `json:"max_tokens"`
+	Requests     int     `json:"requests"`
+	Completed    int     `json:"completed"`
+	P50          float64 `json:"p50"`
+	P95          float64 `json:"p95"`
+	P95Completed float64 `json:"p95_completed"`
 }
 
 // ProcessSummary is one sampled process's cost over the run.
@@ -80,7 +93,13 @@ func writeRunSummary(outputDir string, run runReport) (RunSummary, error) {
 	if run.summary.Duration > 0 {
 		summary.Requests.CompletedRPS = float64(run.summary.Completed) / run.summary.Duration.Seconds()
 	}
-	summary.LatencySeconds = RunSummaryLatency{P50: run.summary.P50.Seconds(), P95: run.summary.P95.Seconds()}
+	summary.LatencySeconds = RunSummaryLatency{P50: run.summary.P50.Seconds(), P95: run.summary.P95.Seconds(), P95Completed: run.latency.P95Completed.Seconds(), Classes: []RunSummaryLatencyClass{}}
+	for _, class := range run.latency.Classes {
+		summary.LatencySeconds.Classes = append(summary.LatencySeconds.Classes, RunSummaryLatencyClass{
+			MaxTokens: class.MaxTokens, Requests: class.Requests, Completed: class.Completed,
+			P50: class.P50.Seconds(), P95: class.P95.Seconds(), P95Completed: class.P95Completed.Seconds(),
+		})
+	}
 	for _, check := range run.checks {
 		status := reportStatus(check)
 		summary.StatusCounts[status]++

@@ -28,6 +28,7 @@ type runReport struct {
 	events  []EventRecord
 	windows []requestWindowStats
 	ladder  ladderReport
+	latency runLatency
 	health  *harnessHealth
 	inputs  RunInputs
 }
@@ -79,6 +80,7 @@ func loadRunReport(outputDir string) (runReport, error) {
 		return run, err
 	}
 	run.ladder = loadLadder(outputDir, run.summary)
+	run.latency = loadRunLatency(outputDir)
 	return run, nil
 }
 
@@ -190,8 +192,12 @@ func (r runReport) renderTraffic(out *strings.Builder) {
 	writeReportRow(out, "generator drops", shareOf(r.summary.Dropped, r.summary.Requests), percentBound(droppedBound), droppedStatus)
 	writeReportRow(out, "of them generator behind", shareOf(r.summary.Behind, r.summary.Requests), "", "")
 	writeReportRow(out, "latency p50 / p95", fmt.Sprintf("%s / %s", r.summary.P50, r.summary.P95), "", "")
+	if r.latency.Note == "" {
+		writeReportRow(out, "latency p95 of completed requests", r.latency.P95Completed.String(), "", "")
+	}
 	writeReportRow(out, "quiet window errors", quietErrors, strings.TrimPrefix(quietErrorsBound, "error rate "), quietErrorsStatus)
 	writeReportRow(out, "quiet window latency", quietLatency, quietLatencyBound, quietLatencyStatus)
+	r.renderLatencyClasses(out)
 }
 
 func (r runReport) renderFaultWindows(out *strings.Builder) {
