@@ -13,6 +13,7 @@ const (
 	ghostExclude
 	ghostAbandoned
 	ghostPrepareFailed
+	ghostAbsentFromChain
 )
 
 func (k GhostKind) reason() string {
@@ -35,6 +36,8 @@ func (k GhostKind) reason() string {
 		return GhostReasonAbandoned
 	case ghostPrepareFailed:
 		return GhostReasonPrepareFailed
+	case ghostAbsentFromChain:
+		return GhostReasonAbsentFromChain
 	default:
 		return ""
 	}

@@ -11,6 +11,7 @@ type availability struct {
 	ejected      func(participant string) bool
 	notAllowed   func(participant string) bool
 	stateBlocked func(participant string) bool
+	absent       func(participant string) bool
 	budgetSpent  func(participant string) bool
 	unthrottled  func(participant string) bool
 
@@ -29,21 +30,27 @@ const (
 	blockNotAllowed
 	blockExcluded
 	blockStateDiverged
+	blockAbsentFromChain
 )
 
 // ghostFor names the burn each participant-only block earns, as one mapping rather than two switches.
 var ghostFor = map[blockReason]GhostKind{
-	blockPoCRequired:   ghostPoC,
-	blockWindowFull:    ghostWindowFull,
-	blockCutOff:        ghostCutOff,
-	blockEjected:       ghostEjected,
-	blockNotAllowed:    ghostNotAllowed,
-	blockStateDiverged: ghostStateDiverged,
+	blockPoCRequired:     ghostPoC,
+	blockWindowFull:      ghostWindowFull,
+	blockCutOff:          ghostCutOff,
+	blockEjected:         ghostEjected,
+	blockNotAllowed:      ghostNotAllowed,
+	blockStateDiverged:   ghostStateDiverged,
+	blockAbsentFromChain: ghostAbsentFromChain,
 }
 
 // A missing predicate reads as no block, so an availability built without one does not narrow dispatch.
 func (a availability) divergedFromEscrowState(participant string) bool {
 	return a.stateBlocked != nil && a.stateBlocked(participant)
+}
+
+func (a availability) absentFromSession(participant string) bool {
+	return a.absent != nil && a.absent(participant)
 }
 
 func (a availability) outsideAllowlist(participant string) bool {
@@ -80,6 +87,9 @@ func (a availability) firstBlock(participant string) blockReason {
 	if a.outsideAllowlist(participant) {
 		return blockNotAllowed
 	}
+	if a.absentFromSession(participant) {
+		return blockAbsentFromChain
+	}
 	waived := a.throttlingWaived(participant)
 	if a.pocRequired(participant) {
 		return blockPoCRequired
@@ -109,8 +119,9 @@ func (a availability) congestionBlock(participant string) blockReason {
 }
 
 // forEscrow adds the rungs that belong to a single escrow rather than to the fleet, its state block and its hosts' chat budgets, and must be applied before the ladder is frozen. See routing.md, "Pricing an escrow by the burns it will cost".
-func (a availability) forEscrow(stateBlocked, budgetSpent func(participant string) bool) availability {
+func (a availability) forEscrow(stateBlocked, absent, budgetSpent func(participant string) bool) availability {
 	a.stateBlocked = stateBlocked
+	a.absent = absent
 	a.budgetSpent = budgetSpent
 	return a
 }

@@ -145,6 +145,7 @@ type attemptState struct {
 	confirmedAt     int64
 	stateDivergent  bool
 	localFault      bool
+	hostAbsent      bool
 	gatewayPressure bool
 	terminal        Terminal
 	lifecycle       Lifecycle

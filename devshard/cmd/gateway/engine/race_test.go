@@ -18,6 +18,7 @@ import (
 	"devshard/cmd/gateway/limits"
 	"devshard/cmd/gateway/perf"
 	"devshard/cmd/gateway/scheduler"
+	"devshard/user"
 )
 
 // stubPicker answers picks from a queue, parking any it cannot answer until released.
@@ -26,6 +27,7 @@ type stubPicker struct {
 	queue    []scheduler.Assignment
 	blocked  [][2]string
 	diverged [][2]string
+	absent   [][2]string
 	replays  int
 	profiles []scheduler.RequestProfile
 	hold     chan struct{}
@@ -90,6 +92,12 @@ func (p *stubPicker) HostDiverged(escrowID, participant string, _ time.Time) boo
 }
 
 func (p *stubPicker) HostServed(string, string, time.Time) {}
+
+func (p *stubPicker) HostAbsent(escrowID, participant string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.absent = append(p.absent, [2]string{escrowID, participant})
+}
 
 func (p *stubPicker) blockHost(escrowID, participant string) {
 	p.mu.Lock()
@@ -2852,6 +2860,40 @@ func TestRunRaceLeavesAHostAloneWhenTheLocalRootIsUnavailable(t *testing.T) {
 	fixture.target.mu.Unlock()
 	if len(diverged) != 0 || len(blocked) != 0 || len(rewound) != 0 {
 		t.Fatalf("diverged = %v, blocked = %v, rewound = %v, want none: the fault is the gateway's own", diverged, blocked, rewound)
+	}
+}
+
+// Test flow:
+//  1. Start a race with a single host whose send fails with `user.ErrHostAbsentFromChain`, the dead slot a session opens for a participant the chain did not list.
+//  2. Run the race to completion.
+//  3. Assert the attempt is flagged a local fault and moves neither the host's congestion verdict nor its sample.
+//  4. Assert the picker was told the host is absent on this escrow, and the host was not marked diverged or blocked.
+func TestRunRaceBlocksAnAbsentSlotOnItsEscrowWithoutJudgingTheHost(t *testing.T) {
+	fixture := newRaceFixture(settledPolicy(), 1)
+	fixture.host(80, 0, "host-0", &hostScript{err: fmt.Errorf("host host-0: %w", user.ErrHostAbsentFromChain)})
+
+	if _, err := fixture.run(context.Background()); err != nil {
+		t.Fatalf("runRace error = %v", err)
+	}
+	reported := <-fixture.reported
+	attempt := reported.Attempts[0]
+	if !attempt.LocalFault || !attempt.HostAbsent {
+		t.Fatalf("LocalFault = %t, HostAbsent = %t, want true and true", attempt.LocalFault, attempt.HostAbsent)
+	}
+	if verdict, moves := reported.Verdict(attempt); moves {
+		t.Fatalf("Verdict = %v, true, want no verdict: the host was never contacted", verdict)
+	}
+	if _, exemption := reported.Sample(attempt); exemption != ExemptLocalFault {
+		t.Fatalf("Sample exemption = %v, want ExemptLocalFault", exemption)
+	}
+	fixture.picker.mu.Lock()
+	absent, blocked, diverged := fixture.picker.absent, fixture.picker.blocked, fixture.picker.diverged
+	fixture.picker.mu.Unlock()
+	if len(absent) != 1 || absent[0] != [2]string{"escrow-1", "host-0"} {
+		t.Fatalf("absent hosts = %v, want [[escrow-1 host-0]]", absent)
+	}
+	if len(diverged) != 0 || len(blocked) != 0 {
+		t.Fatalf("diverged = %v, blocked = %v, want none", diverged, blocked)
 	}
 }
 

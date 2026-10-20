@@ -52,6 +52,7 @@ type Scheduler struct {
 
 	blocksMu     sync.RWMutex
 	blockedHosts map[string]map[string]bool
+	absentHosts  map[string]map[string]bool
 	replays      replayCredit
 }
 
@@ -88,6 +89,7 @@ func NewScheduler(deps Deps) (*Scheduler, error) {
 		onMoneyShort:      deps.OnMoneyShort,
 		dispatchers:       map[string]*dispatcher{},
 		blockedHosts:      map[string]map[string]bool{},
+		absentHosts:       map[string]map[string]bool{},
 	}, nil
 }
 
@@ -103,6 +105,18 @@ func (s *Scheduler) HostDiverged(escrowID, participant string, at time.Time) boo
 // HostServed returns the replay to a participant whose later send the group accepted.
 func (s *Scheduler) HostServed(escrowID, participant string, sentAt time.Time) {
 	s.replays.restore(escrowID, participant, sentAt)
+}
+
+// HostAbsent bars a participant from one escrow whose session holds no client for it. See routing.md, "A slot the chain did not list at open".
+func (s *Scheduler) HostAbsent(escrowID, participant string) {
+	s.blocksMu.Lock()
+	defer s.blocksMu.Unlock()
+	absent := s.absentHosts[escrowID]
+	if absent == nil {
+		absent = map[string]bool{}
+		s.absentHosts[escrowID] = absent
+	}
+	absent[participant] = true
 }
 
 // BlockHost bars a participant from one escrow for as long as the escrow's dispatcher lives. See routing.md.

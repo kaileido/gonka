@@ -22,6 +22,7 @@ type picker interface {
 	Pick(ctx context.Context, profile scheduler.RequestProfile) (scheduler.Assignment, error)
 	HostDiverged(escrowID, participant string, at time.Time) bool
 	HostServed(escrowID, participant string, sentAt time.Time)
+	HostAbsent(escrowID, participant string)
 }
 
 // DispatchTarget is one escrow's session, seen only through what a race needs from it.

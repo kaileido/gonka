@@ -64,6 +64,9 @@ func (c *raceCoordinator) complete(attempt *liveAttempt, event AttemptEvent) {
 		c.retryRuledOut = true
 		c.stopPicking()
 	}
+	if attempt.outcome.HostAbsent {
+		c.deps.Picker.HostAbsent(c.escrowID, attempt.participant)
+	}
 	if attempt.outcome.StateDivergent {
 		c.stateDiverged(attempt)
 		return

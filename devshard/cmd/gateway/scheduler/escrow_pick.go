@@ -176,7 +176,7 @@ func (s *Scheduler) rankCandidates(candidates []Escrow, ranking escrowRanking, r
 			result.passedOverForHosts++
 			continue
 		}
-		forecast := expectedBurns(candidate, ranking.fleet.forEscrow(s.stateBlocked(candidate.ID), chatBudgetSpent(candidate)), ranking.queued, ranking.ahead[index])
+		forecast := expectedBurns(candidate, ranking.fleet.forEscrow(s.stateBlocked(candidate.ID), s.absentFromChain(candidate.ID), chatBudgetSpent(candidate)), ranking.queued, ranking.ahead[index])
 		score := (float64(candidate.ActiveUsers+forecast) + float64(ranking.ahead[index])) / weight
 		switch {
 		case !reserveTier && !affordsAttempts(candidate, ranking.request, ranking.attempts):

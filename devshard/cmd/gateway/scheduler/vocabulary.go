@@ -13,6 +13,7 @@ const (
 	GhostReasonNoCompatibleRequest = "no_compatible_request_after_stale"
 	GhostReasonAbandoned           = "request_abandoned_before_dispatch"
 	GhostReasonPrepareFailed       = "nonce_spent_on_failed_prepare"
+	GhostReasonAbsentFromChain     = "participant_absent_from_chain_no_send"
 )
 
 // ExhaustionReason is why routing will no longer pick an escrow, reported to the lifecycle that replaces it; ExhaustionNone is an escrow it may still pick, and the fallback nonce ceiling is never reported, so it never leaves this package. See routing.md, "Picking an escrow".

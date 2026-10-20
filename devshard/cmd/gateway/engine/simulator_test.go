@@ -1376,6 +1376,8 @@ func (p *panickingPicker) HostDiverged(string, string, time.Time) bool { return 
 
 func (p *panickingPicker) HostServed(string, string, time.Time) {}
 
+func (p *panickingPicker) HostAbsent(string, string) {}
+
 // Test flow:
 //  1. Build an engine directly, not through the simulator (whose cleanup is itself a Stop that would hang here), with a picker that panics on every Pick.
 //  2. Run the race in a goroutine wrapped in a recover, and assert the panic reaches the caller rather than being swallowed.

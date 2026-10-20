@@ -11,7 +11,7 @@ import (
 func (s *Scheduler) predicates(escrow Escrow) func(chain.PhaseSnapshot) availability {
 	model, escrowID := escrow.Model, escrow.ID
 	return func(snapshot chain.PhaseSnapshot) availability {
-		return s.fleetGates(model, snapshot).forEscrow(s.stateBlocked(escrowID), chatBudgetSpent(escrow))
+		return s.fleetGates(model, snapshot).forEscrow(s.stateBlocked(escrowID), s.absentFromChain(escrowID), chatBudgetSpent(escrow))
 	}
 }
 
@@ -70,6 +70,14 @@ func (s *Scheduler) stateBlocked(escrowID string) func(string) bool {
 		s.blocksMu.RLock()
 		defer s.blocksMu.RUnlock()
 		return s.blockedHosts[escrowID][participant]
+	}
+}
+
+func (s *Scheduler) absentFromChain(escrowID string) func(string) bool {
+	return func(participant string) bool {
+		s.blocksMu.RLock()
+		defer s.blocksMu.RUnlock()
+		return s.absentHosts[escrowID][participant]
 	}
 }
 

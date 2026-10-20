@@ -152,7 +152,7 @@ flowchart TD
 
 **The burn budget is `groupSize * (waiters + 1)`, computed once at drain entry.** Together with the freeze it gives the drain a termination proof: `waiting`, the availability predicates and the budget are all fixed — the forced send changes which of serve and burn a binding produces, never whether one of them happens — no waiter is appended during a drain (appends happen only in the select loop), and every iteration either returns, serves — which strictly shrinks the queue — or burns, which strictly shrinks the budget. Iterations are therefore bounded by `waiters + budget + 1`. Hold deadlines are fixed at enqueue time, so a fired timer cannot re-hold the same head.
 
-**The sweep is the second termination lever.** Before every binding it drops abandoned waiters silently and answers any waiter for which no participant passes all seven gates (outside the allowlist, PoC-required, window full, cut off, ejected, state-blocked, excluded by this waiter) with an error rather than leaving it queued. The sweep spends no nonce: it is the one exit that costs nothing, which is why it runs before every binding rather than after the queue has burned its way through the group.
+**The sweep is the second termination lever.** Before every binding it drops abandoned waiters silently and answers any waiter for which no participant passes all eight gates (outside the allowlist, absent from the escrow's session, PoC-required, window full, cut off, ejected, state-blocked, excluded by this waiter) with an error rather than leaving it queued. The sweep spends no nonce: it is the one exit that costs nothing, which is why it runs before every binding rather than after the queue has burned its way through the group.
 
 ### match is pure
 
@@ -167,7 +167,7 @@ flowchart TD
 
 The exhaustiveness of that sum type is the nonce-liveness invariant made compiler-checked (`decision.go`, `Decision`): there is no outcome in which a nonce is committed and nobody owns it, and no way to add one without changing the type.
 
-Decision order (`scheduler/match.go`, `firstBlock`): a host outside the allowlist burns `ghostNotAllowed`; a host the chain has *not* preserved, and therefore requires to run proof-of-compute, burns `ghostPoC`; a host whose congestion windows are full burns `ghostWindowFull` and one its cut-off holds burns `ghostCutOff`; a host the outlier detector ejected burns `ghostEjected`; a host whose escrow state diverged burns `ghostStateDiverged`; and only then does the queue's own exclusion apply.
+Decision order (`scheduler/match.go`, `firstBlock`): a host outside the allowlist burns `ghostNotAllowed`; a host the escrow's session holds no client for burns `ghostAbsentFromChain`; a host the chain has *not* preserved, and therefore requires to run proof-of-compute, burns `ghostPoC`; a host whose congestion windows are full burns `ghostWindowFull` and one its cut-off holds burns `ghostCutOff`; a host the outlier detector ejected burns `ghostEjected`; a host whose escrow state diverged burns `ghostStateDiverged`; and only then does the queue's own exclusion apply.
 
 Two details in that order are load-bearing. The hold deadline is anchored on the oldest **live** waiter, never on the queue head, because an abandoned head would otherwise park a nonce for a caller who will never be served — a liveness failure in disguise (`match.go`, the hold branch of `match`). And the hold window is half-open (`now.Before(until)`), so the deadline always passes.
 
@@ -186,6 +186,7 @@ A ghost commits a real inference into the escrow's local diff and never sends it
 | `ghostPrepareFailed` | `nonce_spent_on_failed_prepare` | The session committed the nonce and then failed to finish preparing it, as when reading a host's catch-up from the store fails (`user.ErrPreparedAfterCommit`, reported as `SpentNonceError`). The nonce is spent either way: the request it was committed for fails alone, the burn is recorded in its name, and the drain goes on with the rest of the queue. It does not count as a burn in a row, because a store failure says nothing about the host's window, but it does spend the drain's burn budget, so a failure that lasts costs one nonce per request. |
 | `ghostNotAllowed` | `participant_outside_allowlist` | The host is not on the participant allowlist, which is checked before every other gate. |
 | `ghostStateDiverged` | `participant_state_diverged_no_send` | The host's escrow state diverged from this gateway's, so nothing may be dispatched to it on that escrow. |
+| `ghostAbsentFromChain` | `participant_absent_from_chain_no_send` | The escrow's session holds no client for the host, because the chain did not list it when the session opened, so a send there fails without leaving the gateway. See "A slot the chain did not list at open". |
 
 Every burn is reported to the dispatch observer, which turns it into `devshard_gateway_ghost_nonces_burned_total{devshard_id,participant,reason}`. A burned nonce is spent money; an unlabelled burn is money the operator cannot account for.
 
@@ -279,6 +280,12 @@ So past the stale window, when a host is blocked by nothing except the waiting r
 **Only when there is no alternative.** If any other participant could serve that waiter, the nonce is burned as before and the walk continues — otherwise a request would be handed straight back to the host it escalated away from while a healthy host sat idle (`availability.onlyThisHostIsLeft`). The serve is marked, so an operator can tell it apart from an ordinary one.
 
 Every burn names its participant, in the log line and on `devshard_gateway_ghost_nonces_burned_total`. Without it the count says nonces are being spent and not which host's slots are eating them, which is the only thing that makes the number actionable.
+
+## A slot the chain did not list at open
+
+An escrow session opened while a group member is absent from the chain gives that slot a client that fails every call with `user.ErrHostAbsentFromChain` (`app/devshards.go`, `servingSessions`, which sets `OpenAbsentHostsAsDeadSlots`), and the session keeps it until it closes, whether or not the participant comes back. A send there never reaches the host, so it says nothing about the host: the engine reads it as a local fault, which moves neither the participant's cut-off nor its ejection (`engine/attempt_outcome.go`, `classify`; [race.md](./race.md), "The exemption ladder"), and reports it to the scheduler (`Scheduler.HostAbsent`). From then on the escrow's ladder burns that slot's nonces as `participant_absent_from_chain_no_send` instead of sending them (`match.go`, `firstBlock`), while every other escrow keeps routing to the host. The block is per escrow and lasts as long as the scheduler, like a divergence block; the dead client lasts as long as the session, so a session reopened after the participant returns serves the slot again only on a scheduler that has not blocked it.
+
+Judging the host on those failures, which is what the dial-failure terminal did, let one escrow's dead slot hold a healthy host cut off and ejected on every escrow for minutes after it was back on chain, each half-open probe landing on the dead slot and failing again.
 
 ## Host blocking is permanent
 
