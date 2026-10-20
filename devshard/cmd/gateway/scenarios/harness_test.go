@@ -389,6 +389,7 @@ func (h *gatewayHarness) boot(gatewayStore *store.Store) {
 		Reader:    h.chain,
 		Transport: h.chain,
 		PublicAPI: newFakePublicAPIClient(h.chain, h.spec.modelIDs()),
+		Hosts:     h.fleet,
 	}
 	composed, err := app.Compose(context.Background(), h.values, h.storageDir, gatewayStore, sources)
 	if err != nil {

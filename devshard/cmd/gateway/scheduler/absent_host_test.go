@@ -30,3 +30,19 @@ func TestAHostAbsentFromOneEscrowsSessionBurnsThereAndServesElsewhere(t *testing
 	escrowBLadder := test.scheduler.predicates(Escrow{ID: escrowB, Model: modelA, Session: test.session(t, escrowB)})(chain.PhaseSnapshot{})
 	require.Equal(t, blockNone, escrowBLadder.participantBlocked(hostB))
 }
+
+// Test flow:
+//  1. Report host B absent from escrow A's session and assert AbsentHosts lists it under escrow A alone.
+//  2. Forget escrow A's absent hosts.
+//  3. Assert AbsentHosts is empty and escrow A's ladder lets host B serve again.
+func TestForgettingAnEscrowsAbsentHostsLetsTheHostServeThereAgain(t *testing.T) {
+	test := newSchedulerHarness(t, schedulerConfig{escrows: []string{escrowA, escrowB}})
+	test.scheduler.HostAbsent(escrowA, hostB)
+	require.Equal(t, map[string][]string{escrowA: {hostB}}, test.scheduler.AbsentHosts())
+
+	test.scheduler.ForgetAbsentHosts(escrowA)
+
+	require.Empty(t, test.scheduler.AbsentHosts())
+	escrowALadder := test.scheduler.predicates(Escrow{ID: escrowA, Model: modelA, Session: test.session(t, escrowA)})(chain.PhaseSnapshot{})
+	require.Equal(t, blockNone, escrowALadder.participantBlocked(hostB))
+}

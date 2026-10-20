@@ -19,6 +19,7 @@ import (
 	"time"
 
 	devshardpkg "devshard"
+	"devshard/bridge"
 	"devshard/cmd/gateway/filters"
 	"devshard/cmd/gateway/registry"
 	"devshard/heightsync"
@@ -55,6 +56,7 @@ type participantBehaviour struct {
 	votesInvalid bool
 	inputTokens  uint64
 	contextLimit uint64
+	unlisted     bool
 }
 
 // fleetEscrow keeps the user side in its own storage, so every session recovers from it as production does.
@@ -143,6 +145,9 @@ type hostFleet struct {
 
 	released    chan struct{}
 	releaseOnce sync.Once
+
+	sendsMu sync.Mutex
+	sends   map[string]int
 }
 
 func newHostFleet(t *testing.T, blockchain *fakeChain, creator *signing.Secp256k1Signer, participants []*signing.Secp256k1Signer, validationRate uint32) *hostFleet {
@@ -152,6 +157,7 @@ func newHostFleet(t *testing.T, blockchain *fakeChain, creator *signing.Secp256k
 		behaviours: map[string]*participantBehaviour{},
 		escrows:    map[string]*fleetEscrow{},
 		released:   make(chan struct{}),
+		sends:      map[string]int{},
 	}
 	for _, participant := range participants {
 		fleet.signers[participant.Address()] = participant
@@ -210,6 +216,10 @@ func (f *hostFleet) open(escrowID string, withCadence bool) (registry.EscrowSess
 	clients := make([]user.HostClient, 0, len(built.clients))
 	for _, client := range built.clients {
 		sessionClient := *client.(*fleetClient)
+		if f.behaviourOf(sessionClient.address).unlisted {
+			clients = append(clients, unlistedClient{address: sessionClient.address})
+			continue
+		}
 		sessionClient.exited = exited
 		clients = append(clients, &sessionClient)
 	}
@@ -464,6 +474,7 @@ func (c *fleetClient) Send(ctx context.Context, request host.HostRequest, stream
 	if c.fleet.behaviourOf(c.address).offline {
 		return nil, errParticipantOffline
 	}
+	c.fleet.countSend(c.address)
 	c.escrow.diffs.record(request.Diffs)
 	guarded := &guardedWriter{target: stream}
 	guardedReceipts := func(response *host.HostResponse) {
@@ -824,6 +835,31 @@ func TestFleetDiffLogKeepsNonceOrderAndDropsRepeats(t *testing.T) {
 	if len(stored) != 2 || stored[0].Nonce != 1 || stored[1].Nonce != 2 {
 		t.Fatalf("upTo(2) = %v, want nonces [1 2]", stored)
 	}
+}
+
+func (f *hostFleet) GetHostInfo(address string) (*bridge.HostInfo, error) {
+	if f.behaviourOf(address).unlisted {
+		return nil, fmt.Errorf("participant %s: %w", address, bridge.ErrParticipantNotFound)
+	}
+	return &bridge.HostInfo{URL: "fleet://" + address}, nil
+}
+
+func (f *hostFleet) countSend(address string) {
+	f.sendsMu.Lock()
+	defer f.sendsMu.Unlock()
+	f.sends[address]++
+}
+
+func (f *hostFleet) sendsTo(address string) int {
+	f.sendsMu.Lock()
+	defer f.sendsMu.Unlock()
+	return f.sends[address]
+}
+
+type unlistedClient struct{ address string }
+
+func (c unlistedClient) Send(context.Context, host.HostRequest, io.Writer, func(*host.HostResponse)) (*host.HostResponse, error) {
+	return nil, fmt.Errorf("host %s: %w", c.address, user.ErrHostAbsentFromChain)
 }
 
 // inferencesStartedOn counts the attempts started on an escrow, read from the diffs its hosts were sent; drain diffs start none.

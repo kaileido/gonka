@@ -23,7 +23,7 @@ func TestRepublishRetriesAnUnopenedEscrowUntilItOpens(t *testing.T) {
 			return 0, nil
 		}
 
-		done := republishEscrows(ctx, make(chan struct{}), 1, publish)
+		done := republishEscrows(ctx, make(chan struct{}), 1, publish, nil)
 		time.Sleep(unopenedEscrowRetryDelay)
 		synctest.Wait()
 		afterFirstRetry := publishes.Load()
@@ -58,7 +58,7 @@ func TestRepublishWaitsForAWriteWhenEveryEscrowOpened(t *testing.T) {
 		}
 		writes := make(chan struct{}, 1)
 
-		done := republishEscrows(ctx, writes, 0, publish)
+		done := republishEscrows(ctx, writes, 0, publish, nil)
 		time.Sleep(10 * unopenedEscrowRetryDelay)
 		synctest.Wait()
 		withoutWrite := publishes.Load()

@@ -119,6 +119,26 @@ func (s *Scheduler) HostAbsent(escrowID, participant string) {
 	absent[participant] = true
 }
 
+// AbsentHosts returns, per escrow, the participants HostAbsent barred from it.
+func (s *Scheduler) AbsentHosts() map[string][]string {
+	s.blocksMu.RLock()
+	defer s.blocksMu.RUnlock()
+	marked := make(map[string][]string, len(s.absentHosts))
+	for escrowID, participants := range s.absentHosts {
+		for participant := range participants {
+			marked[escrowID] = append(marked[escrowID], participant)
+		}
+	}
+	return marked
+}
+
+// ForgetAbsentHosts lifts an escrow's HostAbsent bars, for a session that is opened anew.
+func (s *Scheduler) ForgetAbsentHosts(escrowID string) {
+	s.blocksMu.Lock()
+	defer s.blocksMu.Unlock()
+	delete(s.absentHosts, escrowID)
+}
+
 // BlockHost bars a participant from one escrow for as long as the escrow's dispatcher lives. See routing.md.
 func (s *Scheduler) BlockHost(escrowID, participant string) {
 	s.blocksMu.Lock()
