@@ -147,7 +147,7 @@ func TestRecheckJudgesASavedRunLikeTheLiveEvaluation(t *testing.T) {
 		require.Equal(t, check, got)
 	}
 	require.FileExists(t, filepath.Join(dir, "invariants.json"))
-	require.FileExists(t, filepath.Join(filepath.Dir(dir), knownBugHistoryFile))
+	require.FileExists(t, filepath.Join(filepath.Dir(dir), checkHistoryFile))
 	orphans := byName["devshard.no_orphaned_work"]
 	require.True(t, orphans.Passed, orphans.Details)
 	require.Contains(t, orphans.Actual, "ghost=0 ghost_excluded=1 total=1")

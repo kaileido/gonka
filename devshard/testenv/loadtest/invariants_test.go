@@ -389,6 +389,43 @@ func TestInvariantPendingAgeLeavesOutBurnedNonces(t *testing.T) {
 }
 
 // Test flow:
+// 1. Hold escrow 11 inference 77, executed on slot 2 (p2, versiond-3), open from 2m50s to 7m00s, three polls above the 220 s bound.
+// 2. Require max_pending_age to fail as a single record that is a FIX only on a repeat, its details naming host versiond-3, fault e1 and the global gateway restart e2.
+// 3. Add a second record over the bound on escrow 10 whose executor is unknown, at 8m00s and 300 s old.
+// 4. Require the check to fail outright, the oldest record first, with every fault window its open time overlaps.
+func TestInvariantPendingAgeNamesTheHostAndFaultOfEachRecord(t *testing.T) {
+	in := passingInputs()
+	for i := range in.Pending {
+		s := &in.Pending[i]
+		if s.EscrowID == "11" && !s.At.Before(at(6*time.Minute+10*time.Second)) && !s.At.After(at(7*time.Minute)) {
+			s.Open, s.OldestInference, s.OldestStatus = 2, "77", "pending"
+			s.MaxAgeSeconds = s.At.Sub(at(2*time.Minute + 50*time.Second)).Seconds()
+		}
+	}
+	in.Inferences["11"]["77"] = DebugInference{Status: "pending", ExecutorSlot: 2, StartedAt: at(2*time.Minute + 50*time.Second).Unix()}
+
+	checks, report := evaluateInvariants(in)
+	check := checksNamed(t, checks, "no-nonce-left-pending.max_pending_age")[0]
+	require.False(t, check.Passed)
+	require.True(t, check.fixOnRepeat)
+	require.Equal(t, "max=250s records_over=1 samples_over=3 burned_max=0s burned_samples_over=0", check.Actual)
+	require.Equal(t, "escrow 11 inference 77 (pending) on versiond-3 in e1, e2: 250s old at "+at(7*time.Minute).Format(time.RFC3339)+", 3 polls over", check.Details)
+	body, err := json.Marshal(report.Tables["no-nonce-left-pending"])
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"max_age_host":"versiond-3"`)
+	require.Contains(t, string(body), `"max_age_faults":["e1","e2"]`)
+
+	in.Pending = append(in.Pending, PendingSample{At: at(8 * time.Minute), EscrowID: "10", Open: 1, OldestInference: "5", OldestStatus: "open", MaxAgeSeconds: 300})
+	checks, _ = evaluateInvariants(in)
+	check = checksNamed(t, checks, "no-nonce-left-pending.max_pending_age")[0]
+	require.False(t, check.Passed)
+	require.False(t, check.fixOnRepeat)
+	require.Contains(t, check.Actual, "records_over=2 samples_over=4")
+	require.Equal(t, "escrow 10 inference 5 (open) on an unknown host in e1, e2, e3: 300s old at "+at(8*time.Minute).Format(time.RFC3339)+", 1 polls over; "+
+		"escrow 11 inference 77 (pending) on versiond-3 in e1, e2: 250s old at "+at(7*time.Minute).Format(time.RFC3339)+", 3 polls over", check.Details)
+}
+
+// Test flow:
 // 1. Keep a deactivated escrow resident in the gateway registry.
 // 2. Require no-runtime-for-deactivated-escrow to fail, carry the case from the settings, and pass otherwise.
 func TestInvariantResidentRuntimes(t *testing.T) {

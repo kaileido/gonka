@@ -884,8 +884,10 @@ func evalNoNonceLeftPending(c *invariantContext) ([]AssertionResult, any) {
 	limit := c.in.Settings.MaxPendingAge.Seconds()
 	burned := burnedNonces(c.in.Burns)
 	var worst PendingSample
-	var over []string
 	var overSpans []timeSpan
+	// A record is one escrow's oldest open inference; its polls over the bound count once.
+	records := map[[2]string]*pendingRecord{}
+	samplesOver := 0
 	var burnedMax float64
 	burnedOver, legacy := 0, 0
 	settleFrom := c.in.PendingSettleFrom
@@ -906,8 +908,19 @@ func evalNoNonceLeftPending(c *invariantContext) ([]AssertionResult, any) {
 			worst = s
 		}
 		if s.MaxAgeSeconds > limit {
-			over = append(over, fmt.Sprintf("%s escrow %s inference %s (%s) age %.0fs", s.At.Format(time.RFC3339), s.EscrowID, s.OldestInference, s.OldestStatus, s.MaxAgeSeconds))
-			overSpans = append(overSpans, timeSpan{From: s.At.Add(-time.Duration(s.MaxAgeSeconds * float64(time.Second))), To: s.At})
+			samplesOver++
+			from := s.At.Add(-time.Duration(s.MaxAgeSeconds * float64(time.Second)))
+			overSpans = append(overSpans, timeSpan{From: from, To: s.At})
+			key := [2]string{s.EscrowID, s.OldestInference}
+			r := records[key]
+			if r == nil {
+				r = &pendingRecord{Escrow: s.EscrowID, Inference: s.OldestInference, From: from}
+				records[key] = r
+			}
+			r.Polls++
+			if s.MaxAgeSeconds >= r.Age {
+				r.Age, r.At, r.Status = s.MaxAgeSeconds, s.At, s.OldestStatus
+			}
 		}
 		if s.At.After(latest) {
 			latest = s.At
@@ -940,10 +953,86 @@ func evalNoNonceLeftPending(c *invariantContext) ([]AssertionResult, any) {
 	}
 	sort.Strings(dirty)
 	sort.Strings(apart)
+	over := c.pendingRecords(records)
+	var lines []string
+	for _, r := range over {
+		faults := "no fault window"
+		if len(r.Faults) > 0 {
+			faults = strings.Join(r.Faults, ", ")
+		}
+		lines = append(lines, fmt.Sprintf("escrow %s inference %s (%s) on %s in %s: %.0fs old at %s, %d polls over", r.Escrow, r.Inference, r.Status, r.Host, faults, r.Age, r.At.Format(time.RFC3339), r.Polls))
+	}
+	age := withSpans(invariantCheck("no-nonce-left-pending.max_pending_age", caseID, len(over) == 0, fmt.Sprintf("max pending/started age <= %s at every sample, burned nonces apart", c.in.Settings.MaxPendingAge), fmt.Sprintf("max=%.0fs records_over=%d samples_over=%d burned_max=%.0fs burned_samples_over=%d", worst.MaxAgeSeconds, len(over), samplesOver, burnedMax, burnedOver), strings.Join(firstN(lines, 10), "; ")), overSpans...)
+	// One stuck nonce is chance often enough (2 of 3 gateway prod-like runs) that only a repeat is a FIX.
+	age.fixOnRepeat = len(over) == 1
+	table := pendingTable(worst, limit, samplesOver, burnedMax, burnedOver, legacy)
+	table["records_over"] = len(over)
+	if len(over) > 0 {
+		table["max_age_inference"], table["max_age_host"], table["max_age_faults"] = over[0].Inference, over[0].Host, over[0].Faults
+	}
 	return []AssertionResult{
-		withSpans(invariantCheck("no-nonce-left-pending.max_pending_age", caseID, len(over) == 0, fmt.Sprintf("max pending/started age <= %s at every sample, burned nonces apart", c.in.Settings.MaxPendingAge), fmt.Sprintf("max=%.0fs samples_over=%d burned_max=%.0fs burned_samples_over=%d", worst.MaxAgeSeconds, len(over), burnedMax, burnedOver), strings.Join(firstN(over, 10), "; ")), overSpans...),
+		age,
 		invariantCheck("no-nonce-left-pending.clean_end_state", caseID, len(dirty) == 0, "final poll: no open inference and no pending tx, burned nonces and warm-up-only escrows apart", fmt.Sprintf("dirty=%d apart=%d", len(dirty), len(apart)), strings.Join(append(dirty, apart...), "; ")),
-	}, pendingTable(worst, limit, len(over), burnedMax, burnedOver, legacy)
+	}, table
+}
+
+// pendingRecord is one inference open past max_pending_age: its oldest poll, and where it ran.
+type pendingRecord struct {
+	Escrow, Inference, Status string
+	Age                       float64
+	From, At                  time.Time
+	Polls                     int
+	Host                      string
+	Faults                    []string
+}
+
+// pendingRecords returns records oldest first, each with its executor's host from the Host-stats
+// groups and the events that overlap its open time: global ones and those on its executor, or all
+// of them when the executor is unknown.
+func (c *invariantContext) pendingRecords(records map[[2]string]*pendingRecord) []pendingRecord {
+	owners := c.slotOwners()
+	out := make([]pendingRecord, 0, len(records))
+	for _, r := range records {
+		participant := ""
+		if inference, ok := c.in.Inferences[r.Escrow][r.Inference]; ok {
+			participant = owners[r.Escrow][inference.ExecutorSlot]
+		}
+		var hosts []string
+		for _, host := range c.in.Hosts {
+			if participant != "" && host.Participant == participant {
+				hosts = append(hosts, host.ID)
+			}
+		}
+		switch {
+		case len(hosts) > 0:
+			r.Host = strings.Join(hosts, "/")
+		case participant != "":
+			r.Host = participant
+		default:
+			r.Host = "an unknown host"
+		}
+		for _, event := range c.in.Events {
+			_, target := c.eventTarget(event)
+			if event.StartedAt == nil || participant != "" && target != "" && target != participant {
+				continue
+			}
+			end := c.runEnd
+			if event.EndedAt != nil {
+				end = *event.EndedAt
+			}
+			if !event.StartedAt.After(r.At) && !end.Add(c.in.Settings.Grace).Before(r.From) && !slices.Contains(r.Faults, event.ID) {
+				r.Faults = append(r.Faults, event.ID)
+			}
+		}
+		out = append(out, *r)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Age != out[j].Age {
+			return out[i].Age > out[j].Age
+		}
+		return out[i].Escrow+"/"+out[i].Inference < out[j].Escrow+"/"+out[j].Inference
+	})
+	return out
 }
 
 // settledPending returns each escrow's poll that clean_end_state judges among the polls of the first

@@ -35,8 +35,8 @@ type RunnerConfig struct {
 	GatewayDriver config.GatewayDriver
 	// StrictXFail fails the run when a known_bug case passes (XPASS).
 	StrictXFail bool
-	// KnownBugHistory is the file that counts XPASS runs in a row; empty means known-bug-history.json beside OutputDir.
-	KnownBugHistory string
+	// CheckHistory is the file of outcomes that span runs (see recordCheckHistory); empty means check-history.json beside OutputDir.
+	CheckHistory string
 }
 
 type RunResult struct {
@@ -91,6 +91,8 @@ type AssertionResult struct {
 	Status string `json:"status,omitempty"`
 	// spans are the windows the check judged; see markInvalid.
 	spans []timeSpan
+	// fixOnRepeat marks a failure that is a FIX only when it repeats; see recordCheckHistory.
+	fixOnRepeat bool
 }
 
 type assertionFailures struct {
@@ -420,7 +422,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	if err := writeRunInputs(opts.OutputDir, inputs); err != nil {
 		return result, fmt.Errorf("write %s: %w", runInputsFile, err)
 	}
-	assertions, _, err := recheckRun(opts.OutputDir, opts.StrictXFail, opts.KnownBugHistory)
+	assertions, _, err := recheckRun(opts.OutputDir, opts.StrictXFail, opts.CheckHistory)
 	if err != nil {
 		return result, fmt.Errorf("evaluate checks: %w", err)
 	}
