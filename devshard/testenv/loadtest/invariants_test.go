@@ -314,6 +314,41 @@ func TestInvariantPendingAge(t *testing.T) {
 }
 
 // Test flow:
+// 1. Settle-poll escrow 11 every second for 60 s after a drain at 10m10s, with a tx batch of 14 still queued for the first 8 s.
+// 2. Require clean_end_state to pass, judged on the first two clean polls, and max_pending_age to ignore a post-drain poll 400 s old.
+// 3. Keep the batch queued through the first 30 s after drain and clear it at 45 s.
+// 4. Require clean_end_state to fail on escrow 11 with its batch.
+func TestInvariantCleanEndStateWaitsForTheSettle(t *testing.T) {
+	settling := func(queuedFor time.Duration) InvariantInputs {
+		in := passingInputs()
+		in.Pending = in.Pending[:len(in.Pending)-2]
+		in.PendingSettleFrom = at(10*time.Minute + 10*time.Second)
+		for after := time.Duration(0); after < 60*time.Second; after += time.Second {
+			s := PendingSample{At: in.PendingSettleFrom.Add(after), EscrowID: "11", Nonce: 50}
+			if after < queuedFor {
+				s.PendingTxs = 14
+			}
+			if after == 50*time.Second {
+				s.Open, s.MaxAgeSeconds = 1, 400
+			}
+			in.Pending = append(in.Pending, s)
+		}
+		return in
+	}
+
+	checks, _ := evaluateInvariants(settling(8 * time.Second))
+	clean := checksNamed(t, checks, "no-nonce-left-pending.clean_end_state")[0]
+	require.True(t, clean.Passed, "actual=%s details=%s", clean.Actual, clean.Details)
+	age := checksNamed(t, checks, "no-nonce-left-pending.max_pending_age")[0]
+	require.True(t, age.Passed, "actual=%s details=%s", age.Actual, age.Details)
+
+	checks, _ = evaluateInvariants(settling(45 * time.Second))
+	clean = checksNamed(t, checks, "no-nonce-left-pending.clean_end_state")[0]
+	require.False(t, clean.Passed)
+	require.Equal(t, "escrow 11 open=0 pending_txs=14", clean.Details)
+}
+
+// Test flow:
 // 1. Give one pending sample an open nonce 400 s old, above the 220 s bound, and require max_pending_age to fail.
 // 2. Record that nonce as burned by the gateway.
 // 3. Require max_pending_age to pass and the burned nonce to be reported apart: burned max age 400 s, one sample over the bound.

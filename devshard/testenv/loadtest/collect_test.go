@@ -223,6 +223,31 @@ func TestJSONLPollerSchedule(t *testing.T) {
 }
 
 // Test flow:
+// 1. Start a poller on a 5 ms schedule and halt it.
+// 2. Require no scheduled sample after the halt, and the samples taken by hand before stop to land in the JSONL artifact.
+func TestJSONLPollerHaltKeepsTheArtifactOpen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "samples.jsonl")
+	collect := func(_ context.Context, label string) []AccountingSnapshot {
+		return []AccountingSnapshot{{Label: label}}
+	}
+	poller, err := startJSONLPoller(context.Background(), path, "start", everyInterval(5*time.Millisecond), collect)
+	require.NoError(t, err)
+	poller.halt()
+	poller.mu.Lock()
+	halted := len(poller.samples)
+	poller.mu.Unlock()
+	time.Sleep(30 * time.Millisecond)
+	poller.sample(context.Background(), "settle")
+	poller.sample(context.Background(), "settle")
+	samples := poller.stop("final")
+	require.Len(t, samples, halted+3)
+	require.Equal(t, []string{"settle", "settle", "final"}, []string{samples[halted].Label, samples[halted+1].Label, samples[halted+2].Label})
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Len(t, strings.Split(strings.TrimSpace(string(body)), "\n"), halted+3)
+}
+
+// Test flow:
 // 1. Serve a fake gateway with an active resident escrow, a deactivated resident one and a retired one.
 // 2. Fetch devshards and collect throttle and pending samples for resident escrows only.
 // 3. Check that the pending poller hands on the inference list it read for each resident escrow.

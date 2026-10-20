@@ -116,6 +116,16 @@ func (p *jsonlPoller[T]) sample(ctx context.Context, label string) {
 	p.samples = append(p.samples, samples...)
 }
 
+// halt ends the schedule and waits for its sample in flight; the artifact stays open for samples
+// the caller takes until stop. It is safe on a nil poller.
+func (p *jsonlPoller[T]) halt() {
+	if p == nil {
+		return
+	}
+	p.cancel()
+	<-p.done
+}
+
 // stop ends the schedule, takes one last sample labeled finalLabel unless it
 // is empty, and closes the artifact. It is safe on a nil poller.
 func (p *jsonlPoller[T]) stop(finalLabel string) []T {

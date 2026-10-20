@@ -51,6 +51,8 @@ type invariantEndState struct {
 	ReconcileTicks     map[string][]time.Time               `json:"reconcile_ticks"`
 	Devshards          []GatewayDevshard                    `json:"devshards"`
 	Inferences         map[string]map[string]DebugInference `json:"inferences"`
+	// PendingSettleFrom is when the pending poller turned from its schedule to settle polls after drain.
+	PendingSettleFrom time.Time `json:"pending_settle_from,omitzero"`
 	// LastLiveInferences is the last list the pending poller read for each escrow Inferences lacks, such as one settled and pruned before drain.
 	LastLiveInferences map[string]map[string]DebugInference `json:"last_live_inferences,omitempty"`
 	SettleTxs          []ledgerface.TxView                  `json:"settle_txs"`
@@ -147,7 +149,7 @@ func evaluateRunInvariants(dir string, scenario Scenario, events []EventRecord, 
 	in := InvariantInputs{
 		Gateway: scenario.Topology.Gateway, Started: inputs.Started, Workload: scenario.Duration(), Settings: resolveInvariantSettings(scenario), Hosts: inputs.Hosts,
 		NodeHosts: map[string]string{}, Events: events, Burns: inputs.Burns, ChainMaxNonce: scenario.Topology.Chain.MaxNonce,
-		SettlementDisabled: end.SettlementDisabled, ReconcileTicks: end.ReconcileTicks, Devshards: end.Devshards, Inferences: end.Inferences,
+		PendingSettleFrom: end.PendingSettleFrom, SettlementDisabled: end.SettlementDisabled, ReconcileTicks: end.ReconcileTicks, Devshards: end.Devshards, Inferences: end.Inferences,
 		SettleTxs: end.SettleTxs, Escrows: end.Escrows, ChainError: end.ChainError, Leases: end.Leases, LeasesError: end.LeasesError,
 		LeaseExcluded: end.LeaseExcluded, EscrowMissing: end.EscrowMissing, DidNotCompress: end.DidNotCompress, PayloadFiles: end.PayloadFiles,
 	}

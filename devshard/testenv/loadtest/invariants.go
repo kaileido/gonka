@@ -53,9 +53,15 @@ const (
 	hostValidationWorkers    = 20
 	hostValidationQueueBytes = 20_000 * 176
 	// hostServingFamily counts the requests a host finished; a host is serving once it rises above 0.
-	hostServingFamily   = "devshard_request_terminal_total"
-	throttlePollEvery   = 5 * time.Second
-	pendingPollEvery    = 10 * time.Second
+	hostServingFamily = "devshard_request_terminal_total"
+	throttlePollEvery = 5 * time.Second
+	pendingPollEvery  = 10 * time.Second
+	// pendingSettle: clean_end_state judges an escrow on its first two clean polls this soon after drain,
+	// so a tx batch still in flight at the drain end is not read as left pending.
+	pendingSettle     = 30 * time.Second
+	pendingSettlePoll = time.Second
+	// pendingPostDrain is how long the pending poller keeps polling after drain, to record how long the rest takes to clear.
+	pendingPostDrain    = 60 * time.Second
 	hostStatsPollEvery  = 30 * time.Second
 	dapiHostsPollEvery  = 10 * time.Second
 	stateRootRecovery   = 60 * time.Second
@@ -143,6 +149,7 @@ type InvariantInputs struct {
 	Accounting         []AccountingSnapshot                 // GW-acct: stats /api/v1/epochs/current/participants
 	Throttle           []ThrottleSample                     // GW-dbg: /v1/admin/devshards/{id}/participants
 	Pending            []PendingSample                      // GW-dbg: /v1/debug/pending + /v1/debug/inferences
+	PendingSettleFrom  time.Time                            // drain end, when the pending poller turned to settle polls; zero in runs before them
 	HostStats          []HostStatsSample                    // Host-stats: /stats/shards[/:id], /stats/rpc
 	DapiHosts          []DapiHostSample                     // mock-dapi: /testenv/host-stats
 	ReconcileTicks     map[string][]time.Time               // versiond "reconcile desired versions" lines
@@ -881,8 +888,12 @@ func evalNoNonceLeftPending(c *invariantContext) ([]AssertionResult, any) {
 	var overSpans []timeSpan
 	var burnedMax float64
 	burnedOver, legacy := 0, 0
+	settleFrom := c.in.PendingSettleFrom
 	latest := usable[0].At
 	for _, s := range usable {
+		if !settleFrom.IsZero() && s.At.After(settleFrom.Add(pendingPollEvery/2)) {
+			continue
+		}
 		if s.Open > 0 && s.OpenStarted == nil {
 			legacy++
 		}
@@ -902,23 +913,20 @@ func evalNoNonceLeftPending(c *invariantContext) ([]AssertionResult, any) {
 			latest = s.At
 		}
 	}
-	// One final sample per escrow: the poller can land twice inside the window.
-	final := map[string]PendingSample{}
-	for _, s := range usable {
-		if latest.Sub(s.At) <= pendingPollEvery/2 && s.At.After(final[s.EscrowID].At) {
-			final[s.EscrowID] = s
+	final := settledPending(usable, settleFrom, burned)
+	if len(final) == 0 {
+		// One final sample per escrow: the poller can land twice inside the window.
+		for _, s := range usable {
+			if latest.Sub(s.At) <= pendingPollEvery/2 && s.At.After(final[s.EscrowID].At) {
+				final[s.EscrowID] = s
+			}
 		}
 	}
 	// A burned nonce stays open until its escrow closes, and an escrow created during the drain holds
 	// only its warm-up probe, whose finish waits for the next request's diff; both are reported apart.
 	var dirty, apart []string
 	for _, s := range final {
-		open := s.Open
-		for id := range s.OpenStarted {
-			if burned[s.EscrowID][id] {
-				open--
-			}
-		}
+		open := openUnburned(s, burned)
 		switch {
 		case open == 0 && s.PendingTxs == 0:
 			if s.Open > 0 {
@@ -936,6 +944,46 @@ func evalNoNonceLeftPending(c *invariantContext) ([]AssertionResult, any) {
 		withSpans(invariantCheck("no-nonce-left-pending.max_pending_age", caseID, len(over) == 0, fmt.Sprintf("max pending/started age <= %s at every sample, burned nonces apart", c.in.Settings.MaxPendingAge), fmt.Sprintf("max=%.0fs samples_over=%d burned_max=%.0fs burned_samples_over=%d", worst.MaxAgeSeconds, len(over), burnedMax, burnedOver), strings.Join(firstN(over, 10), "; ")), overSpans...),
 		invariantCheck("no-nonce-left-pending.clean_end_state", caseID, len(dirty) == 0, "final poll: no open inference and no pending tx, burned nonces and warm-up-only escrows apart", fmt.Sprintf("dirty=%d apart=%d", len(dirty), len(apart)), strings.Join(append(dirty, apart...), "; ")),
 	}, pendingTable(worst, limit, len(over), burnedMax, burnedOver, legacy)
+}
+
+// settledPending returns each escrow's poll that clean_end_state judges among the polls of the first
+// pendingSettle after from: the second of two clean polls in a row, else its last poll. It is empty
+// when from is zero or no poll falls in that window.
+func settledPending(samples []PendingSample, from time.Time, burned map[string]map[string]bool) map[string]PendingSample {
+	final := map[string]PendingSample{}
+	if from.IsZero() {
+		return final
+	}
+	var window []PendingSample
+	for _, s := range samples {
+		if !s.At.Before(from) && !s.At.After(from.Add(pendingSettle)) {
+			window = append(window, s)
+		}
+	}
+	sort.SliceStable(window, func(i, j int) bool { return window[i].At.Before(window[j].At) })
+	settled := map[string]bool{}
+	for _, s := range window {
+		if settled[s.EscrowID] {
+			continue
+		}
+		clean := openUnburned(s, burned) == 0 && s.PendingTxs == 0
+		if prev, ok := final[s.EscrowID]; ok && clean && openUnburned(prev, burned) == 0 && prev.PendingTxs == 0 {
+			settled[s.EscrowID] = true
+		}
+		final[s.EscrowID] = s
+	}
+	return final
+}
+
+// openUnburned is the open count of s less the nonces the gateway burned.
+func openUnburned(s PendingSample, burned map[string]map[string]bool) int {
+	open := s.Open
+	for id := range s.OpenStarted {
+		if burned[s.EscrowID][id] {
+			open--
+		}
+	}
+	return open
 }
 
 // withoutBurned returns the sample with its oldest open nonce recomputed over the nonces the gateway

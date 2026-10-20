@@ -101,11 +101,34 @@ func (r *invariantRun) warnBinding(samples []DapiHostSample, warmup time.Time, b
 	log.Printf("loadtest: stage=binding_check result=ok hosts=%d", len(bound))
 }
 
+// settlePending polls the pending view every pendingSettlePoll for pendingPostDrain after drain and
+// returns when it began; clean_end_state judges the first pendingSettle of these polls.
+func (r *invariantRun) settlePending(ctx context.Context) time.Time {
+	if r.pending == nil {
+		return time.Time{}
+	}
+	from := time.Now().UTC()
+	r.pending.halt()
+	log.Printf("loadtest: stage=pending_settle polls=%s for=%s", pendingSettlePoll, pendingPostDrain)
+	ticker := time.NewTicker(pendingSettlePoll)
+	defer ticker.Stop()
+	for deadline := from.Add(pendingPostDrain); time.Now().Before(deadline); {
+		r.pending.sample(ctx, "settle")
+		select {
+		case <-ctx.Done():
+			return from
+		case <-ticker.C:
+		}
+	}
+	return from
+}
+
 // collectEndState runs after drain: it stops the pollers and reads what the invariants need once,
 // from the stack and from compose-pre-drain.log at logPath.
 func (r *invariantRun) collectEndState(ctx context.Context, rotationModels []string, logPath string) invariantEndState {
+	settleFrom := r.settlePending(ctx)
 	r.stop()
-	end := invariantEndState{SettlementDisabled: settlementDisabledModels(r.scenario, rotationModels), DidNotCompress: -1}
+	end := invariantEndState{PendingSettleFrom: settleFrom, SettlementDisabled: settlementDisabledModels(r.scenario, rotationModels), DidNotCompress: -1}
 	if ticks, err := readReconcileTicks(logPath); err != nil {
 		log.Printf("loadtest: invariants read versiond reconcile ticks: %v", err)
 	} else {
