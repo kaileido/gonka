@@ -12,8 +12,9 @@ import (
 
 const ghostStage = "ghost_probe_skipped"
 
-// faultBurnReasons are the burns a fault causes: the gateway ejected or cut off the slot's host.
-var faultBurnReasons = map[string]bool{"participant_ejected_no_send": true, "participant_cut_off_no_send": true}
+// faultBurnReasons are the burns a fault causes: the gateway ejected or cut off the slot's host, or
+// its session holds no client for a host the chain did not list when the escrow opened.
+var faultBurnReasons = map[string]bool{"participant_ejected_no_send": true, "participant_cut_off_no_send": true, "participant_absent_from_chain_no_send": true}
 
 // budgetBurnReasons are the burns of a host that refuses Chats over its peer budget: the gateway
 // throttles it, and it falls behind on state it never got. Such a fault is often a background marker
