@@ -163,7 +163,7 @@ func (r runReport) render(runName string) string {
 	fmt.Fprintf(&out, "Gateway: %s. Machine-readable summary: %s.\n\n", gatewayDriverName(r.inputs.Gateway), runSummaryFileName)
 	fmt.Fprintf(&out, "Verdict: %s. %s\n\n", verdict, strings.Join(countCells, " · "))
 	r.renderStalledShare(&out)
-	out.WriteString("FIX: a bound was broken and needs a fix. XPASS: a known bug no longer reproduces; drop its marker. INVALID: a harness stall covers the check. XFAIL: a known bug failed as expected. NOT_JUDGED: the run left no data for the check. PASS: the bound held.\n")
+	out.WriteString("FIX: a bound was broken and needs a fix. XPASS: a known bug did not reproduce in this run; drop its marker once it passes 5 runs in a row (its details count them). INVALID: a harness stall covers the check. XFAIL: a known bug failed as expected. NOT_JUDGED: the run left no data for the check. PASS: the bound held.\n")
 	r.renderTraffic(&out)
 	r.renderLadder(&out)
 	r.renderFaultWindows(&out)

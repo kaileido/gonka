@@ -28,11 +28,12 @@ func main() {
 	runTimeout := flag.Duration("timeout", 0, "overall run timeout; default: workload + drain + 10m, at least 20m")
 	gatewayDriver := flag.String("gateway", "", "gateway binary to drive: devshardctl or gateway; default: the scenario's topology.gateway, else devshardctl")
 	strictXFail := flag.Bool("strict-xfail", false, "fail the run when a known_bug case passes (XPASS)")
+	knownBugHistory := flag.String("known-bug-history", "", "file that counts each known_bug check's XPASS runs in a row; default: known-bug-history.json beside the run directory")
 	reportDir := flag.String("report", "", "rebuild report.md of an existing run directory and print it, without running")
 	recheckDir := flag.String("recheck", "", "judge every check of an existing run directory again from its saved inputs, rewrite assertions.json, invariants.json and report.md, and print the report, without a stack")
 	flag.Parse()
 	if *recheckDir != "" {
-		passed, notes, err := loadtest.EvaluateSavedRun(*recheckDir, *strictXFail)
+		passed, notes, err := loadtest.EvaluateSavedRun(*recheckDir, *strictXFail, *knownBugHistory)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -97,6 +98,7 @@ func main() {
 		MetricsInterval: *metricsInterval,
 		GatewayDriver:   config.GatewayDriver(*gatewayDriver),
 		StrictXFail:     *strictXFail,
+		KnownBugHistory: *knownBugHistory,
 	})
 	if report, reportErr := loadtest.WriteReport(*outputDir); reportErr != nil {
 		log.Printf("loadtest: no report: %v", reportErr)

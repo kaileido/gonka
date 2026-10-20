@@ -115,14 +115,14 @@ func loadScenarioBytes(t *testing.T, body string) (Scenario, error) {
 // 1. Save the passing invariant fixture as a run directory: run.yaml, summary.json, events.json, the JSONL artifacts and run-inputs.json, with one ejected burn inside p2's fault window.
 // 2. Judge the saved run with EvaluateSavedRun, as -recheck does.
 // 3. Require every invariant check to equal the in-memory evaluation of the same inputs, and invariants.json to be rewritten.
-// 4. Require the drain check to leave the ejected burn out of the ghost rate, the known_bug case to be marked, and assertions.json to record a pass.
+// 4. Require the drain check to leave the ejected burn out of the ghost rate, the known_bug case to be marked with its XPASS runs in a row from the history file beside the run, and assertions.json to record a pass.
 func TestRecheckJudgesASavedRunLikeTheLiveEvaluation(t *testing.T) {
 	in, inputs := savedRunFixture(t)
 	dir := t.TempDir()
 	writeSavedRun(t, dir, in, inputs)
 	expected, _ := evaluateInvariants(in)
 
-	passed, notes, err := EvaluateSavedRun(dir, false)
+	passed, notes, err := EvaluateSavedRun(dir, false, "")
 
 	require.NoError(t, err)
 	require.Empty(t, notes)
@@ -140,12 +140,14 @@ func TestRecheckJudgesASavedRunLikeTheLiveEvaluation(t *testing.T) {
 		require.True(t, ok, check.Name)
 		if check.Case == "host-under-poc-challenge" {
 			require.Equal(t, "XPASS", got.Status, check.Name)
-			got.Status = check.Status
+			require.Equal(t, strings.TrimSuffix("known_bug #1823; "+check.Details, "; ")+"; XPASS 1 runs in a row of the 5 needed to drop the marker", got.Details, check.Name)
+			got.Status, got.Details = check.Status, check.Details
 		}
 		check.spans = nil
 		require.Equal(t, check, got)
 	}
 	require.FileExists(t, filepath.Join(dir, "invariants.json"))
+	require.FileExists(t, filepath.Join(filepath.Dir(dir), knownBugHistoryFile))
 	orphans := byName["devshard.no_orphaned_work"]
 	require.True(t, orphans.Passed, orphans.Details)
 	require.Contains(t, orphans.Actual, "ghost=0 ghost_excluded=1 total=1")
@@ -163,7 +165,7 @@ func TestRecheckJudgesARunSavedWithoutItsInputs(t *testing.T) {
 	dir := t.TempDir()
 	writeSavedRun(t, dir, in, RunInputs{})
 
-	passed, notes, err := EvaluateSavedRun(dir, false)
+	passed, notes, err := EvaluateSavedRun(dir, false, "")
 
 	require.NoError(t, err)
 	require.False(t, passed)

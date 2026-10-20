@@ -172,7 +172,7 @@ and `epoch_advance` are global and must not overlap each other.
 
 Checks whose `case` has `known_bug` set are reported as `XFAIL` when they fail
 and do not fail the run. A passing one is `XPASS` and logged as a warning;
-`-strict-xfail` makes it fail the run.
+`-strict-xfail` makes it fail the run. An XPASS means the bug did not reproduce in that run, not that it is fixed: `timeout-vote-fanout` reproduced in 1 of 3 runs of identical code. Every judged run, live or `-recheck`, adds its XPASS and XFAIL checks to `known-bug-history.json` in the parent of the run directory (or the file `-known-bug-history` names), one record per scenario, driver, check and run start, so judging a run again replaces its record. An XPASS check's details count the runs in a row up to this one that passed (`XPASS 2 runs in a row of the 5 needed to drop the marker`), and say `drop the marker` from 5 on. Keep run directories of one VM under one parent, or point `-known-bug-history` at one file, for the count to span them.
 
 The runner refuses to start while another `loadtest-*` Compose project is
 running.
@@ -232,7 +232,7 @@ whole run. Cases with known bugs on `devshard-0.2.x-v6` are XFAIL:
 `deactivated-escrow-runtime-retired` keep their #1988 marker until a run on
 192318583, which merged #1988, shows XPASS; the fix for
 `gateway-restart-while-participant-absent` is in the tip, so
-`no-escrow-falsely-marked-missing` is a normal check. An XPASS means the fix
+`no-escrow-falsely-marked-missing` is a normal check. Five XPASS runs in a row mean the fix
 landed and the marker should go. `logprobs-responses-compress` relies on the
 mock fix of #1987, merged into the tip. prod-like-15m keeps its faults and timing so old
 reports stay comparable, except the execution timeout and the `timeout-vote-fanout` hang (below). Its split scenarios (scenarios/README.md) dropped the
@@ -908,7 +908,7 @@ Every run ends with `report.md` in its directory, also printed to the console, b
 | Status | Meaning |
 | --- | --- |
 | `FIX` | A bound was broken; the gateway or the host needs a fix. |
-| `XPASS` | A `known_bug` case passed; drop its marker if the fix landed. |
+| `XPASS` | A `known_bug` case passed in this run; its details count the runs in a row it passed, and its marker goes after 5. |
 | `INVALID` | A harness stall covers every window the check judged. |
 | `XFAIL` | A `known_bug` case failed as expected. |
 | `NOT_JUDGED` | The run left no data for the check, such as a fault every request of which another fault also touched. |

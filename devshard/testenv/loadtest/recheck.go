@@ -76,9 +76,10 @@ func writeRunInputs(dir string, inputs RunInputs) error {
 
 // EvaluateSavedRun judges every check of a saved run again from its directory, without a stack,
 // and rewrites its assertions.json and invariants.json. A run without run-inputs.json is judged
-// from what its other files hold; the notes name what could not be recomputed.
-func EvaluateSavedRun(dir string, strictXFail bool) (bool, []string, error) {
-	checks, notes, err := recheckRun(dir, strictXFail)
+// from what its other files hold; the notes name what could not be recomputed. history is the
+// known-bug history file; empty means known-bug-history.json beside dir.
+func EvaluateSavedRun(dir string, strictXFail bool, history string) (bool, []string, error) {
+	checks, notes, err := recheckRun(dir, strictXFail, history)
 	if err != nil {
 		return false, notes, err
 	}
@@ -91,7 +92,7 @@ func EvaluateSavedRun(dir string, strictXFail bool) (bool, []string, error) {
 
 // recheckRun is the one evaluation both the live run and EvaluateSavedRun use: it reads the
 // scenario, the inputs and the artifacts back from dir.
-func recheckRun(dir string, strictXFail bool) ([]AssertionResult, []string, error) {
+func recheckRun(dir string, strictXFail bool, history string) ([]AssertionResult, []string, error) {
 	scenario, err := LoadScenario(filepath.Join(dir, "run.yaml"))
 	if err != nil {
 		return nil, nil, err
@@ -112,7 +113,23 @@ func recheckRun(dir string, strictXFail bool) ([]AssertionResult, []string, erro
 		return nil, nil, err
 	}
 	checks, err := evaluateRun(dir, scenario, summary, events, inputs, strictXFail)
-	return checks, notes, err
+	if err != nil || inputs.Started.IsZero() {
+		return checks, notes, err
+	}
+	if history == "" {
+		history = defaultKnownBugHistory(dir)
+	}
+	gateway := inputs.Gateway
+	if gateway == "" {
+		gateway = scenario.Topology.Gateway
+	}
+	key := knownBugKey{Scenario: scenario.Scenario, Gateway: string(gateway)}
+	if marked, err := recordKnownBugRuns(history, key, dir, inputs.Started, checks); err != nil {
+		notes = append(notes, fmt.Sprintf("known-bug history %s: %v", history, err))
+	} else {
+		checks = marked
+	}
+	return checks, notes, nil
 }
 
 func evaluateRun(dir string, scenario Scenario, summary Summary, events []EventRecord, inputs RunInputs, strictXFail bool) ([]AssertionResult, error) {

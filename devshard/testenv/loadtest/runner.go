@@ -35,6 +35,8 @@ type RunnerConfig struct {
 	GatewayDriver config.GatewayDriver
 	// StrictXFail fails the run when a known_bug case passes (XPASS).
 	StrictXFail bool
+	// KnownBugHistory is the file that counts XPASS runs in a row; empty means known-bug-history.json beside OutputDir.
+	KnownBugHistory string
 }
 
 type RunResult struct {
@@ -418,7 +420,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	if err := writeRunInputs(opts.OutputDir, inputs); err != nil {
 		return result, fmt.Errorf("write %s: %w", runInputsFile, err)
 	}
-	assertions, _, err := recheckRun(opts.OutputDir, opts.StrictXFail)
+	assertions, _, err := recheckRun(opts.OutputDir, opts.StrictXFail, opts.KnownBugHistory)
 	if err != nil {
 		return result, fmt.Errorf("evaluate checks: %w", err)
 	}
@@ -1712,7 +1714,8 @@ func markKnownBugs(checks []AssertionResult, cases []Case, strict bool) []Assert
 			if check.Passed {
 				check.Status = "XPASS"
 				check.Passed = !strict
-				log.Printf("loadtest: XPASS %s: case %s passed although known_bug %s is set; remove the marker if the fix landed", check.Name, check.Case, bug)
+				check.Details = strings.TrimSuffix("known_bug "+bug+"; "+check.Details, "; ")
+				log.Printf("loadtest: XPASS %s: case %s passed although known_bug %s is set: the bug did not reproduce in this run", check.Name, check.Case, bug)
 			} else {
 				check.Status = "XFAIL"
 				check.Passed = true
