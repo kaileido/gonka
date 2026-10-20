@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"devshard/testenv/config"
+	"devshard/testenv/mockchain/ledgerface"
 	"devshard/testenv/replay"
 )
 
@@ -118,18 +119,22 @@ func formatAssertionFailure(check AssertionResult) string {
 // orphan check. It can differ from the number of client requests because the
 // gateway may serve cache hits or create speculative attempts.
 // Sealed counts unfinished records of deactivated escrows, whose settlement
-// escrow-accounting-reconciles judges; InFlight counts unfinished records still within the pending-age bound.
+// escrow-accounting-reconciles judges, except challenged ones under a pending-age bound on an escrow not yet sealed;
+// InFlight counts unfinished records still within the pending-age bound.
 type TerminalSummary struct {
 	Finished int `json:"finished"`
 	Ghost    int `json:"ghost"`
 	// GhostExcluded counts burns left out of Ghost and Total: burns a fault caused on a host inside its fault window.
-	GhostExcluded int            `json:"ghost_excluded"`
-	Total         int            `json:"total"`
-	Orphaned      int            `json:"orphaned"`
-	Sealed        int            `json:"sealed"`
-	InFlight      int            `json:"in_flight"`
-	GhostRate     float64        `json:"ghost_rate"`
-	Statuses      map[string]int `json:"statuses,omitempty"`
+	GhostExcluded int `json:"ghost_excluded"`
+	Total         int `json:"total"`
+	Orphaned      int `json:"orphaned"`
+	Sealed        int `json:"sealed"`
+	InFlight      int `json:"in_flight"`
+	// ChallengedAtSeal counts the sealed records still challenged on an escrow settled on chain or parked with settlement off.
+	ChallengedAtSeal         int            `json:"challenged_at_seal"`
+	ChallengedAtSealByEscrow map[string]int `json:"challenged_at_seal_by_escrow,omitempty"`
+	GhostRate                float64        `json:"ghost_rate"`
+	Statuses                 map[string]int `json:"statuses,omitempty"`
 }
 
 func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err error) {
@@ -379,7 +384,9 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		}
 	}
 	if scenario.Assertions.Devshard.NoOrphanedWork {
-		poll, terminal, _ := waitForNoOrphanedWork(ctx, debugGatewayURL, apiKey, orphanJudgeFor(scenario, inputs, result.Events), aggregateDebug)
+		judge := orphanJudgeFor(scenario, inputs, result.Events)
+		judge.ChainURL = fmt.Sprintf("http://127.0.0.1:%d", cfg.MockChain.TestenvPort)
+		poll, terminal, _ := waitForNoOrphanedWork(ctx, debugGatewayURL, apiKey, judge, aggregateDebug)
 		inputs.Orphans, result.Terminal = &poll, terminal
 	}
 	if accountingEnabled(scenario.Assertions.Accounting) {
@@ -1103,7 +1110,19 @@ func orphanJudgeFor(scenario Scenario, inputs RunInputs, events []EventRecord) o
 		nodeHosts[node.Name] = node.Host
 	}
 	judge.Ghosts = newGhostSet(inputs.Burns, burnExcuse(InvariantInputs{Started: inputs.Started, Workload: scenario.Duration(), Settings: settings, Hosts: inputs.Hosts, NodeHosts: nodeHosts, Events: events}))
+	judge.SettlementOff = func(model string) bool { return settlementDisabledModels(scenario, []string{model})[model] }
+	if ledger, _, _ := spendSources(inputs); ledger != nil {
+		judge.Escrows = escrowsByID(ledger.Escrows)
+	}
 	return judge
+}
+
+func escrowsByID(escrows []ledgerface.EscrowView) map[string]ledgerface.EscrowView {
+	byID := make(map[string]ledgerface.EscrowView, len(escrows))
+	for _, escrow := range escrows {
+		byID[strconv.FormatUint(escrow.ID, 10)] = escrow
+	}
+	return byID
 }
 
 func formatTerminalSummary(summary TerminalSummary) string {
@@ -1111,7 +1130,11 @@ func formatTerminalSummary(summary TerminalSummary) string {
 	if summary.Total == 0 && summary.Statuses != nil {
 		statusCounts = "none"
 	}
-	return fmt.Sprintf("finished=%d orphaned=%d sealed=%d in_flight=%d ghost=%d ghost_excluded=%d total=%d ghost_rate=%.2f%% statuses=%s", summary.Finished, summary.Orphaned, summary.Sealed, summary.InFlight, summary.Ghost, summary.GhostExcluded, summary.Total, summary.GhostRate*100, statusCounts)
+	atSeal := strconv.Itoa(summary.ChallengedAtSeal)
+	if len(summary.ChallengedAtSealByEscrow) > 0 {
+		atSeal += " (escrow " + formatEscrowCounts(summary.ChallengedAtSealByEscrow) + ")"
+	}
+	return fmt.Sprintf("finished=%d orphaned=%d sealed=%d challenged_at_seal=%s in_flight=%d ghost=%d ghost_excluded=%d total=%d ghost_rate=%.2f%% statuses=%s", summary.Finished, summary.Orphaned, summary.Sealed, atSeal, summary.InFlight, summary.Ghost, summary.GhostExcluded, summary.Total, summary.GhostRate*100, statusCounts)
 }
 
 type debugInference struct {
@@ -1142,6 +1165,35 @@ type orphanJudge struct {
 	MaxPendingAge time.Duration // above zero, unfinished records younger than it stay in flight
 	Timeout       time.Duration
 	Ghosts        ghostSet
+	// Escrows is the mock chain's view of each escrow by ID; SettlementOff reports a model whose escrows park on deactivation.
+	Escrows       map[string]ledgerface.EscrowView
+	SettlementOff func(model string) bool
+	// ChainURL, when set, is the mock chain the live poll reads Escrows from before each judgement.
+	ChainURL string
+}
+
+// escrowState is how far a runtime's escrow is from final for the orphan check.
+type escrowState int
+
+const (
+	escrowActive escrowState = iota
+	// escrowDeactivated is due a settlement the chain has not recorded, or its chain state is unknown.
+	escrowDeactivated
+	// escrowSealed is settled on chain or parked with settlement off: no diff reaches it again.
+	escrowSealed
+)
+
+// stateOf places a runtime's escrow for the orphan check. An escrow the chain read does not show stays
+// escrowDeactivated, so its challenged records keep being judged by age.
+func (j orphanJudge) stateOf(runtime orphanRuntime) escrowState {
+	if runtime.Active {
+		return escrowActive
+	}
+	escrow, known := j.Escrows[runtime.EscrowID]
+	if known && (escrow.Settled || j.SettlementOff != nil && j.SettlementOff(escrow.ModelID)) {
+		return escrowSealed
+	}
+	return escrowDeactivated
 }
 
 // orphanRuntime is one runtime's /v1/debug/inferences; EscrowID is empty for a runtime read
@@ -1178,6 +1230,14 @@ func waitForNoOrphanedWork(ctx context.Context, gatewayURL, apiKey string, judge
 	client := &http.Client{Timeout: 5 * time.Second}
 	var poll orphanPoll
 	for {
+		if judge.ChainURL != "" {
+			var escrows struct {
+				Escrows []ledgerface.EscrowView `json:"escrows"`
+			}
+			if err := getJSON(ctx, judge.ChainURL+"/testenv/escrows", "", &escrows); err == nil {
+				judge.Escrows = escrowsByID(escrows.Escrows)
+			}
+		}
 		snapshot, err := fetchOrphanSnapshot(ctx, client, gatewayURL, apiKey, aggregate)
 		if err == nil {
 			poll.Last, poll.ReadError = &snapshot, ""
@@ -1226,7 +1286,14 @@ func judgeOrphans(poll orphanPoll, judge orphanJudge) (TerminalSummary, bool, er
 	}
 	state := TerminalSummary{Statuses: make(map[string]int)}
 	for _, runtime := range poll.Last.Runtimes {
-		mergeTerminalSummary(&state, summarizeDebugInferences(runtime.Inferences, judge.Ghosts.escrow(runtime.EscrowID), !runtime.Active, poll.Last.At, judge.MaxPendingAge))
+		summary := summarizeDebugInferences(runtime.Inferences, judge.Ghosts.escrow(runtime.EscrowID), judge.stateOf(runtime), poll.Last.At, judge.MaxPendingAge)
+		if summary.ChallengedAtSeal > 0 {
+			if state.ChallengedAtSealByEscrow == nil {
+				state.ChallengedAtSealByEscrow = map[string]int{}
+			}
+			state.ChallengedAtSealByEscrow[runtime.EscrowID] += summary.ChallengedAtSeal
+		}
+		mergeTerminalSummary(&state, summary)
 	}
 	if state.Total > 0 {
 		state.GhostRate = float64(state.Ghost) / float64(state.Total)
@@ -1418,12 +1485,13 @@ func mergeTerminalSummary(dst *TerminalSummary, src TerminalSummary) {
 	dst.Orphaned += src.Orphaned
 	dst.Sealed += src.Sealed
 	dst.InFlight += src.InFlight
+	dst.ChallengedAtSeal += src.ChallengedAtSeal
 	for status, count := range src.Statuses {
 		dst.Statuses[status] += count
 	}
 }
 
-func summarizeDebugInferences(inferences map[string]debugInference, ghosts map[string]bool, deactivated bool, now time.Time, maxPendingAge time.Duration) TerminalSummary {
+func summarizeDebugInferences(inferences map[string]debugInference, ghosts map[string]bool, state escrowState, now time.Time, maxPendingAge time.Duration) TerminalSummary {
 	summary := TerminalSummary{Statuses: make(map[string]int)}
 	for id, inference := range inferences {
 		if excluded, ghost := ghosts[id]; ghost {
@@ -1442,7 +1510,14 @@ func summarizeDebugInferences(inferences map[string]debugInference, ghosts map[s
 		}
 		switch {
 		case isTerminalInferenceStatus(inference.Status):
-		case deactivated:
+		// Settlement seals a challenged record as it stands and pays its executor; a parked escrow gets no further diff.
+		case state == escrowSealed:
+			summary.Sealed++
+			if inference.Status == "challenged" {
+				summary.ChallengedAtSeal++
+			}
+		// Until the escrow settles, Finalize still folds the hosts' challenge votes in, so a challenged record is judged by age.
+		case state == escrowDeactivated && (inference.Status != "challenged" || maxPendingAge == 0):
 			summary.Sealed++
 		case maxPendingAge > 0 && inference.StartedAt > 0 && now.Sub(time.Unix(inference.StartedAt, 0)) <= maxPendingAge:
 			summary.InFlight++
@@ -1463,6 +1538,24 @@ func isTerminalInferenceStatus(status string) bool {
 	default:
 		return false
 	}
+}
+
+// formatEscrowCounts lists per-escrow counts as "id:count" in escrow ID order.
+func formatEscrowCounts(counts map[string]int) string {
+	ids := make([]string, 0, len(counts))
+	for id := range counts {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		x, _ := strconv.ParseUint(ids[i], 10, 64)
+		y, _ := strconv.ParseUint(ids[j], 10, 64)
+		return x < y || x == y && ids[i] < ids[j]
+	})
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, fmt.Sprintf("%s:%d", id, counts[id]))
+	}
+	return strings.Join(parts, " ")
 }
 
 func formatStatusCounts(counts map[string]int) string {

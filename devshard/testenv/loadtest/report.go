@@ -31,6 +31,8 @@ type runReport struct {
 	latency runLatency
 	health  *harnessHealth
 	inputs  RunInputs
+	// scenario is the run's run.yaml; nil when it is missing or does not load.
+	scenario *Scenario
 }
 
 // WriteReport renders the run's fixed-template report from its artifacts
@@ -78,6 +80,9 @@ func loadRunReport(outputDir string) (runReport, error) {
 	run.windows, run.health = invariants.Tables.ErrorRateAndLatency, invariants.Health
 	if err := readReportArtifact(outputDir, runInputsFile, false, &run.inputs); err != nil {
 		return run, err
+	}
+	if scenario, err := LoadScenario(filepath.Join(outputDir, "run.yaml")); err == nil {
+		run.scenario = &scenario
 	}
 	run.ladder = loadLadder(outputDir, run.summary)
 	run.latency = loadRunLatency(outputDir)

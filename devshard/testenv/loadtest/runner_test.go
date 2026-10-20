@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"devshard/testenv/config"
+	"devshard/testenv/mockchain/ledgerface"
 	"github.com/stretchr/testify/require"
 )
 
@@ -264,6 +265,129 @@ func TestWaitForNoOrphanedWorkAcceptsTerminalStatuses(t *testing.T) {
 	require.NoError(t, err)
 	require.Zero(t, summary.Orphaned)
 	require.Equal(t, 3, summary.Total)
+}
+
+// Test flow:
+// 1. Summarize a deactivated escrow holding a challenged record 15 min old, a challenged record 1 min old and a pending record 15 min old, against a 280 s pending-age bound.
+// 2. Require the old challenged record to be orphaned, the young one in flight and the pending one sealed.
+func TestSummarizeDebugInferencesJudgesChallengedRecordsByAge(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 20, 0, 0, time.UTC)
+	inferences := map[string]debugInference{
+		"1": {Status: "challenged", StartedAt: now.Add(-15 * time.Minute).Unix()},
+		"2": {Status: "challenged", StartedAt: now.Add(-time.Minute).Unix()},
+		"3": {Status: "pending", StartedAt: now.Add(-15 * time.Minute).Unix()},
+	}
+
+	summary := summarizeDebugInferences(inferences, nil, escrowDeactivated, now, 280*time.Second)
+
+	require.Equal(t, 1, summary.Orphaned)
+	require.Equal(t, 1, summary.InFlight)
+	require.Equal(t, 1, summary.Sealed)
+}
+
+// Test flow:
+// 1. Judge one read under a 280 s pending-age bound holding challenged records 15 min old on an active escrow, on a deactivated escrow the chain has not settled, on one the chain has settled, on a parked escrow of a model with settlement off, and on one the chain read does not show; the settled escrow also holds an old pending record, the unsettled one a young challenged record.
+// 2. Require the active, unsettled and unknown escrows' old challenged records to be orphaned and the young one in flight.
+// 3. Require the settled and parked escrows' records to be sealed, their challenged ones counted at seal per escrow and named in the check's actual value.
+func TestJudgeOrphansSealsChallengedRecordsOnlyOnceTheEscrowIsFinal(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 20, 0, 0, time.UTC)
+	old, young := now.Add(-15*time.Minute).Unix(), now.Add(-time.Minute).Unix()
+	poll := orphanPoll{Last: &orphanSnapshot{At: now, Runtimes: []orphanRuntime{
+		{EscrowID: "1", Active: true, Inferences: map[string]debugInference{"1": {Status: "challenged", StartedAt: old}}},
+		{EscrowID: "2", Inferences: map[string]debugInference{"1": {Status: "challenged", StartedAt: old}, "2": {Status: "challenged", StartedAt: young}}},
+		{EscrowID: "3", Inferences: map[string]debugInference{"1": {Status: "challenged", StartedAt: old}, "2": {Status: "challenged", StartedAt: old}, "3": {Status: "pending", StartedAt: old}}},
+		{EscrowID: "4", Inferences: map[string]debugInference{"1": {Status: "challenged", StartedAt: old}}},
+		{EscrowID: "5", Inferences: map[string]debugInference{"1": {Status: "challenged", StartedAt: old}}},
+	}}}
+	judge := orphanJudge{
+		MaxPendingAge: 280 * time.Second,
+		Escrows: map[string]ledgerface.EscrowView{
+			"1": {ID: 1, ModelID: "model-a"},
+			"2": {ID: 2, ModelID: "model-a"},
+			"3": {ID: 3, ModelID: "model-a", Settled: true},
+			"4": {ID: 4, ModelID: "model-b"},
+		},
+		SettlementOff: func(model string) bool { return model == "model-b" },
+	}
+
+	summary, done, err := judgeOrphans(poll, judge)
+
+	require.False(t, done)
+	require.NoError(t, err)
+	require.Equal(t, 3, summary.Orphaned)
+	require.Equal(t, 1, summary.InFlight)
+	require.Equal(t, 4, summary.Sealed)
+	require.Equal(t, 3, summary.ChallengedAtSeal)
+	require.Equal(t, map[string]int{"3": 2, "4": 1}, summary.ChallengedAtSealByEscrow)
+	require.Contains(t, formatTerminalSummary(summary), "challenged_at_seal=3 (escrow 3:2 4:1)")
+}
+
+// Test flow:
+// 1. Serve a deactivated escrow holding a challenged record 15 min old, and a mock chain that lists the escrow as settled.
+// 2. Poll with a 280 s pending-age bound and the chain's URL.
+// 3. Require the poll to pass with the record sealed and counted at seal.
+func TestWaitForNoOrphanedWorkReadsTheChainForSettledEscrows(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/admin/devshards":
+			_, _ = fmt.Fprint(w, `{"devshards":[{"id":"7","active":false}]}`)
+		case "/devshard/7/v1/debug/inferences":
+			_, _ = fmt.Fprintf(w, `{"inferences":{"1":{"status":"challenged","started_at":%d}}}`, time.Now().Add(-15*time.Minute).Unix())
+		case "/testenv/escrows":
+			_, _ = fmt.Fprint(w, `{"escrows":[{"id":7,"model_id":"model-a","settled":true}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	_, summary, err := waitForNoOrphanedWork(context.Background(), server.URL, "", orphanJudge{Timeout: 10 * time.Millisecond, MaxPendingAge: 280 * time.Second, ChainURL: server.URL}, true)
+
+	require.NoError(t, err)
+	require.Zero(t, summary.Orphaned)
+	require.Equal(t, 1, summary.Sealed)
+	require.Equal(t, 1, summary.ChallengedAtSeal)
+}
+
+// Test flow:
+// 1. Write run-summary.json for a run whose last drain read holds challenged records on a settled escrow, on a parked escrow of a model with settlement off and on an active escrow, with the scenario that turns settlement off for that model.
+// 2. Require its challenged_at_seal block to count the settled and parked escrows' records per escrow and leave the active one out.
+// 3. Require a run without its scenario to carry no challenged_at_seal block.
+func TestWriteRunSummaryCountsChallengedRecordsAtSeal(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 1, 1, 0, 20, 0, 0, time.UTC)
+	challenged := map[string]debugInference{"1": {Status: "challenged", StartedAt: now.Add(-15 * time.Minute).Unix()}}
+	off := false
+	scenario := Scenario{Gateway: Gateway{EscrowRotation: GatewayEscrowRotation{Enabled: true, SettlementEnabled: true, Models: []GatewayRotationModel{{Model: "model-b", SettlementEnabled: &off}}}}}
+	scenario.Assertions.Invariants.Enabled = true
+	run := runReport{
+		summary: Summary{Scenario: "s", StartedAt: now.Add(-20 * time.Minute), Duration: time.Minute},
+		inputs: RunInputs{
+			Orphans: &orphanPoll{Last: &orphanSnapshot{At: now, Runtimes: []orphanRuntime{
+				{EscrowID: "1", Inferences: challenged},
+				{EscrowID: "2", Inferences: challenged},
+				{EscrowID: "3", Active: true, Inferences: challenged},
+			}}},
+			ChainLedger: &chainLedger{Escrows: []ledgerface.EscrowView{{ID: 1, ModelID: "model-a", Settled: true}, {ID: 2, ModelID: "model-b"}, {ID: 3, ModelID: "model-a"}}},
+		},
+		scenario: &scenario,
+	}
+
+	summary, err := writeRunSummary(dir, run)
+	require.NoError(t, err)
+	body, err := os.ReadFile(filepath.Join(dir, runSummaryFileName))
+	require.NoError(t, err)
+	var decoded struct {
+		ChallengedAtSeal *RunSummaryChallengedAtSeal `json:"challenged_at_seal"`
+	}
+	require.NoError(t, json.Unmarshal(body, &decoded))
+	require.Equal(t, &RunSummaryChallengedAtSeal{Records: 2, ByEscrow: map[string]int{"1": 1, "2": 1}}, decoded.ChallengedAtSeal)
+	require.Equal(t, decoded.ChallengedAtSeal, summary.ChallengedAtSeal)
+
+	run.scenario = nil
+	summary, err = writeRunSummary(t.TempDir(), run)
+	require.NoError(t, err)
+	require.Nil(t, summary.ChallengedAtSeal)
 }
 
 // Test flow:

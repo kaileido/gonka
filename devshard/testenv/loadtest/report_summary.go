@@ -30,6 +30,15 @@ type RunSummary struct {
 	FailedChecks    []string                  `json:"failed_checks"`
 	NotApplicable   []string                  `json:"not_applicable_checks"`
 	Spend           RunSummarySpend           `json:"spend"`
+	// ChallengedAtSeal is nil when the run saved no drain read or no run.yaml to judge it by.
+	ChallengedAtSeal *RunSummaryChallengedAtSeal `json:"challenged_at_seal,omitempty"`
+}
+
+// RunSummaryChallengedAtSeal counts the records devshard.no_orphaned_work's last read found still challenged on an
+// escrow settled on chain or parked with settlement off, in total and per escrow.
+type RunSummaryChallengedAtSeal struct {
+	Records  int            `json:"records"`
+	ByEscrow map[string]int `json:"by_escrow"`
 }
 
 // RunSummaryRequests counts the client side of a run.
@@ -115,6 +124,13 @@ func writeRunSummary(outputDir string, run runReport) (RunSummary, error) {
 			for _, inference := range runtime.Inferences {
 				summary.Inferences[inference.Status]++
 			}
+		}
+	}
+	if run.scenario != nil && run.inputs.Orphans != nil && run.inputs.Orphans.Last != nil {
+		terminal, _, _ := judgeOrphans(*run.inputs.Orphans, orphanJudgeFor(*run.scenario, run.inputs, run.events))
+		summary.ChallengedAtSeal = &RunSummaryChallengedAtSeal{Records: terminal.ChallengedAtSeal, ByEscrow: terminal.ChallengedAtSealByEscrow}
+		if summary.ChallengedAtSeal.ByEscrow == nil {
+			summary.ChallengedAtSeal.ByEscrow = map[string]int{}
 		}
 	}
 	ledger, inferences, ledgerErr := spendSources(run.inputs)
