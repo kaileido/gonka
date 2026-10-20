@@ -27,12 +27,12 @@ func spendFixtureLedger() *chainLedger {
 	}
 }
 
+// Test flow:
+// 1. Build the spend block from a fixture ledger with two settled escrows, one settled twice, and one unsettled escrow.
+// 2. Check that escrows are sorted by id and that the latest settle of each escrow sets its spend and max nonce.
+// 3. Check that inferences count only finished, validated and challenged records.
+// 4. Check that the unsettled escrow and the escrow with no inference list give reasons instead of zeros.
 func TestBuildSpendPerEscrowFromChainLedger(t *testing.T) {
-	// Test flow:
-	// 1. Build the spend block from a fixture ledger with two settled escrows, one settled twice, and one unsettled escrow.
-	// 2. Check that escrows are sorted by id and that the latest settle of each escrow sets its spend and max nonce.
-	// 3. Check that inferences count only finished, validated and challenged records.
-	// 4. Check that the unsettled escrow and the escrow with no inference list give reasons instead of zeros.
 	inferences := map[string]map[string]DebugInference{
 		"10": {"1": {Status: "finished"}, "2": {Status: "validated"}, "3": {Status: "challenged"}, "4": {Status: "failed"}, "5": {Status: "started"}},
 		"12": {"1": {Status: "finished"}},
@@ -56,12 +56,21 @@ func TestBuildSpendPerEscrowFromChainLedger(t *testing.T) {
 	}
 }
 
+// Test flow:
+// 1. Build the spend block from the fixture ledger with 20 completed requests and 6, 4 and 5 completed inferences on escrows 10, 11 and the unsettled 12.
+// 2. Check the totals over the settled escrows, and that the per-request ratios divide by the settled escrows' 10 inferences, not by the 20 requests.
+// 3. Check that the totals name the unsettled escrow as left out.
+// 4. Build it again with no inference counts, and check that the ratios give a reason instead of dividing by the requests.
+// 5. Build it from the settled escrows only with 10 completed requests, and check that the ratios divide by the requests and nothing is partial.
 func TestBuildSpendTotals(t *testing.T) {
-	// Test flow:
-	// 1. Build the spend block from the fixture ledger with 10 completed requests.
-	// 2. Check the totals over the settled escrows and the per-request ratios.
-	// 3. Check that the totals name the unsettled escrow as left out.
-	spend := buildSpend(spendFixtureLedger(), map[string]map[string]DebugInference{}, "", 10)
+	finished := func(n int) map[string]DebugInference {
+		records := map[string]DebugInference{}
+		for i := range n {
+			records[string(rune('a'+i))] = DebugInference{Status: "finished"}
+		}
+		return records
+	}
+	spend := buildSpend(spendFixtureLedger(), map[string]map[string]DebugInference{"10": finished(6), "11": finished(4), "12": finished(5)}, "", 20)
 	totals := spend.Totals
 	if totals.Escrows != 3 || totals.SettledEscrows != 2 || *totals.SpentNgonka != 610 || *totals.NoncesUsed != 50 {
 		t.Fatalf("totals = %+v", totals)
@@ -69,15 +78,27 @@ func TestBuildSpendTotals(t *testing.T) {
 	if *totals.SpentGNK != 610e-9 || *totals.NgonkaPerCompletedRequest != 61 || *totals.NoncesPerCompletedRequest != 5 {
 		t.Fatalf("ratios = %+v", totals)
 	}
-	if totals.Partial["spent_ngonka"] != "escrows 12 not settled by the end of the run: the chain paid nothing out of them yet" {
+	if totals.Partial["spent_ngonka"] != "escrows 12 not settled by the end of the run: the chain paid nothing out of them yet" || totals.Partial["ngonka_per_completed_request"] == "" {
 		t.Fatalf("partial = %+v", totals.Partial)
+	}
+
+	uncounted := buildSpend(spendFixtureLedger(), map[string]map[string]DebugInference{}, "", 20).Totals
+	if uncounted.NgonkaPerCompletedRequest != nil || uncounted.NoncesPerCompletedRequest != nil || uncounted.Unavailable["ngonka_per_completed_request"] == "" {
+		t.Fatalf("uncounted = %+v", uncounted)
+	}
+
+	ledger := spendFixtureLedger()
+	ledger.Escrows = ledger.Escrows[1:]
+	settled := buildSpend(ledger, nil, "", 10).Totals
+	if settled.Partial != nil || *settled.NgonkaPerCompletedRequest != 61 || *settled.NoncesPerCompletedRequest != 5 {
+		t.Fatalf("settled = %+v", settled)
 	}
 }
 
+// Test flow:
+// 1. Build the spend block with no ledger and a ledger error, and check that it names the reason and writes no totals.
+// 2. Build it from a ledger with no settled escrow and no completed requests, and check that every total gives a reason.
 func TestBuildSpendUnavailable(t *testing.T) {
-	// Test flow:
-	// 1. Build the spend block with no ledger and a ledger error, and check that it names the reason and writes no totals.
-	// 2. Build it from a ledger with no settled escrow and no completed requests, and check that every total gives a reason.
 	missing := buildSpend(nil, nil, "connection refused", 10)
 	if missing.Unavailable != "mock-chain ledger: connection refused" || missing.Totals.SpentNgonka != nil || len(missing.Escrows) != 0 {
 		t.Fatalf("missing = %+v", missing)
@@ -97,11 +118,11 @@ func TestBuildSpendUnavailable(t *testing.T) {
 	}
 }
 
+// Test flow:
+// 1. Give run inputs both an invariant end state and a separate chain ledger read, and check that the invariant read wins.
+// 2. Give run inputs only the separate read, and check that it is used without inference lists.
+// 3. Give run inputs neither, and check that the reason says the run did not save it.
 func TestSpendLedgerPrefersInvariantRead(t *testing.T) {
-	// Test flow:
-	// 1. Give run inputs both an invariant end state and a separate chain ledger read, and check that the invariant read wins.
-	// 2. Give run inputs only the separate read, and check that it is used without inference lists.
-	// 3. Give run inputs neither, and check that the reason says the run did not save it.
 	invariantLedger := spendFixtureLedger()
 	inputs := RunInputs{
 		Invariants:  &invariantEndState{SettleTxs: invariantLedger.SettleTxs, Escrows: invariantLedger.Escrows, Inferences: map[string]map[string]DebugInference{"10": {}}},
@@ -122,10 +143,10 @@ func TestSpendLedgerPrefersInvariantRead(t *testing.T) {
 	}
 }
 
+// Test flow:
+// 1. Write run-summary.json for the same fixture ledger under each gateway driver.
+// 2. Read each file back and check that the spend block carries the same chain totals for both.
 func TestWriteRunSummarySpendForBothGateways(t *testing.T) {
-	// Test flow:
-	// 1. Write run-summary.json for the same fixture ledger under each gateway driver.
-	// 2. Read each file back and check that the spend block carries the same chain totals for both.
 	for _, driver := range []config.GatewayDriver{config.GatewayDriverDevshardctl, config.GatewayDriverGateway} {
 		dir := t.TempDir()
 		run := runReport{
