@@ -2,6 +2,7 @@ package loadtest
 
 import (
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -696,13 +697,17 @@ func TestInvariantHeapSlopeLeavesOutTheGatewayCache(t *testing.T) {
 }
 
 // Test flow:
-// 1. Restart the gateway at 4 min and let the new process warm its heap up by 50 MiB a minute for 2 min, then stay flat.
-// 2. Require heap_slope to pass, judged from 6 min on, and the gateway row to report that steady start.
+// 1. Run for 14 min, restart the gateway at 4 min and let the new process warm its heap up by 50 MiB a minute for 2 min, then stay flat.
+// 2. Require heap_slope to pass, judged over the 8 min from 6 min on, and the gateway row to report that steady start.
 // 3. Keep the new process growing by 5 MiB a minute after its warm-up.
 // 4. Require heap_slope to fail on the gateway live heap.
 func TestInvariantHeapSlopeWaitsOutARestartedProcessWarmUp(t *testing.T) {
 	restarted := func(after func(warm time.Duration) float64) InvariantInputs {
 		in := passingInputs()
+		in.Workload = 14 * time.Minute
+		for offset := 10 * time.Minute; offset < in.Workload; offset += 10 * time.Second {
+			in.Metrics = append(in.Metrics, processSample("gateway", offset, 2, 100, 50<<20))
+		}
 		in.Events[1].StartedAt, in.Events[1].EndedAt = atPtr(4*time.Minute), atPtr(4*time.Minute+5*time.Second)
 		for i := range in.Metrics {
 			s := &in.Metrics[i]
@@ -748,6 +753,105 @@ func TestInvariantHeapSlopeWaitsOutARestartedProcessWarmUp(t *testing.T) {
 	check = checksNamed(t, checks, "no-restarts-or-resource-growth.heap_slope")[0]
 	require.False(t, check.Passed)
 	require.Contains(t, check.Details, "gateway live heap +")
+}
+
+// Test flow:
+// 1. Give a host a flat GC sawtooth sampled every second, with irregular GC periods of 40-90 s.
+// 2. Shift the sawtooth by 0, 5, ..., 25 s against the run start, which moves which GC lands in which 30 s floor bucket.
+// 3. Require heap_slope to pass at every shift and the host row slope to stay below 1 MiB/min.
+func TestInvariantHeapSlopeIgnoresTheBucketPhase(t *testing.T) {
+	var gcs []float64
+	for k, next := 0, 0.0; next < 700; k++ {
+		next += 40 + 50*math.Pow(math.Sin(float64(k)*1.7+0.3), 2)
+		gcs = append(gcs, next)
+	}
+	sawtooth := func(second int) float64 {
+		last := 0.0
+		for _, gc := range gcs {
+			if gc <= float64(second) {
+				last = gc
+			}
+		}
+		return float64(80<<20) + float64(3<<20)*(float64(second)-last)
+	}
+	for shift := 0; shift < 30; shift += 5 {
+		in := passingInputs()
+		var metrics []MetricsSample
+		for _, s := range in.Metrics {
+			if s.Target == "versiond-2/devshardd" {
+				continue
+			}
+			if s.Target == "gateway" {
+				s.Domain = map[string]float64{"devshard_gateway_cache_bytes{}": 0}
+			}
+			metrics = append(metrics, s)
+		}
+		for second := 0; second < 600; second++ {
+			host := processSample("versiond-2/devshardd", time.Duration(second)*time.Second, 7, 200, sawtooth(max(second-shift, 0)))
+			host.Domain = map[string]float64{`devshard_diff_fork_detected_total{}`: 0}
+			metrics = append(metrics, host)
+		}
+		in.Metrics = metrics
+		checks, report := evaluateInvariants(in)
+		check := checksNamed(t, checks, "no-restarts-or-resource-growth.heap_slope")[0]
+		require.True(t, check.Passed, "shift=%ds actual=%s details=%s", shift, check.Actual, check.Details)
+		body, err := json.Marshal(report.Tables["no-restarts-or-resource-growth"])
+		require.NoError(t, err)
+		var rows []map[string]any
+		require.NoError(t, json.Unmarshal(body, &rows))
+		for _, row := range rows {
+			if row["target"] == "versiond-2/devshardd" {
+				require.Less(t, row["heap_live_slope_bytes_per_min"], float64(1<<20), "shift=%ds", shift)
+			}
+		}
+	}
+}
+
+// Test flow:
+// 1. Restart a host at 4 min and grow its heap by 5 MiB a minute after its 2 min warm-up, a 4 min steady window.
+// 2. Require heap_slope to be NOT_JUDGED, naming the short window, and the host row to carry the same note.
+// 3. Grow the host by 5 MiB a minute over the whole 8 min steady window of the run without a restart.
+// 4. Require heap_slope to fail on that host.
+func TestInvariantHeapSlopeNeedsAnEightMinuteWindow(t *testing.T) {
+	growing := func(restartAt time.Duration) InvariantInputs {
+		in := passingInputs()
+		for i := range in.Metrics {
+			s := &in.Metrics[i]
+			offset := s.At.Sub(fixtureT0)
+			if s.Target != "versiond-2/devshardd" || offset < restartAt {
+				continue
+			}
+			if restartAt > 0 {
+				s.Values["loadtest_process_pid"], s.Values["loadtest_process_start_ticks"] = 8, 8
+			}
+			s.Values["go_memstats_heap_alloc_bytes"] = float64(80<<20) + (offset-restartAt).Minutes()*float64(5<<20)
+		}
+		return in
+	}
+
+	checks, report := evaluateInvariants(growing(4 * time.Minute))
+	check := checksNamed(t, checks, "no-restarts-or-resource-growth.heap_slope")[0]
+	require.True(t, check.Passed, "actual=%s details=%s", check.Actual, check.Details)
+	require.Equal(t, statusNotJudged, check.Status)
+	require.Contains(t, check.Details, "versiond-2/devshardd heap +")
+	require.Contains(t, check.Details, "steady window 4m0s is shorter than 8m0s")
+	body, err := json.Marshal(report.Tables["no-restarts-or-resource-growth"])
+	require.NoError(t, err)
+	var rows []map[string]any
+	require.NoError(t, json.Unmarshal(body, &rows))
+	var host map[string]any
+	for _, row := range rows {
+		if row["target"] == "versiond-2/devshardd" {
+			host = row
+		}
+	}
+	require.NotNil(t, host)
+	require.Contains(t, host["note"], "steady window 4m0s is shorter than 8m0s")
+
+	checks, _ = evaluateInvariants(growing(0))
+	check = checksNamed(t, checks, "no-restarts-or-resource-growth.heap_slope")[0]
+	require.False(t, check.Passed)
+	require.Contains(t, check.Details, "versiond-2/devshardd live heap +")
 }
 
 // Test flow:

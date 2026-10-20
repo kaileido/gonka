@@ -38,7 +38,12 @@ const (
 	heapSlopeLimit     = float64(1 << 20)
 	// heapFloorBucket: the heap slope is fitted over the lowest heap_alloc of each bucket, the live
 	// heap after a GC; heap in use also holds garbage up to the GC goal, about twice the live heap.
-	heapFloorBucket    = 30 * time.Second
+	heapFloorBucket = 30 * time.Second
+	// heapFloorOffsets: the slope is the median over this many evenly shifted bucket grids, because
+	// which GC lands in which bucket moves one grid's slope by about 1 MiB/min on the same data.
+	heapFloorOffsets = 6
+	// heapMinSteady: a shorter steady window spreads the slope wider than heapSlopeLimit, so it is not judged.
+	heapMinSteady      = 8 * time.Minute
 	gatewayCacheFamily = "devshard_gateway_cache_bytes"
 	// A host keeps one runtime per escrow until the epoch is evicted (devshardd EvictBefore), each
 	// with host.defaultValidationWorkers goroutines and a defaultValidationQueueSize-slot queue of
@@ -1724,8 +1729,8 @@ func evalNoRestartsOrResourceGrowth(c *invariantContext) ([]AssertionResult, any
 			row.SteadyFrom = steadyFrom.Sub(c.in.Started).Round(time.Second).String()
 		}
 		var steady []MetricsSample
-		chosenFrom := steadyFrom
-		for _, segment := range segments {
+		chosenFrom, chosenTo := steadyFrom, c.runEnd
+		for i, segment := range segments {
 			// A restarted process is cold again: its first SteadyAfter is warm-up, as at the run start.
 			from := steadyFrom
 			if warm := segment[0].At.Add(c.in.Settings.SteadyAfter); warm.After(from) {
@@ -1738,7 +1743,10 @@ func evalNoRestartsOrResourceGrowth(c *invariantContext) ([]AssertionResult, any
 				}
 			}
 			if len(candidate) > len(steady) {
-				steady, chosenFrom = candidate, from
+				steady, chosenFrom, chosenTo = candidate, from, c.runEnd
+				if i+1 < len(segments) && segments[i+1][0].At.Before(chosenTo) {
+					chosenTo = segments[i+1][0].At
+				}
 			}
 		}
 		if chosenFrom.After(steadyFrom) {
@@ -1774,15 +1782,18 @@ func evalNoRestartsOrResourceGrowth(c *invariantContext) ([]AssertionResult, any
 		if host {
 			queues = escrowsCreated
 		}
-		heap, minusCache, note := heapFloor(target, steady, queues, c.in.Started)
+		slope, ok, minusCache, note := c.heapSlope(target, steady, queues)
 		row.HeapMinusCache = minusCache
+		if window := chosenTo.Sub(chosenFrom).Round(time.Second); ok && note == "" && window < heapMinSteady {
+			note = fmt.Sprintf("steady window %s is shorter than %s", window, heapMinSteady)
+		}
 		if note != "" {
 			row.Note = strings.TrimPrefix(row.Note+"; "+note, "; ")
 		}
-		if slope, ok := c.seriesSlope(heap); ok {
+		if ok {
 			row.HeapSlopeBytesMin = slope
 			switch {
-			case !host && !minusCache:
+			case note != "":
 				heapNotJudged = append(heapNotJudged, fmt.Sprintf("%s heap +%.0f B/min not judged: %s", target, slope, note))
 			case slope >= heapSlopeLimit:
 				heapBad = append(heapBad, fmt.Sprintf("%s live heap +%.0f B/min", target, slope))
@@ -1857,12 +1868,32 @@ func (c *invariantContext) seriesSlope(points []metricPoint) (float64, bool) {
 	return slope, ok
 }
 
-// heapFloor returns the live heap of each heapFloorBucket: the lowest heap_alloc in it, less
+// heapSlope returns the median slope of heapFloor over heapFloorOffsets bucket grids, and
+// heapFloor's minusCache and note.
+func (c *invariantContext) heapSlope(target string, samples []MetricsSample, queues []time.Time) (float64, bool, bool, string) {
+	var slopes []float64
+	var minusCache bool
+	var note string
+	for i := range heapFloorOffsets {
+		var heap []metricPoint
+		origin := c.in.Started.Add(time.Duration(i)*heapFloorBucket/heapFloorOffsets - heapFloorBucket)
+		heap, minusCache, note = heapFloor(target, samples, queues, origin)
+		if slope, ok := c.seriesSlope(heap); ok {
+			slopes = append(slopes, slope)
+		}
+	}
+	if len(slopes) == 0 {
+		return 0, false, minusCache, note
+	}
+	return median(slopes), true, minusCache, note
+}
+
+// heapFloor returns the live heap of each heapFloorBucket of the grid at origin: the lowest heap_alloc in it, less
 // devshard_gateway_cache_bytes and less the validation queue of every escrow in queues created
 // after the first sample. The gateway chat cache fills to its cap and then stays flat, and a host
 // keeps each escrow's queue for the epoch, so counting either reads bounded memory as growth. A
 // gateway sample set where any sample lacks the cache series is left whole, with a note.
-func heapFloor(target string, samples []MetricsSample, queues []time.Time, started time.Time) ([]metricPoint, bool, string) {
+func heapFloor(target string, samples []MetricsSample, queues []time.Time, origin time.Time) ([]metricPoint, bool, string) {
 	var heap []metricPoint
 	missing := 0
 	for _, s := range samples {
@@ -1876,7 +1907,7 @@ func heapFloor(target string, samples []MetricsSample, queues []time.Time, start
 			missing++
 		}
 		value -= float64(hostValidationQueueBytes * countBetween(queues, samples[0].At, s.At))
-		bucket := started.Add(s.At.Sub(started).Truncate(heapFloorBucket))
+		bucket := origin.Add(s.At.Sub(origin).Truncate(heapFloorBucket))
 		if n := len(heap); n > 0 && heap[n-1].at.Equal(bucket) {
 			heap[n-1].value = min(heap[n-1].value, value)
 		} else {
