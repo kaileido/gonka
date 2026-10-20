@@ -766,3 +766,23 @@ func TestWriteRunnerConfigWithoutBaseConfig(t *testing.T) {
 	}
 	require.Len(t, cfg.MockOpenAI.Nodes, len(scenario.Topology.MockML.Nodes))
 }
+
+// Test flow:
+// 1. Load every long-escrow scenario and judge a 30 min run at 32 rps that dropped 91 of 57 600 requests in one stall, the worst saved run.
+// 2. Require requests.dropped_rate to pass against a 0.5% bound, and to fail at 300 drops.
+func TestLongEscrowScenariosAllowHalfAPercentOfDrops(t *testing.T) {
+	paths, err := filepath.Glob(filepath.Join("scenarios", "long-escrow*.yaml"))
+	require.NoError(t, err)
+	require.NotEmpty(t, paths)
+	for _, path := range paths {
+		scenario, err := LoadScenario(path)
+		require.NoError(t, err, path)
+		for dropped, passed := range map[int]bool{91: true, 300: false} {
+			summary := Summary{Requests: 57_600, Completed: 57_600 - dropped, Dropped: dropped, DroppedRate: float64(dropped) / 57_600}
+			checks := assertRun(scenario, summary, RunInputs{}, nil)
+			require.Equal(t, "requests.dropped_rate", checks[1].Name)
+			require.Equal(t, passed, checks[1].Passed, "%s dropped=%d", path, dropped)
+			require.Equal(t, "<= 0.0050 (0.50%)", checks[1].Expected, path)
+		}
+	}
+}

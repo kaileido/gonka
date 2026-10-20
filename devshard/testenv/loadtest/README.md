@@ -649,7 +649,7 @@ model; other models keep the global `settlement_enabled`.
 
 There is no separate `thresholds` or fail-fast configuration. A run evaluates
 all enabled assertions and prints every result before returning a failure.
-`assertions.requests.error_rate` is the maximum permitted error rate over the requests sent to the gateway. `assertions.requests.dropped_rate` bounds the share of planned requests the generator never sent, dropped at `max_in_flight` or skipped as `generator_behind`; when unset it takes the `error_rate` value.
+`assertions.requests.error_rate` is the maximum permitted error rate over the requests sent to the gateway. `assertions.requests.dropped_rate` bounds the share of planned requests the generator never sent, dropped at `max_in_flight` or skipped as `generator_behind`; when unset it takes the `error_rate` value. The long-escrow scenarios allow 0.5% with `error_rate: 0`: a stall of a few seconds on the VM fills `max_in_flight` and drops a burst (91 of 57 600 requests, 0.16%, in one 8 s stall of a saved 30 min run), while drops that go on for longer than about 0.5% of the run still fail. A bound on drops confined to one 10 s bucket was not used: whether a burst of a few seconds fits one bucket depends on where it falls on the grid.
 
 ## Traffic profiles
 
