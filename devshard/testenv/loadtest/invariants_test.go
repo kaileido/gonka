@@ -638,7 +638,7 @@ func TestInvariantTrends(t *testing.T) {
 }
 
 // Test flow:
-// 1. Fill the gateway chat cache at 30 MiB a minute up to its 256 MiB cap, with heap in use rising by the same bytes.
+// 1. Keep one gateway process and fill its chat cache at 128 MiB a minute up to its 256 MiB cap, with heap in use rising by the same bytes.
 // 2. Require heap_slope to pass and the gateway row to report the heap slope with the cache subtracted.
 // 3. Drop the cache series from every gateway sample.
 // 4. Require heap_slope to be NOT_JUDGED, not FIX, and the gateway row to note that the cache could not be told from growth.
@@ -651,8 +651,9 @@ func TestInvariantHeapSlopeLeavesOutTheGatewayCache(t *testing.T) {
 			if s.Target != "gateway" {
 				continue
 			}
-			cache := min(s.At.Sub(fixtureT0).Minutes()*float64(30<<20), float64(256<<20))
+			cache := min(s.At.Sub(fixtureT0).Minutes()*float64(128<<20), float64(256<<20))
 			s.Values["go_memstats_heap_alloc_bytes"] += cache
+			s.Values["loadtest_process_pid"], s.Values["loadtest_process_start_ticks"] = 1, 1
 			if s.Domain == nil {
 				s.Domain = map[string]float64{}
 			}
@@ -805,6 +806,63 @@ func TestInvariantHeapSlopeIgnoresTheBucketPhase(t *testing.T) {
 			}
 		}
 	}
+}
+
+// Test flow:
+// 1. Run for 15 min and fill the gateway chat cache at 40 MiB a minute up to its 256 MiB cap, with the heap less the cache rising twice as fast until then.
+// 2. Require heap_slope to pass, judged on the gateway from the first sample at the cap, 6m30s, on.
+// 3. Keep the cache rising at 20 MiB a minute to the end of the run.
+// 4. Require heap_slope to be NOT_JUDGED and the gateway row to note that the cache never stopped filling.
+func TestInvariantHeapSlopeJudgesTheGatewayAfterItsCacheFills(t *testing.T) {
+	filling := func(cache func(offset time.Duration) float64) InvariantInputs {
+		in := passingInputs()
+		in.Workload = 15 * time.Minute
+		var metrics []MetricsSample
+		for _, s := range in.Metrics {
+			if s.Target != "gateway" {
+				metrics = append(metrics, s)
+			}
+		}
+		for offset := time.Duration(0); offset < in.Workload; offset += 10 * time.Second {
+			s := processSample("gateway", offset, 1, 100, float64(50<<20)+3*cache(offset))
+			s.Domain = map[string]float64{"devshard_gateway_cache_bytes{}": cache(offset)}
+			metrics = append(metrics, s)
+		}
+		in.Metrics = metrics
+		in.Events = in.Events[:1]
+		return in
+	}
+	gatewayRow := func(t *testing.T, report InvariantReport) map[string]any {
+		t.Helper()
+		body, err := json.Marshal(report.Tables["no-restarts-or-resource-growth"])
+		require.NoError(t, err)
+		var rows []map[string]any
+		require.NoError(t, json.Unmarshal(body, &rows))
+		for _, row := range rows {
+			if row["target"] == "gateway" {
+				return row
+			}
+		}
+		require.FailNow(t, "no gateway row")
+		return nil
+	}
+
+	checks, report := evaluateInvariants(filling(func(offset time.Duration) float64 {
+		return min(offset.Minutes()*float64(40<<20), float64(256<<20))
+	}))
+	check := checksNamed(t, checks, "no-restarts-or-resource-growth.heap_slope")[0]
+	require.True(t, check.Passed, "actual=%s details=%s", check.Actual, check.Details)
+	require.Empty(t, check.Status, "details=%s", check.Details)
+	row := gatewayRow(t, report)
+	require.Equal(t, "6m30s", row["heap_steady_from"])
+	require.InDelta(t, 0, row["heap_live_slope_bytes_per_min"], 1)
+
+	checks, report = evaluateInvariants(filling(func(offset time.Duration) float64 { return offset.Minutes() * float64(20<<20) }))
+	check = checksNamed(t, checks, "no-restarts-or-resource-growth.heap_slope")[0]
+	require.True(t, check.Passed)
+	require.Equal(t, statusNotJudged, check.Status)
+	require.Contains(t, check.Details, "gateway heap not judged")
+	require.Contains(t, gatewayRow(t, report)["note"], "devshard_gateway_cache_bytes still rising")
 }
 
 // Test flow:

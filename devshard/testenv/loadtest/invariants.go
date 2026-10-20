@@ -45,6 +45,8 @@ const (
 	// heapMinSteady: a shorter steady window spreads the slope wider than heapSlopeLimit, so it is not judged.
 	heapMinSteady      = 8 * time.Minute
 	gatewayCacheFamily = "devshard_gateway_cache_bytes"
+	// gatewayCacheSettle: the chat cache is full once it rises by less than heapSlopeLimit bytes over this long.
+	gatewayCacheSettle = 2 * time.Minute
 	// A host keeps one runtime per escrow until the epoch is evicted (devshardd EvictBefore), each
 	// with host.defaultValidationWorkers goroutines and a defaultValidationQueueSize-slot queue of
 	// 176-byte validateJob values, so it grows by these for every escrow the run creates.
@@ -1642,6 +1644,8 @@ type trendRow struct {
 	EarlyGoroutines   float64 `json:"early_goroutines_median"`
 	LateGoroutines    float64 `json:"late_goroutines_median"`
 	HeapSlopeBytesMin float64 `json:"heap_live_slope_bytes_per_min"`
+	// HeapSteadyFrom is set when the gateway's heap is judged from a later sample than its goroutines: the chat cache filled then.
+	HeapSteadyFrom string `json:"heap_steady_from,omitempty"`
 	// HeapMinusCache is set when the heap slope was taken with devshard_gateway_cache_bytes subtracted.
 	HeapMinusCache   bool    `json:"heap_minus_cache,omitempty"`
 	RSSSlopeBytesMin float64 `json:"rss_slope_bytes_per_min"`
@@ -1728,8 +1732,9 @@ func evalNoRestartsOrResourceGrowth(c *invariantContext) ([]AssertionResult, any
 			steadyFrom = serving.Add(c.in.Settings.SteadyAfter)
 			row.SteadyFrom = steadyFrom.Sub(c.in.Started).Round(time.Second).String()
 		}
-		var steady []MetricsSample
-		chosenFrom, chosenTo := steadyFrom, c.runEnd
+		var steady, heapSteady []MetricsSample
+		chosenFrom, heapFrom, heapTo := steadyFrom, steadyFrom, c.runEnd
+		cacheFilling := false
 		for i, segment := range segments {
 			// A restarted process is cold again: its first SteadyAfter is warm-up, as at the run start.
 			from := steadyFrom
@@ -1743,14 +1748,32 @@ func evalNoRestartsOrResourceGrowth(c *invariantContext) ([]AssertionResult, any
 				}
 			}
 			if len(candidate) > len(steady) {
-				steady, chosenFrom, chosenTo = candidate, from, c.runEnd
-				if i+1 < len(segments) && segments[i+1][0].At.Before(chosenTo) {
-					chosenTo = segments[i+1][0].At
+				steady, chosenFrom = candidate, from
+			}
+			// The gateway chat cache costs more heap than its byte count, so the heap is judged once it is full.
+			if !host {
+				filled, ok := cacheFilled(segment, from)
+				if !ok {
+					cacheFilling = true
+					continue
+				}
+				if filled.After(from) {
+					from = filled
+					candidate = candidate[sort.Search(len(candidate), func(k int) bool { return !candidate[k].At.Before(filled) }):]
+				}
+			}
+			if len(candidate) > len(heapSteady) {
+				heapSteady, heapFrom, heapTo = candidate, from, c.runEnd
+				if i+1 < len(segments) && segments[i+1][0].At.Before(heapTo) {
+					heapTo = segments[i+1][0].At
 				}
 			}
 		}
 		if chosenFrom.After(steadyFrom) {
 			row.SteadyFrom = chosenFrom.Sub(c.in.Started).Round(time.Second).String()
+		}
+		if heapFrom.After(chosenFrom) {
+			row.HeapSteadyFrom = heapFrom.Sub(c.in.Started).Round(time.Second).String()
 		}
 		row.Samples = len(steady)
 		earlyWindow, lateWindow := c.in.Settings.TrendEarly, c.in.Settings.TrendLate
@@ -1782,10 +1805,14 @@ func evalNoRestartsOrResourceGrowth(c *invariantContext) ([]AssertionResult, any
 		if host {
 			queues = escrowsCreated
 		}
-		slope, ok, minusCache, note := c.heapSlope(target, steady, queues)
+		slope, ok, minusCache, note := c.heapSlope(target, heapSteady, queues)
 		row.HeapMinusCache = minusCache
-		if window := chosenTo.Sub(chosenFrom).Round(time.Second); ok && note == "" && window < heapMinSteady {
+		if window := heapTo.Sub(heapFrom).Round(time.Second); ok && note == "" && window < heapMinSteady {
 			note = fmt.Sprintf("steady window %s is shorter than %s", window, heapMinSteady)
+		}
+		if !ok && cacheFilling {
+			note = fmt.Sprintf("%s still rising in every process lifetime, so the chat cache cannot be told from growth", gatewayCacheFamily)
+			heapNotJudged = append(heapNotJudged, fmt.Sprintf("%s heap not judged: %s", target, note))
 		}
 		if note != "" {
 			row.Note = strings.TrimPrefix(row.Note+"; "+note, "; ")
@@ -1866,6 +1893,40 @@ func (c *invariantContext) seriesSlope(points []metricPoint) (float64, bool) {
 	}
 	slope, _, ok := theilSen(xs, ys)
 	return slope, ok
+}
+
+// cacheFilled returns the first sample at or after from from which devshard_gateway_cache_bytes
+// rises by less than heapSlopeLimit over the next gatewayCacheSettle, the zero time when samples carry
+// no cache series, and false when the cache is still rising gatewayCacheSettle before the last sample.
+func cacheFilled(samples []MetricsSample, from time.Time) (time.Time, bool) {
+	var points []metricPoint
+	for _, s := range samples {
+		if cache, ok := domainSum(s, gatewayCacheFamily); ok && s.Phase == "workload" {
+			points = append(points, metricPoint{at: s.At, value: cache})
+		}
+	}
+	if len(points) == 0 {
+		return time.Time{}, true
+	}
+	for i, p := range points {
+		if p.at.Before(from) {
+			continue
+		}
+		if points[len(points)-1].at.Sub(p.at) < gatewayCacheSettle {
+			break
+		}
+		peak := p.value
+		for _, q := range points[i+1:] {
+			if q.at.Sub(p.at) > gatewayCacheSettle {
+				break
+			}
+			peak = max(peak, q.value)
+		}
+		if peak-p.value < heapSlopeLimit {
+			return p.at, true
+		}
+	}
+	return time.Time{}, false
 }
 
 // heapSlope returns the median slope of heapFloor over heapFloorOffsets bucket grids, and
