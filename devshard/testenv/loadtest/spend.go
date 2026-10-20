@@ -13,7 +13,7 @@ import (
 
 const (
 	ngonkaPerGNK = 1e9
-	spendSource  = "mock-chain /testenv/escrows and /testenv/txs?type=settle (spent = last settle's sum(host_stats.cost) + fees); inferences_completed from each escrow's /v1/debug/inferences after drain, else the last one read while the run was live"
+	spendSource  = "mock-chain /testenv/escrows and /testenv/txs?type=settle (spent = last settle's sum(host_stats.cost) + fees; nonces = its nonce); an unsettled escrow's nonces from the highest nonce the gateway reported in pending.jsonl or after drain; per completed request divides by the client's completed requests; inferences_completed from each escrow's /v1/debug/inferences after drain, else the last one read while the run was live"
 )
 
 // chainLedger is the mock-chain ledger read after drain by a run whose invariants did not read it.
@@ -32,7 +32,8 @@ type RunSummarySpend struct {
 	Totals      SpendTotals   `json:"totals"`
 }
 
-// EscrowSpend is one escrow on the mock chain; spend and nonce come from its latest settle tx.
+// EscrowSpend is one escrow on the mock chain; spend and nonce come from its latest settle tx, and
+// an unsettled escrow's nonces_used from the last nonce the gateway reported for it.
 type EscrowSpend struct {
 	EscrowID            string            `json:"escrow_id"`
 	Model               string            `json:"model"`
@@ -43,17 +44,20 @@ type EscrowSpend struct {
 	HostCostNgonka      *uint64           `json:"host_cost_ngonka"`
 	FeesNgonka          *uint64           `json:"fees_ngonka"`
 	MaxNonce            *uint64           `json:"max_nonce"`
+	NoncesUsed          *uint64           `json:"nonces_used"`
 	InferencesCompleted *int              `json:"inferences_completed"`
 	Unavailable         map[string]string `json:"unavailable,omitempty"`
 }
 
-// SpendTotals sums the settled escrows; Partial names the escrows a present total leaves out.
+// SpendTotals sums the settled escrows' spend and every escrow's nonces, and divides by the client's
+// completed requests; Partial names the escrows a present total leaves out or estimates.
 type SpendTotals struct {
 	Escrows                   int               `json:"escrows"`
 	SettledEscrows            int               `json:"settled_escrows"`
 	CompletedRequests         int               `json:"completed_requests"`
 	SpentNgonka               *uint64           `json:"spent_ngonka"`
 	SpentGNK                  *float64          `json:"spent_gnk"`
+	SettledNoncesUsed         *uint64           `json:"settled_nonces_used"`
 	NoncesUsed                *uint64           `json:"nonces_used"`
 	NgonkaPerCompletedRequest *float64          `json:"ngonka_per_completed_request"`
 	NoncesPerCompletedRequest *float64          `json:"nonces_per_completed_request"`
@@ -90,12 +94,38 @@ func listsNotServed(live, afterDrain map[string]map[string]DebugInference) map[s
 	return lists
 }
 
-// buildSpend builds the spend block; completed is the client's completed request count.
-func buildSpend(ledger *chainLedger, inferences map[string]map[string]DebugInference, ledgerErr string, completed int) RunSummarySpend {
+// readNonces returns the highest nonce the harness read for each escrow: from the pending poller
+// while the run was live, and from the after-drain devshard list for an escrow still resident.
+// It is nil when the run read neither.
+func readNonces(pending []PendingSample, end *invariantEndState) map[string]uint64 {
+	var devshards []GatewayDevshard
+	if end != nil {
+		devshards = end.Devshards
+	}
+	if pending == nil && devshards == nil {
+		return nil
+	}
+	nonces := map[string]uint64{}
+	for _, sample := range pending {
+		if sample.EscrowID != "" && sample.Error == "" {
+			nonces[sample.EscrowID] = max(nonces[sample.EscrowID], sample.Nonce)
+		}
+	}
+	for _, devshard := range devshards {
+		if devshard.Resident {
+			nonces[devshard.ID] = max(nonces[devshard.ID], devshard.Nonce)
+		}
+	}
+	return nonces
+}
+
+// buildSpend builds the spend block; nonces holds the nonces read from the gateway and completed is
+// the client's completed request count.
+func buildSpend(ledger *chainLedger, inferences map[string]map[string]DebugInference, nonces map[string]uint64, ledgerErr string, completed int) RunSummarySpend {
 	spend := RunSummarySpend{Source: spendSource, Escrows: []EscrowSpend{}, Totals: SpendTotals{CompletedRequests: completed, Unavailable: map[string]string{}}}
 	if ledger == nil || ledgerErr != "" {
 		spend.Unavailable = "mock-chain ledger: " + cmp.Or(ledgerErr, notSaved)
-		for _, field := range []string{"spent_ngonka", "spent_gnk", "nonces_used", "ngonka_per_completed_request", "nonces_per_completed_request"} {
+		for _, field := range []string{"spent_ngonka", "spent_gnk", "settled_nonces_used", "nonces_used", "ngonka_per_completed_request", "nonces_per_completed_request"} {
 			spend.Totals.Unavailable[field] = spend.Unavailable
 		}
 		return spend
@@ -108,9 +138,8 @@ func buildSpend(ledger *chainLedger, inferences map[string]map[string]DebugInfer
 			counts[tx.Settle.EscrowID]++
 		}
 	}
-	var spent, nonces uint64
-	var unsettled []string
-	settledInferences, settledCounted := 0, true
+	var spent, settledNonces, allNonces uint64
+	var unsettled, unread []string
 	for _, escrow := range ledger.Escrows {
 		id := strconv.FormatUint(escrow.ID, 10)
 		row := EscrowSpend{EscrowID: id, Model: escrow.ModelID, DepositNgonka: escrow.Amount, Settled: escrow.Settled, SettleTxs: counts[escrow.ID], Unavailable: map[string]string{}}
@@ -120,9 +149,9 @@ func buildSpend(ledger *chainLedger, inferences map[string]map[string]DebugInfer
 				cost += stat.Cost
 			}
 			total, fees, nonce := cost+settle.Fees, settle.Fees, settle.Nonce
-			row.SpentNgonka, row.HostCostNgonka, row.FeesNgonka, row.MaxNonce = &total, &cost, &fees, &nonce
+			row.SpentNgonka, row.HostCostNgonka, row.FeesNgonka, row.MaxNonce, row.NoncesUsed = &total, &cost, &fees, &nonce, &nonce
 			spent += total
-			nonces += nonce
+			settledNonces += nonce
 			spend.Totals.SettledEscrows++
 		} else {
 			unsettled = append(unsettled, id)
@@ -130,6 +159,19 @@ func buildSpend(ledger *chainLedger, inferences map[string]map[string]DebugInfer
 			for _, field := range []string{"spent_ngonka", "host_cost_ngonka", "fees_ngonka", "max_nonce"} {
 				row.Unavailable[field] = reason
 			}
+			if nonce, ok := nonces[id]; ok {
+				row.NoncesUsed = &nonce
+			} else {
+				unread = append(unread, id)
+				if nonces == nil {
+					row.Unavailable["nonces_used"] = "not settled, and the run read no gateway nonces (invariants off)"
+				} else {
+					row.Unavailable["nonces_used"] = "not settled, and the gateway reported no nonce for this escrow, while the run was live or after drain"
+				}
+			}
+		}
+		if row.NoncesUsed != nil {
+			allNonces += *row.NoncesUsed
 		}
 		if records, ok := inferences[id]; ok {
 			count := 0
@@ -141,18 +183,10 @@ func buildSpend(ledger *chainLedger, inferences map[string]map[string]DebugInfer
 				}
 			}
 			row.InferencesCompleted = &count
-			if row.SpentNgonka != nil {
-				settledInferences += count
-			}
+		} else if inferences == nil {
+			row.Unavailable["inferences_completed"] = "the chain carries no inference count and the run read no gateway inference lists (invariants off)"
 		} else {
-			if row.SpentNgonka != nil {
-				settledCounted = false
-			}
-			if inferences == nil {
-				row.Unavailable["inferences_completed"] = "the chain carries no inference count and the run read no gateway inference lists (invariants off)"
-			} else {
-				row.Unavailable["inferences_completed"] = "the chain carries no inference count and the gateway served no inference list for this escrow, after drain or while the run was live"
-			}
+			row.Unavailable["inferences_completed"] = "the chain carries no inference count and the gateway served no inference list for this escrow, after drain or while the run was live"
 		}
 		if len(row.Unavailable) == 0 {
 			row.Unavailable = nil
@@ -165,42 +199,65 @@ func buildSpend(ledger *chainLedger, inferences map[string]map[string]DebugInfer
 		return cmp.Compare(x, y)
 	})
 	totals := &spend.Totals
-	totals.Escrows = len(spend.Escrows)
+	totals.Escrows, totals.Partial = len(spend.Escrows), map[string]string{}
+	slices.Sort(unsettled)
+	slices.Sort(unread)
+	unsettledReason := "escrows " + strings.Join(unsettled, ",") + " not settled by the end of the run: the chain paid nothing out of them yet"
+	unreadReason := "escrows " + strings.Join(unread, ",") + " not settled and no gateway nonce read for them: their nonces are left out"
+	noRequests := "no completed requests"
+	if len(unread) < totals.Escrows {
+		totals.NoncesUsed = &allNonces
+		if len(unread) > 0 {
+			totals.Partial["nonces_used"] = unreadReason
+		}
+		if completed > 0 {
+			perRequest := float64(allNonces) / float64(completed)
+			totals.NoncesPerCompletedRequest = &perRequest
+			if len(unread) > 0 {
+				totals.Partial["nonces_per_completed_request"] = unreadReason
+			}
+		} else {
+			totals.Unavailable["nonces_per_completed_request"] = noRequests
+		}
+	} else {
+		reason := fmt.Sprintf("no nonce read for any of the %d escrows", totals.Escrows)
+		totals.Unavailable["nonces_used"] = reason
+		totals.Unavailable["nonces_per_completed_request"] = reason
+	}
 	if totals.SettledEscrows == 0 {
 		reason := fmt.Sprintf("none of the %d escrows was settled by the end of the run", totals.Escrows)
-		for _, field := range []string{"spent_ngonka", "spent_gnk", "nonces_used", "ngonka_per_completed_request", "nonces_per_completed_request"} {
+		for _, field := range []string{"spent_ngonka", "spent_gnk", "settled_nonces_used", "ngonka_per_completed_request"} {
 			totals.Unavailable[field] = reason
 		}
-		return spend
-	}
-	gnk := float64(spent) / ngonkaPerGNK
-	totals.SpentNgonka, totals.SpentGNK, totals.NoncesUsed = &spent, &gnk, &nonces
-	// With an escrow unsettled, the client's request count covers spend the totals leave out, so the
-	// ratios divide by the settled escrows' completed inferences instead.
-	denominator, missing := completed, "no completed requests"
-	if len(unsettled) > 0 {
-		slices.Sort(unsettled)
-		reason := "escrows " + strings.Join(unsettled, ",") + " not settled by the end of the run: the chain paid nothing out of them yet"
-		totals.Partial = map[string]string{}
-		for _, field := range []string{"spent_ngonka", "spent_gnk", "nonces_used"} {
-			totals.Partial[field] = reason
-		}
-		denominator, missing = settledInferences, "no completed inferences on the settled escrows"
-		if !settledCounted {
-			denominator, missing = 0, reason+", and a settled escrow has no inference count to divide its spend by"
-		}
-		if denominator > 0 {
-			for _, field := range []string{"ngonka_per_completed_request", "nonces_per_completed_request"} {
-				totals.Partial[field] = reason + "; divided by the settled escrows' completed inferences"
-			}
-		}
-	}
-	if denominator > 0 {
-		perRequest, noncesPerRequest := float64(spent)/float64(denominator), float64(nonces)/float64(denominator)
-		totals.NgonkaPerCompletedRequest, totals.NoncesPerCompletedRequest = &perRequest, &noncesPerRequest
 	} else {
-		totals.Unavailable["ngonka_per_completed_request"] = missing
-		totals.Unavailable["nonces_per_completed_request"] = missing
+		gnk := float64(spent) / ngonkaPerGNK
+		totals.SpentNgonka, totals.SpentGNK, totals.SettledNoncesUsed = &spent, &gnk, &settledNonces
+		if len(unsettled) > 0 {
+			totals.Partial["spent_ngonka"] = unsettledReason
+			totals.Partial["spent_gnk"] = unsettledReason
+		}
+		switch {
+		case completed == 0:
+			totals.Unavailable["ngonka_per_completed_request"] = noRequests
+		case len(unsettled) == 0:
+			perRequest := float64(spent) / float64(completed)
+			totals.NgonkaPerCompletedRequest = &perRequest
+		case settledNonces == 0:
+			totals.Unavailable["ngonka_per_completed_request"] = unsettledReason + ", and the settled escrows used no nonce to price theirs by"
+		default:
+			// Only a settle prices nonces, so the unsettled escrows' nonces are priced at the settled escrows' rate.
+			perNonce := float64(spent) / float64(settledNonces)
+			perRequest := perNonce * float64(allNonces) / float64(completed)
+			totals.NgonkaPerCompletedRequest = &perRequest
+			reason := unsettledReason + fmt.Sprintf("; estimated: their nonces priced at the settled escrows' %.1f ngonka per nonce", perNonce)
+			if len(unread) > 0 {
+				reason += "; " + unreadReason
+			}
+			totals.Partial["ngonka_per_completed_request"] = reason
+		}
+	}
+	if len(totals.Partial) == 0 {
+		totals.Partial = nil
 	}
 	if len(totals.Unavailable) == 0 {
 		totals.Unavailable = nil

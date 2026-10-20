@@ -99,7 +99,7 @@ func writeRunSummary(outputDir string, run runReport) (RunSummary, error) {
 		}
 	}
 	ledger, inferences, ledgerErr := spendSources(run.inputs)
-	summary.Spend = buildSpend(ledger, inferences, ledgerErr, run.summary.Completed)
+	summary.Spend = buildSpend(ledger, inferences, readNonces(readSamples[PendingSample](outputDir, "pending.jsonl"), run.inputs.Invariants), ledgerErr, run.summary.Completed)
 	var metrics MetricsSummary
 	if err := readReportArtifact(outputDir, "metrics-summary.json", false, &metrics); err != nil {
 		return summary, err
