@@ -6,7 +6,7 @@ Counts a chat prompt's tokens with the tokenizer the chain pins for the model, s
 
 - `bpe.go` — `Load` reads a Hugging Face `tokenizer.json` into a `Counter`; `Counter.Count` is its exact token count of a text, without the special tokens a chat template adds.
 - `merge.go` — the merge loop: lowest rank first, leftmost on a tie, as Hugging Face BPE applies merges.
-- `estimate.go` — `Counter.Estimate`: exact up to a budget, sampled beyond it.
+- `estimate.go` — `Counter.MinimumTokens`: the fewest tokens a prompt holds, exact up to a budget and a lower bound from samples beyond it.
 - `library.go` — `Library`: the counter for each model, keyed by the revision the chain pins, loaded in the background.
 
 ## Where the tokenizer comes from
@@ -28,9 +28,11 @@ On the three pinned tokenizers (MiniMax-M2.7, DeepSeek-V4-Flash-0731, GLM-5.3-Fl
 
 ## Estimating a long prompt
 
-Up to `exactBudgetBytes` (64 KiB) in all, `Estimate` counts every part exactly. Above it, it counts `sampleWindows` (8) windows of 8 KiB, one per eighth of the prompt, and scales their tokens per byte to the prompt's length. Each window starts at its own offset inside its eighth, so a prompt that alternates every few kilobytes is not sampled on one side of the alternation only. Parts are counted on their own, as the template separates messages, and a window that spans parts counts each share on its own.
+Up to `exactBudgetBytes` (64 KiB) in all, `MinimumTokens` counts every part exactly. Above it, it counts `sampleWindows` (8) windows of 8 KiB, one per eighth of the prompt, and scales their tokens per byte to the prompt's length. Each window starts at its own offset inside its eighth, so a prompt that alternates every few kilobytes is not sampled on one side of the alternation only. Parts are counted on their own, as the template separates messages, and a window that spans parts counts each share on its own.
 
 The sampled estimate is what it costs to stay bounded, and it misses on a prompt whose density changes in one place: a dense block the windows land in or miss moves the estimate by its share. On the comparison texts past 64 KiB (English, Russian, Chinese, Go, JSON, mixed and adversarial, up to 4 MB) the mean error was 1.0–1.3% per tokenizer; the worst were +6.9%, a book whose dense table of contents the first window lands in, and −8.7%, a JSON document whose dense stretch the windows miss.
+
+`MinimumTokens` answers the check that refuses a prompt, and an over-count refuses a request a host would serve, so past the budget it divides the estimate by 1 + `sampledOvercountPercent` (7%), the worst over-count measured rounded up. What it returns is then at most the prompt's real count on every comparison text; an under-count is left as it is, because it only leaves a request unchecked.
 
 ## Bounds
 

@@ -160,7 +160,7 @@ func BenchmarkEstimate(b *testing.B) {
 					b.ReportAllocs()
 					for b.Loop() {
 						var err error
-						if estimate, err = counter.Estimate([]string{text}); err != nil {
+						if estimate, _, err = counter.estimate([]string{text}); err != nil {
 							b.Fatal(err)
 						}
 					}

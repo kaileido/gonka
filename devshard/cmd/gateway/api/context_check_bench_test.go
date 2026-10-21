@@ -12,14 +12,14 @@ import (
 	"devshard/cmd/gateway/tokenizer"
 )
 
-type counterEstimate struct{ counter *tokenizer.Counter }
+type counterPromptTokens struct{ counter *tokenizer.Counter }
 
-func (c counterEstimate) Estimate(_ string, body []byte) (uint64, bool) {
+func (c counterPromptTokens) MinimumPromptTokens(_ string, body []byte) (uint64, bool) {
 	prompt, err := filters.PromptText(body)
 	if err != nil {
 		return 0, false
 	}
-	tokens, err := c.counter.Estimate(prompt)
+	tokens, err := c.counter.MinimumTokens(prompt)
 	return tokens, err == nil
 }
 
@@ -44,7 +44,7 @@ func BenchmarkChatContextCheck(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		estimators[strings.TrimSuffix(filepath.Base(path), ".json")] = counterEstimate{counter: counter}
+		estimators[strings.TrimSuffix(filepath.Base(path), ".json")] = counterPromptTokens{counter: counter}
 	}
 	pinned := int64(config.MaxContextTokens)
 	for _, size := range []struct {

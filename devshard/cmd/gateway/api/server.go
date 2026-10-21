@@ -166,9 +166,9 @@ type LimitRejections interface {
 	Rejected(model, reason string)
 }
 
-// PromptTokens estimates a normalized chat body's prompt tokens with the model's pinned tokenizer; *tokenizer.Library satisfies it.
+// PromptTokens counts the fewest tokens a normalized chat body's messages hold with the model's pinned tokenizer; *tokenizer.Library satisfies it.
 type PromptTokens interface {
-	Estimate(model string, body []byte) (tokens uint64, known bool)
+	MinimumPromptTokens(model string, body []byte) (tokens uint64, known bool)
 }
 
 // RequestJournal is satisfied by *journal.Journal; each method returns without waiting on a log handler.

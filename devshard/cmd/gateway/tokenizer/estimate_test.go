@@ -5,15 +5,21 @@ import (
 	"testing"
 )
 
-// Test flow:
-//  1. Split a prompt under exactBudgetBytes into parts.
-//  2. Estimate it.
-//  3. Assert the estimate is the sum of each part's exact count.
-func TestEstimateIsExactWithinTheBudget(t *testing.T) {
-	counter := loadTestdata(t, "isolated")
-	prompt := goldenTexts
+func sentencesOf(size int) string {
+	const sentence = "The gateway counts a prompt before it commits a nonce. "
+	return strings.Repeat(sentence, size/len(sentence)+1)[:size]
+}
 
-	got, err := counter.Estimate(prompt)
+// Test flow:
+//  1. Build an ASCII prompt of exactly exactBudgetBytes and split it into parts.
+//  2. Take MinimumTokens of it.
+//  3. Assert it is the sum of each part's exact count.
+func TestMinimumTokensIsExactUpToTheBudget(t *testing.T) {
+	counter := loadTestdata(t, "isolated")
+	text := sentencesOf(exactBudgetBytes)
+	prompt := []string{text[:exactBudgetBytes/3], text[exactBudgetBytes/3:]}
+
+	got, err := counter.MinimumTokens(prompt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,7 +33,36 @@ func TestEstimateIsExactWithinTheBudget(t *testing.T) {
 		want += counted
 	}
 	if got != uint64(want) {
-		t.Fatalf("Estimate = %d, want the exact %d", got, want)
+		t.Fatalf("MinimumTokens = %d, want the exact %d", got, want)
+	}
+}
+
+// Test flow:
+//  1. Build a prompt one byte past exactBudgetBytes, so it is sampled.
+//  2. Take MinimumTokens of it, its sampled estimate and its exact count.
+//  3. Assert MinimumTokens is the estimate less sampledOvercountPercent, and below the exact count.
+func TestMinimumTokensPastTheBudgetIsTheSampledEstimateLessItsWorstOvercount(t *testing.T) {
+	counter := loadTestdata(t, "isolated")
+	prompt := []string{sentencesOf(exactBudgetBytes + 1)}
+
+	got, err := counter.MinimumTokens(prompt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	estimate, sampled, err := counter.estimate(prompt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exact, err := counter.Count(prompt[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !sampled || got != estimate*wholePercent/(wholePercent+sampledOvercountPercent) {
+		t.Fatalf("MinimumTokens = %d (sampled %v), want the estimate %d less %d%%", got, sampled, estimate, sampledOvercountPercent)
+	}
+	if got >= uint64(exact) {
+		t.Fatalf("MinimumTokens = %d, want below the exact %d", got, exact)
 	}
 }
 
@@ -48,12 +83,12 @@ func TestEstimateScalesSampledWindowsToTheWholePrompt(t *testing.T) {
 	}
 
 	for name, prompt := range map[string][]string{"one part": {text}, "many parts": parts} {
-		got, err := counter.Estimate(prompt)
+		got, sampled, err := counter.estimate(prompt)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if drift := float64(got)/float64(exact) - 1; drift > 0.01 || drift < -0.01 {
-			t.Errorf("%s: Estimate = %d over %d bytes, exact %d (%.2f%%), want within 1%%", name, got, len(text), exact, 100*drift)
+		if drift := float64(got)/float64(exact) - 1; !sampled || drift > 0.01 || drift < -0.01 {
+			t.Errorf("%s: estimate = %d (sampled %v) over %d bytes, exact %d (%.2f%%), want sampled within 1%%", name, got, sampled, len(text), exact, 100*drift)
 		}
 	}
 }

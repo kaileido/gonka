@@ -68,8 +68,8 @@ func NewLibrary(source ModelSource, epoch func() uint64) *Library {
 	}
 }
 
-// Estimate returns the estimated tokens of a normalized chat body's prompt; known is false while the model has no tokenizer loaded or the count fails.
-func (l *Library) Estimate(model string, body []byte) (tokens uint64, known bool) {
+// MinimumPromptTokens returns the fewest tokens a normalized chat body's messages hold; known is false while the model has no tokenizer loaded or the count fails.
+func (l *Library) MinimumPromptTokens(model string, body []byte) (tokens uint64, known bool) {
 	counter := l.counter(model)
 	if counter == nil {
 		return 0, false
@@ -78,7 +78,7 @@ func (l *Library) Estimate(model string, body []byte) (tokens uint64, known bool
 	if err != nil {
 		return 0, false
 	}
-	tokens, err = counter.Estimate(prompt)
+	tokens, err = counter.MinimumTokens(prompt)
 	return tokens, err == nil
 }
 

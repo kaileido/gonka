@@ -101,11 +101,11 @@ func TestLibraryLoadsThePinnedTokenizerOnceAPin(t *testing.T) {
 	epoch.Store(5)
 	library := newTestLibrary(source, server, &epoch, &testClock{})
 
-	if _, known := library.Estimate("m", []byte(chatBody)); known {
+	if _, known := library.MinimumPromptTokens("m", []byte(chatBody)); known {
 		t.Fatal("the first estimate is known before any tokenizer loaded")
 	}
 	require.Eventually(t, func() bool { return settled(library, "m") }, 10*time.Second, time.Millisecond)
-	tokens, known := library.Estimate("m", []byte(chatBody))
+	tokens, known := library.MinimumPromptTokens("m", []byte(chatBody))
 	want, err := loadTestdata(t, "isolated").Count(goldenTexts[0])
 	if err != nil {
 		t.Fatal(err)
@@ -115,18 +115,18 @@ func TestLibraryLoadsThePinnedTokenizerOnceAPin(t *testing.T) {
 	}
 
 	epoch.Store(6)
-	library.Estimate("m", []byte(chatBody))
+	library.MinimumPromptTokens("m", []byte(chatBody))
 	require.Eventually(t, func() bool { return settled(library, "m") && source.reads.Load() == 2 }, 10*time.Second, time.Millisecond)
 	if hub.fetches.Load() != 1 {
 		t.Fatalf("fetches = %d after an epoch that kept the pin, want 1", hub.fetches.Load())
 	}
-	if _, known := library.Estimate("m", []byte(chatBody)); !known {
+	if _, known := library.MinimumPromptTokens("m", []byte(chatBody)); !known {
 		t.Fatal("the tokenizer was dropped by an epoch that kept the pin")
 	}
 
 	source.pin("c2")
 	epoch.Store(7)
-	library.Estimate("m", []byte(chatBody))
+	library.MinimumPromptTokens("m", []byte(chatBody))
 	require.Eventually(t, func() bool { return settled(library, "m") && hub.fetches.Load() == 2 }, 10*time.Second, time.Millisecond)
 }
 
@@ -143,11 +143,11 @@ func TestLibraryDoesNotRefetchAPinWithoutATokenizer(t *testing.T) {
 	clock := &testClock{}
 	library := newTestLibrary(source, server, &epoch, clock)
 
-	library.Estimate("m", []byte(chatBody))
+	library.MinimumPromptTokens("m", []byte(chatBody))
 	require.Eventually(t, func() bool { return settled(library, "m") }, 10*time.Second, time.Millisecond)
 	clock.advance(2 * retryInterval)
 	epoch.Store(6)
-	if _, known := library.Estimate("m", []byte(chatBody)); known {
+	if _, known := library.MinimumPromptTokens("m", []byte(chatBody)); known {
 		t.Fatal("a model without a tokenizer is estimated")
 	}
 	require.Eventually(t, func() bool { return settled(library, "m") && source.reads.Load() == 2 }, 10*time.Second, time.Millisecond)
@@ -170,18 +170,18 @@ func TestLibraryRetriesATransientFailureAfterTheInterval(t *testing.T) {
 	clock := &testClock{}
 	library := newTestLibrary(source, server, &epoch, clock)
 
-	library.Estimate("m", []byte(chatBody))
+	library.MinimumPromptTokens("m", []byte(chatBody))
 	require.Eventually(t, func() bool { return settled(library, "m") }, 10*time.Second, time.Millisecond)
-	library.Estimate("m", []byte(chatBody))
+	library.MinimumPromptTokens("m", []byte(chatBody))
 	if !settled(library, "m") || hub.fetches.Load() != 1 {
 		t.Fatalf("fetches = %d inside the retry interval, want 1", hub.fetches.Load())
 	}
 
 	hub.status.Store(http.StatusOK)
 	clock.advance(retryInterval)
-	library.Estimate("m", []byte(chatBody))
+	library.MinimumPromptTokens("m", []byte(chatBody))
 	require.Eventually(t, func() bool {
-		_, known := library.Estimate("m", []byte(chatBody))
+		_, known := library.MinimumPromptTokens("m", []byte(chatBody))
 		return known
 	}, 10*time.Second, time.Millisecond)
 }
@@ -194,7 +194,7 @@ func TestLibraryWithoutAPinEstimatesNothing(t *testing.T) {
 	_, server := newFakeHub(t)
 	unread := &fakeSource{commit: "c1"}
 	var unknownEpoch atomic.Uint64
-	if _, known := newTestLibrary(unread, server, &unknownEpoch, &testClock{}).Estimate("m", []byte(chatBody)); known || unread.reads.Load() != 0 {
+	if _, known := newTestLibrary(unread, server, &unknownEpoch, &testClock{}).MinimumPromptTokens("m", []byte(chatBody)); known || unread.reads.Load() != 0 {
 		t.Fatalf("known = %v, pin reads = %d before the epoch is known, want false, 0", known, unread.reads.Load())
 	}
 
@@ -202,9 +202,9 @@ func TestLibraryWithoutAPinEstimatesNothing(t *testing.T) {
 	var epoch atomic.Uint64
 	epoch.Store(5)
 	library := newTestLibrary(failing, server, &epoch, &testClock{})
-	library.Estimate("m", []byte(chatBody))
+	library.MinimumPromptTokens("m", []byte(chatBody))
 	require.Eventually(t, func() bool { return settled(library, "m") }, 10*time.Second, time.Millisecond)
-	if _, known := library.Estimate("m", []byte(chatBody)); known {
+	if _, known := library.MinimumPromptTokens("m", []byte(chatBody)); known {
 		t.Fatal("a model whose pin could not be read is estimated")
 	}
 }

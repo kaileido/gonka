@@ -2,46 +2,45 @@ package tokenizer
 
 import "unicode/utf8"
 
-// A prompt up to exactBudgetBytes is counted whole; a longer one is counted on sampleWindows windows of that budget. See README.md, "Estimating a long prompt".
+// See README.md, "Estimating a long prompt".
 const (
-	exactBudgetBytes = 64 << 10
-	sampleWindows    = 8
-	windowBytes      = exactBudgetBytes / sampleWindows
+	exactBudgetBytes        = 64 << 10
+	sampleWindows           = 8
+	windowBytes             = exactBudgetBytes / sampleWindows
+	sampledOvercountPercent = 7
+	wholePercent            = 100
 )
 
-// Estimate returns the token count of prompt's parts, each counted on its own: exact up to exactBudgetBytes in all, scaled from spread windows beyond.
-func (c *Counter) Estimate(prompt []string) (uint64, error) {
+// MinimumTokens returns the fewest tokens prompt's parts hold, each counted on its own: exact up to exactBudgetBytes in all, the sampled estimate less its worst measured over-count beyond.
+func (c *Counter) MinimumTokens(prompt []string) (uint64, error) {
+	tokens, sampled, err := c.estimate(prompt)
+	if err != nil || !sampled {
+		return tokens, err
+	}
+	return tokens * wholePercent / (wholePercent + sampledOvercountPercent), nil
+}
+
+func (c *Counter) estimate(prompt []string) (tokens uint64, sampled bool, err error) {
 	total := 0
 	for _, part := range prompt {
 		total += len(part)
 	}
 	if total <= exactBudgetBytes {
-		tokens := 0
-		for _, part := range prompt {
-			counted, err := c.Count(part)
-			if err != nil {
-				return 0, err
-			}
-			tokens += counted
-		}
-		return uint64(tokens), nil
+		tokens, _, err = c.countRange(prompt, 0, total)
+		return tokens, false, err
 	}
 	span := total / sampleWindows
-	var tokens, sampled uint64
+	var sampledTokens, sampledBytes uint64
 	for window := range sampleWindows {
-		// Each window starts at its own phase within its span, so a prompt that alternates every few kilobytes is not sampled on one side only.
 		start := window*span + (window*windowBytes/2)%(span-windowBytes+1)
-		windowTokens, windowSampled, err := c.countRange(prompt, start, start+windowBytes)
+		windowTokens, windowBytesCounted, err := c.countRange(prompt, start, start+windowBytes)
 		if err != nil {
-			return 0, err
+			return 0, true, err
 		}
-		tokens += windowTokens
-		sampled += windowSampled
+		sampledTokens += windowTokens
+		sampledBytes += windowBytesCounted
 	}
-	if sampled == 0 {
-		return 0, nil
-	}
-	return (tokens*uint64(total) + sampled/2) / sampled, nil
+	return (sampledTokens*uint64(total) + sampledBytes/2) / max(sampledBytes, 1), true, nil
 }
 
 // countRange counts the bytes [start, end) of prompt's concatenation, each part's share on its own, cut at rune boundaries.

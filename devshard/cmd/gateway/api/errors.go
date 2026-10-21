@@ -117,19 +117,6 @@ func (e *BlockedError) phaseName() string {
 	return "chain admission controls"
 }
 
-// ContextLengthError is a prompt the model's context cannot hold with Reserve tokens left for the chat template and the answer.
-type ContextLengthError struct {
-	Model         string
-	PromptTokens  uint64
-	ContextLength uint64
-	Reserve       uint64
-}
-
-func (e *ContextLengthError) Error() string {
-	return fmt.Sprintf("This model's maximum context length is %d tokens, and the gateway keeps %d of them for the chat template and the answer. Your messages are about %d tokens; reduce them to under %d tokens.",
-		e.ContextLength, e.Reserve, e.PromptTokens, e.ContextLength-e.Reserve)
-}
-
 func tooLargeForHosts(bodyBytes int) error {
 	return &filters.RejectError{
 		Status: http.StatusRequestEntityTooLarge,
