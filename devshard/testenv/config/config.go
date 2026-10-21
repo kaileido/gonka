@@ -284,10 +284,10 @@ const (
 	// proxy-router. Peer RPC (HTTP/2 preface) and JSON (HTTP/1.1) share it,
 	// as they share join's :80/:443. With the overlay on, pooled hosts'
 	// InferenceUrl is ProxyOverlayURL; without it, DefaultEscrowSlotURL.
-	DefaultProxyService = "proxy"
-	DefaultProxyPort    = 8080
-	ProxyOverlayURL     = "http://proxy:8080"
-	ProxyOverlayEnv     = "TESTENV_PROXY_OVERLAY"
+	DefaultProxyService     = "proxy"
+	DefaultProxyPort        = 8080
+	ProxyOverlayURL         = "http://proxy:8080"
+	ProxyOverlayEnv         = "TESTENV_PROXY_OVERLAY"
 	DefaultDevshardctlHost  = "devshardctl"
 	DefaultPostgresHost     = "devshard-postgres"
 	DefaultPostgresPort     = 5432
