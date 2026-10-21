@@ -13,14 +13,15 @@ One `POST /v1/chat/completions`, from the socket to the settled nonce. Every ste
 | 3 | will it fit a host-bound body once encoded | inline in `chat`: `transport.PromptWireBytes` + `hostCatchUpReserveBytes` against `transport.MaxHostRequestBytes` | 413 |
 | 4 | authorise the model for this caller | `authorizeModel` | 400 when the model is absent; 401 |
 | 5 | is the model routable at all | `routableModel`, for a caller step 4 admitted | 503 when not ready or an offered model has nothing routable; 400 for a model nobody offers |
-| 6 | does the chain phase admit new work | `admission`, on `snapshots.Snapshot()` | 503, except a refusal that is proof-of-compute alone, which waits for step 7 |
-| 7 | cache lookup | `cacheKeyFor` → `cache.get` | — (hit returns here); a miss behind a proof-of-compute refusal answers that 503 |
-| 8 | take an admission slot and token budget | `limiter.AcquireForModel` | 429 |
-| 9 | does the chain phase still admit new work | `admission` again, on a fresh snapshot: the limiter can hold a request for minutes, and a block that began meanwhile must not get a nonce | 503 |
-| 10 | race it | `race` → `engine.Run` | see below |
-| 11 | release the slot | `defer limiter.ReleaseForModel` | — |
+| 6 | does the prompt fit the model's context | `fitsContext`: the pinned tokenizer's estimate against the context length less `promptContextReserve` | 400 `context_length_exceeded` |
+| 7 | does the chain phase admit new work | `admission`, on `snapshots.Snapshot()` | 503, except a refusal that is proof-of-compute alone, which waits for step 8 |
+| 8 | cache lookup | `cacheKeyFor` → `cache.get` | — (hit returns here); a miss behind a proof-of-compute refusal answers that 503 |
+| 9 | take an admission slot and token budget | `limiter.AcquireForModel` | 429 |
+| 10 | does the chain phase still admit new work | `admission` again, on a fresh snapshot: the limiter can hold a request for minutes, and a block that began meanwhile must not get a nonce | 503 |
+| 11 | race it | `race` → `engine.Run` | see below |
+| 12 | release the slot | `defer limiter.ReleaseForModel` | — |
 
-Steps 4–6 run **after** normalisation because the model name is only known once the body is parsed and the per-model profile applied.
+Steps 4–7 run **after** normalisation because the model name is only known once the body is parsed and the per-model profile applied.
 
 ## Step 2 in detail: `filters.NormalizeRequest`
 
@@ -50,7 +51,19 @@ Steps 4–6 run **after** normalisation because the model name is only known onc
 
 The executor forces `logprobs` and `top_logprobs` itself, and `return_token_ids: true` beside them (`common/completionapi.ModifyRequestBodyWithLogprobsMode`), so the gateway carries the client's `logprobs` and `top_logprobs` as asked, `top_logprobs` capped at `completionapi.ForcedTopLogprobs` (5), rather than forcing them ([`filters/README.md`](../filters/README.md), "Parameter rules"). `return_token_ids` is the executor's alone: the gateway strips it from the client's request.
 
-## Step 10 in detail: the race
+## Step 6 in detail: the context check
+
+A host refuses a prompt its `--max-model-len` cannot hold, and it refuses it after the nonce is committed, so the escrow pays for an attempt no host could serve. Step 6 refuses it first, with OpenAI's `invalid_request_error` / `context_length_exceeded`, when the prompt's estimated tokens reach the context length less `promptContextReserve` (16 384 tokens).
+
+- **The context length** is `config.Limits.ContextLength`: the operator's `max_model_len` pin, else the `--max-model-len` governance registers. A model with neither is not checked, and neither is one whose length the reserve would swallow; `fallback_max_model_len` is a price, not a length, and is never checked against.
+- **The estimate** is the [`tokenizer`](../tokenizer/) package's, with the `tokenizer.json` the epoch pins for the model, over `filters.PromptText` of the normalized body: what the host's chat template renders, without the template ([`filters/README.md`](../filters/README.md), "The prompt text"). It is exact up to 64 KiB and sampled beyond.
+- **The reserve** covers what the estimate leaves out and what the answer needs: the template's own tokens (a few per message, and the tool-schema wrapper), most of the sampled estimate's error past 64 KiB ([`tokenizer/README.md`](../tokenizer/README.md), "Estimating a long prompt"), and room for an answer at the default `max_tokens` cap of 4 096. `max_tokens` is not added to the estimate: vLLM shortens a request's `max_tokens` to the room its prompt leaves rather than refusing it, and refuses only a prompt that does not fit by itself, so adding it would refuse requests a host serves.
+- **Fail open.** A model without a tokenizer the gateway reads, a tokenizer still loading, a pin or a body that cannot be read: the request goes on unchecked, which is how it went before the check existed.
+- **Placement.** The check runs after authorisation and routability, because it is the first step with a real CPU cost and it needs a served model's context length; before admission, the cache, the limiter and the race, so a refused prompt takes no slot and no nonce. It is not captured, like step 3's refusal, and the route's status series counts it.
+
+The limiter, the request ledger and the escalation ladder keep `filters.EstimatedPromptTokens`, the byte-based estimate their windows and deadlines are denominated in; the tokenizer's count gates step 6 and nothing else.
+
+## Step 11 in detail: the race
 
 `api/routes.go`, `race` → `engine.Run` (`engine/engine.go`).
 

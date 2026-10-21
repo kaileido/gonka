@@ -27,6 +27,7 @@ The hard part is not proxying. It is that **every nonce costs the escrow money w
 | [`liquidity/`](./liquidity/) | one escrow's money by class — free, returning, late, stuck — and whether it is full, starved or idle |
 | [`funding/`](./funding/) | one model's planned creates and retires from its money, demand, budget and rate |
 | [`chain/`](./chain/) | all blockchain input and output, and the epoch phase snapshot |
+| [`tokenizer/`](./tokenizer/) | a prompt's tokens with the model's pinned `tokenizer.json`, for the boundary's context check |
 | [`limits/`](./limits/) | admission, the per-host congestion windows, and the chain-weight capacity model |
 | [`perf/`](./perf/) | per-host history, outlier ejection, capability refusal counts |
 | [`accounting/`](./accounting/) | the per-nonce ledger and the findings derived from it |

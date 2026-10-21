@@ -220,6 +220,10 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 		s.writeErrorFor(w, err)
 		return
 	}
+	if err := s.fitsContext(configuration.Limits, normalized); err != nil {
+		s.writeErrorFor(w, err)
+		return
+	}
 	refusal := admission(s.snapshots.Snapshot(), configuration.Modes, s.now(), configuration.Chain.SnapshotMaxAgeSeconds)
 	if refusal != nil && (s.cache == nil || !blockedOnlyByPoC(refusal)) {
 		s.writeErrorFor(w, refusal)
@@ -311,6 +315,22 @@ func (s *Server) routableModel(configured config.Limits, model string) error {
 		return &ModelUnavailableError{Model: model}
 	}
 	return &UnsupportedModelError{Model: model, Supported: served}
+}
+
+// fitsContext refuses a prompt the model's context cannot hold with promptContextReserve to spare; a model without a tokenizer or a context length is not checked. See request.md, "Step 6 in detail".
+func (s *Server) fitsContext(configured config.Limits, normalized filters.Result) error {
+	if s.promptTokens == nil {
+		return nil
+	}
+	contextLength := configured.ContextLength(normalized.Model, s.snapshots.Snapshot().Models[normalized.Model].MaxModelLen)
+	if contextLength <= promptContextReserve {
+		return nil
+	}
+	tokens, known := s.promptTokens.Estimate(normalized.Model, normalized.Body)
+	if !known || tokens < contextLength-promptContextReserve {
+		return nil
+	}
+	return &ContextLengthError{Model: normalized.Model, PromptTokens: tokens, ContextLength: contextLength, Reserve: promptContextReserve}
 }
 
 func authorizeModel(configured config.Limits, model string, identity credentials) error {

@@ -117,6 +117,19 @@ func (e *BlockedError) phaseName() string {
 	return "chain admission controls"
 }
 
+// ContextLengthError is a prompt the model's context cannot hold with Reserve tokens left for the chat template and the answer.
+type ContextLengthError struct {
+	Model         string
+	PromptTokens  uint64
+	ContextLength uint64
+	Reserve       uint64
+}
+
+func (e *ContextLengthError) Error() string {
+	return fmt.Sprintf("This model's maximum context length is %d tokens, and the gateway keeps %d of them for the chat template and the answer. Your messages are about %d tokens; reduce them to under %d tokens.",
+		e.ContextLength, e.Reserve, e.PromptTokens, e.ContextLength-e.Reserve)
+}
+
 func tooLargeForHosts(bodyBytes int) error {
 	return &filters.RejectError{
 		Status: http.StatusRequestEntityTooLarge,
@@ -133,7 +146,8 @@ func statusForError(err error) int {
 		return status
 	}
 	var unsupported *UnsupportedModelError
-	if errors.As(err, &unsupported) {
+	var tooLong *ContextLengthError
+	if errors.As(err, &unsupported) || errors.As(err, &tooLong) {
 		return http.StatusBadRequest
 	}
 	if modelUnavailable(err) {
@@ -261,7 +275,16 @@ func (s *Server) writeErrorFor(w http.ResponseWriter, err error) {
 	case ours, shardHasNoRoom(err):
 		w.Header().Set("Retry-After", strconv.FormatInt(int64(noHostRetryAfter.Seconds()), 10))
 	}
-	writeError(w, statusForError(err), err.Error())
+	writeJSON(w, statusForError(err), errorEnvelope{Error: detailForError(err)})
+}
+
+// detailForError names the OpenAI error type and code a client branches on, where the gateway has an equivalent.
+func detailForError(err error) errorDetail {
+	var tooLong *ContextLengthError
+	if errors.As(err, &tooLong) {
+		return errorDetail{Message: err.Error(), Type: errorTypeInvalidRequest, Code: errorCodeContextLengthExceeded}
+	}
+	return errorDetail{Message: err.Error()}
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {

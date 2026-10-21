@@ -77,5 +77,11 @@ const (
 	allowOffChainAbsent             = ""
 )
 
+// The OpenAI error type and code a prompt past the model's context is answered with.
+const (
+	errorTypeInvalidRequest        = "invalid_request_error"
+	errorCodeContextLengthExceeded = "context_length_exceeded"
+)
+
 // A stored filter row the gateway read without a problem.
 const problemNone = ""

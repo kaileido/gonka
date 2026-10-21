@@ -16,11 +16,12 @@ import (
 	"devshard/cmd/gateway/internal/strictjson"
 )
 
-// The body limits are in README.md, "Reading a body"; hostCatchUpReserveBytes is in request.md.
+// The body limits are in README.md, "Reading a body"; hostCatchUpReserveBytes and promptContextReserve are in request.md.
 const (
 	chatIngestLimit = filters.MaxBodyBytes
 
 	hostCatchUpReserveBytes = 1 << 20
+	promptContextReserve    = 16_384
 	adminIngestLimit        = 64 << 10
 	bodyReadTimeout         = 30 * time.Second
 
