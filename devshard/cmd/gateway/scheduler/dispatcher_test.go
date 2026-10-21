@@ -378,6 +378,7 @@ type harnessConfig struct {
 	submitBuffer        int
 	holdStart           bool
 	escrowHold          func() (func(), bool)
+	escalationHold      func() (func(), bool)
 	balance             uint64
 	feePerNonce         uint64
 	retirementReserve   uint64
@@ -469,6 +470,7 @@ func newHarness(t *testing.T, cfg harnessConfig) *harness {
 		submitBuffer:        cmp.Or(cfg.submitBuffer, int(config.Defaults().Scheduler.DispatchQueueDepth)),
 		onExhausted:         func(escrowID string, reason ExhaustionReason) { exhausted.Store(&escrowID) },
 		holdEscrow:          cfg.escrowHold,
+		escalationHold:      cfg.escalationHold,
 	})
 	t.Cleanup(dispatcher.stop)
 	if !cfg.holdStart {

@@ -403,3 +403,66 @@ func TestAPinnedHedgeThatCannotPayNeverMarksItsEscrow(t *testing.T) {
 	)
 	runStepsWith(t, spec, func(blockchain *fakeChain) { blockchain.rejectCreates(true) })
 }
+
+func absentSlotBurns(harness *gatewayHarness, escrowID string) float64 {
+	families, err := harness.currentGateway().Telemetry().Registry().Gather()
+	if err != nil {
+		return 0
+	}
+	burned := 0.0
+	for _, family := range families {
+		if family.GetName() != "devshard_gateway_ghost_nonces_burned_total" {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			labels := map[string]string{}
+			for _, label := range metric.GetLabel() {
+				labels[label.GetName()] = label.GetValue()
+			}
+			if labels["devshard_id"] == escrowID && labels["reason"] == "participant_absent_from_chain_no_send" {
+				burned += metric.GetCounter().GetValue()
+			}
+		}
+	}
+	return burned
+}
+
+// Test flow:
+//  1. Leave participant 1 unlisted on the chain, so the seeded escrow opens with a dead slot for it.
+//  2. Send twelve requests one after another and assert the escrow burned nonces on that slot as absent from chain.
+//  3. List participant 1 again and advance four minutes, past the refusal vote that keeps the escrow's only session busy.
+//  4. Send twelve more requests and assert every request was answered, the escrow burned no further absent-slot nonce and participant 1 was sent to again.
+func TestASlotAbsentAtOpenServesOnceItsHostIsListedAgain(t *testing.T) {
+	spec := defaultSpec()
+	spec.behaviours = map[int]participantBehaviour{1: {unlisted: true}}
+	var burnedWhileAbsent float64
+	var sentBeforeListing int
+	spec.steps = []harnessStep{
+		sendRequests{promptBytes: 200, maxTokens: 64, count: 12, sequential: true},
+		expectThat{label: "the dead slot burns", verify: func(harness *gatewayHarness) error {
+			if burnedWhileAbsent = absentSlotBurns(harness, harness.seededIDs[0]); burnedWhileAbsent == 0 {
+				return errors.New("no absent-slot burn on the seeded escrow, want at least one")
+			}
+			sentBeforeListing = harness.fleet.sendsTo(harness.fleet.order[1])
+			return nil
+		}},
+		changeParticipants{indexes: []int{1}, change: func(behaviour *participantBehaviour) { behaviour.unlisted = false }},
+		advance{by: 4 * time.Minute},
+		sendRequests{promptBytes: 200, maxTokens: 64, count: 12, sequential: true},
+		expectThat{label: "the listed host serves again", verify: func(harness *gatewayHarness) error {
+			for _, status := range harness.answeredStatuses() {
+				if status != http.StatusOK {
+					return fmt.Errorf("answered statuses %v, want every one %d", harness.answeredStatuses(), http.StatusOK)
+				}
+			}
+			if burned := absentSlotBurns(harness, harness.seededIDs[0]); burned != burnedWhileAbsent {
+				return fmt.Errorf("absent-slot burns %v after the host was listed again, want %v", burned, burnedWhileAbsent)
+			}
+			if sent := harness.fleet.sendsTo(harness.fleet.order[1]); sent == sentBeforeListing {
+				return fmt.Errorf("participant 1 sent to %d times, as many as before it was listed again", sent)
+			}
+			return nil
+		}},
+	}
+	runSteps(t, spec)
+}

@@ -17,6 +17,7 @@ func TestGhostKindReason(t *testing.T) {
 		{name: "state diverged", kind: ghostStateDiverged, want: "participant_state_diverged_no_send"},
 		{name: "exclude", kind: ghostExclude, want: "no_compatible_request_after_stale"},
 		{name: "prepare failed", kind: ghostPrepareFailed, want: "nonce_spent_on_failed_prepare"},
+		{name: "absent from chain", kind: ghostAbsentFromChain, want: "participant_absent_from_chain_no_send"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -35,7 +36,7 @@ func TestGhostKindReason(t *testing.T) {
 func TestEveryGhostKindNamesItselfDistinctly(t *testing.T) {
 	kinds := []GhostKind{
 		ghostPoC, ghostWindowFull, ghostCutOff, ghostEjected, ghostNotAllowed,
-		ghostStateDiverged, ghostExclude, ghostAbandoned,
+		ghostStateDiverged, ghostExclude, ghostAbandoned, ghostAbsentFromChain,
 	}
 	seen := make(map[string]GhostKind, len(kinds))
 	for _, kind := range kinds {

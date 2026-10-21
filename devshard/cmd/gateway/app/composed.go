@@ -28,6 +28,7 @@ type Sources struct {
 	Reader    chain.Reader
 	Transport chain.Transport
 	PublicAPI *http.Client
+	Hosts     HostDirectory
 }
 
 // Composed is a gateway composed as run composes it but not started, for a harness that boots it step by step. See README.md.
@@ -52,6 +53,7 @@ func Compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 			Reader:    sources.Reader,
 			Transport: sources.Transport,
 			PublicAPI: sources.PublicAPI,
+			Hosts:     sources.Hosts,
 		}, nil
 	}
 	composed, err := compose(ctx, values, storageDir, gatewayStore, dialled)

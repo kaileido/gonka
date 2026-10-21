@@ -15,7 +15,7 @@ Which escrows exist right now, what each serves, and who its hosts are.
 ## Boundaries
 
 - **A retired escrow does not disappear.** Its nonces still owe votes, and the session that can post them outlives its routability.
-- **The in-flight hold is taken with the nonce commit and refused once retired**, so an escrow cannot start work it will not be able to settle. The race of a nonce already committed still takes one on a draining escrow, since that work is owed either way.
+- **The in-flight hold is taken with the nonce commit and refused once retired**, so an escrow cannot start work it will not be able to settle. The race of a nonce already committed still takes one on a draining escrow, since that work is owed either way. An escrow retired with `RetireAtNonceCap` also grants its `EscalationHold` to that race's escalations while it is busy and its session active (`views.go`, `escalationHoldFor`); `Retire` grants none.
 
 ## The published set and its readers
 
@@ -44,6 +44,8 @@ The index's first read takes every live id and marks every nonce up to the large
 `Add` publishes one escrow for routing, refuses an id an earlier entry is still draining, and releases an unpublished session without flushing.
 
 `openingLock` serializes opens of one escrow. A session is a SQLite file: two concurrent opens fail with `SQLITE_BUSY` before either reaches the already-published check, so the escrow an operator just created can report a failure while another caller serves it. The locks are kept for the life of the process — one small mutex per escrow id ever published — because removing one a waiter still holds would let the next caller take a fresh lock and race it.
+
+A `Listing` adds escrows from rows read after it was taken and skips any escrow retired since: `unpublish` records every retired id in each open listing under the registry lock, whether or not the escrow was live, and `add` checks that record under the same lock right before it publishes. A park writes its row inactive before it retires the escrow, so a row a republish pass read active is retired after the pass took its listing; under the registry lock that retirement either comes first and the add skips the escrow, or comes after the publish and finds the entry live. Without it a pass working from a stale list reopens an escrow parked for settlement, and nothing retires it again.
 
 `ErrDraining` refuses an escrow id whose earlier entry has not finished: that entry owns the nonces still awaiting votes and holds the storage they settle through. `ErrClosed` rejects work on a registry whose sessions are already released.
 

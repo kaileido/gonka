@@ -61,7 +61,7 @@ sequenceDiagram
     participant H1 as host A
     participant H2 as host B
     R->>S: Pick (escrow, host, nonce)
-    S-->>R: assignment — nonce committed on chain
+    S-->>R: assignment — nonce committed in the escrow's local diff
     R->>H1: attempt 1
     Note over R: no first token by the deadline
     R->>S: Pick again
@@ -69,7 +69,8 @@ sequenceDiagram
     R->>H2: attempt 2
     H2-->>R: first content — crowned
     R-->>R: only the winner's bytes reach the client
-    R->>H1: settle the losing nonce
+    R-->>R: record the outcome
+    R->>H1: timeout vote, if host A left its nonce unfinished
 ```
 
 The escalation ladder (`engine/escalation.go`) times each stage — receipt, first token, inter-chunk silence — against a configured deadline; the first token's grows with the prompt and is extended, never shortened, by the host's own first-content p75 ([race.md](./race.md), "Escalation"). `MaxAttemptsPerRequest` bounds the **unfinished** attempts a race holds at once, the primary included: an attempt that ends gives its place back, and the race starts no more attempts in total than its host group has.

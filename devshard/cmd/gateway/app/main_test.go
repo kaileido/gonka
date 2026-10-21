@@ -690,8 +690,8 @@ func TestPublishEscrowsWalksTheThreeArmedBuildLadder(t *testing.T) {
 }
 
 // Test flow:
-//  1. Build a registry and a gateway wrapping it.
-//  2. Call addEscrow for one row in the reserve role and one regular row.
+//  1. Build a registry.
+//  2. Call addServing for one row in the reserve role and one regular row.
 //  3. Assert the registry publishes the first as a reserve candidate and the second as a regular one.
 func TestAddingAReserveRowPublishesItAsAReserve(t *testing.T) {
 	escrows := registry.New(registry.Deps{
@@ -701,13 +701,12 @@ func TestAddingAReserveRowPublishesItAsAReserve(t *testing.T) {
 		Now: time.Now,
 	})
 	t.Cleanup(func() { escrows.Close() })
-	composed := &gateway{escrows: escrows}
 
-	if err := composed.addEscrow(context.Background(), store.DevshardRecord{EscrowID: "reserve", Model: "model-a", Active: true, RotationRole: escrow.RoleReserve}); err != nil {
-		t.Fatalf("addEscrow(reserve) = %v", err)
+	if err := addServing(context.Background(), escrows, store.DevshardRecord{EscrowID: "reserve", Model: "model-a", Active: true, RotationRole: escrow.RoleReserve}); err != nil {
+		t.Fatalf("addServing(reserve) = %v", err)
 	}
-	if err := composed.addEscrow(context.Background(), store.DevshardRecord{EscrowID: "serving", Model: "model-a", Active: true, RotationRole: "regular"}); err != nil {
-		t.Fatalf("addEscrow(serving) = %v", err)
+	if err := addServing(context.Background(), escrows, store.DevshardRecord{EscrowID: "serving", Model: "model-a", Active: true, RotationRole: "regular"}); err != nil {
+		t.Fatalf("addServing(serving) = %v", err)
 	}
 
 	reserves := map[string]bool{}

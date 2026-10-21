@@ -15,6 +15,8 @@ type RequestProfile struct {
 	OutputTokens int
 	Exclude      []string
 	Params       any
+	// Escalation marks a speculative attempt of a race that already holds Escrow. See routing.md, "Picking an escrow".
+	Escalation bool
 }
 
 // Burn is a committed nonce the scheduler spent on nobody, and the request it was spent during.
@@ -51,6 +53,8 @@ func (a Assignment) ReleaseHostSlot() {
 // escrowSource is the candidate-escrow registry; Candidates returns a stable, already-filtered order.
 type escrowSource interface {
 	Candidates(model string) []Escrow
+	// RetiredAtNonceCap is an escrow out of routing for its nonce cap that a race still holds; only that race's escalations may use it.
+	RetiredAtNonceCap(escrowID string) (Escrow, bool)
 }
 
 // Escrow is one candidate; a nil Hold counts nothing. See README, "The boundary types".
@@ -62,6 +66,8 @@ type Escrow struct {
 	ActiveUsers int
 	IsReserve   bool
 	Hold        func() (release func(), ok bool)
+	// EscalationHold is Hold for a queue of escalations alone, and also holds an escrow RetiredAtNonceCap would return.
+	EscalationHold func() (release func(), ok bool)
 }
 
 // NonceIntent is what the scheduler tells a session to do with the nonce it offers. See README, "The boundary types".

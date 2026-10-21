@@ -76,6 +76,7 @@ type Registry struct {
 
 	mu       sync.Mutex
 	draining map[*escrowEntry]struct{}
+	listings map[*Listing]struct{}
 	closed   bool
 }
 
@@ -95,6 +96,7 @@ func New(deps Deps) *Registry {
 		peerRPC:          deps.PeerRPC,
 		now:              deps.Now,
 		draining:         map[*escrowEntry]struct{}{},
+		listings:         map[*Listing]struct{}{},
 	}
 	registry.live.Store(emptyLiveSet())
 	return registry
@@ -102,12 +104,61 @@ func New(deps Deps) *Registry {
 
 // Add publishes one escrow for routing and releases an unpublished session without flushing. See routing.md, "The escrow registry".
 func (r *Registry) Add(ctx context.Context, escrowID, model string) error {
-	return r.add(ctx, escrowID, model, entryFlags{})
+	return r.add(ctx, escrowID, model, entryFlags{}, nil)
 }
 
 // AddReserve publishes an escrow kept back until no regular escrow can take a request. See routing.md, "A reserve escrow".
 func (r *Registry) AddReserve(ctx context.Context, escrowID, model string) error {
-	return r.add(ctx, escrowID, model, entryFlags{isReserve: true})
+	return r.add(ctx, escrowID, model, entryFlags{isReserve: true}, nil)
+}
+
+// Listing adds escrows from rows read after it was taken, and skips any retired since. See README.md, "Publishing, retiring and draining".
+type Listing struct {
+	registry *Registry
+	// retired is written by unpublish under the registry lock, the lock add publishes under.
+	retired map[string]struct{}
+}
+
+// Listing must be taken before the rows are read: a park writes its row before it retires, so a row read active is retired after this.
+func (r *Registry) Listing() *Listing {
+	listing := &Listing{registry: r, retired: map[string]struct{}{}}
+	r.mu.Lock()
+	r.listings[listing] = struct{}{}
+	r.mu.Unlock()
+	return listing
+}
+
+// Add is Registry.Add, publishing nothing for an escrow retired since the listing was taken.
+func (l *Listing) Add(ctx context.Context, escrowID, model string) error {
+	return l.registry.add(ctx, escrowID, model, entryFlags{}, l)
+}
+
+// AddReserve is Registry.AddReserve, publishing nothing for an escrow retired since the listing was taken.
+func (l *Listing) AddReserve(ctx context.Context, escrowID, model string) error {
+	return l.registry.add(ctx, escrowID, model, entryFlags{isReserve: true}, l)
+}
+
+func (l *Listing) Close() {
+	l.registry.mu.Lock()
+	delete(l.registry.listings, l)
+	l.registry.mu.Unlock()
+}
+
+func (l *Listing) retiredLocked(escrowID string) bool {
+	if l == nil {
+		return false
+	}
+	_, retired := l.retired[escrowID]
+	return retired
+}
+
+func (l *Listing) retiredSince(escrowID string) bool {
+	if l == nil {
+		return false
+	}
+	l.registry.mu.Lock()
+	defer l.registry.mu.Unlock()
+	return l.retiredLocked(escrowID)
 }
 
 // entryFlags are what a restart reads off the row before the escrow first routes.
@@ -115,7 +166,7 @@ type entryFlags struct {
 	isReserve bool
 }
 
-func (r *Registry) add(ctx context.Context, escrowID, model string, flags entryFlags) error {
+func (r *Registry) add(ctx context.Context, escrowID, model string, flags entryFlags, listing *Listing) error {
 	switch {
 	case escrowID == "":
 		return fmt.Errorf("escrow id is required")
@@ -134,6 +185,9 @@ func (r *Registry) add(ctx context.Context, escrowID, model string, flags entryF
 	if _, alreadyLive := r.live.Load().byID[escrowID]; alreadyLive {
 		return nil
 	}
+	if listing.retiredSince(escrowID) {
+		return nil
+	}
 
 	session, err := r.servingSessions(ctx, escrowID)
 	if err != nil {
@@ -149,6 +203,10 @@ func (r *Registry) add(ctx context.Context, escrowID, model string, flags entryF
 	if err := r.refuseIfDrainingLocked(escrowID); err != nil {
 		return errors.Join(err, session.Close())
 	}
+	// Checked under the lock retire records under, so a retire either lands here first or finds the entry live.
+	if listing.retiredLocked(escrowID) {
+		return session.Close()
+	}
 	published := r.live.Load()
 	if _, alreadyLive := published.byID[escrowID]; alreadyLive {
 		return session.Close()
@@ -156,6 +214,7 @@ func (r *Registry) add(ctx context.Context, escrowID, model string, flags entryF
 	entry := newEscrowEntry(escrowID, model, r.sessions.Add(1), session, r.now)
 	entry.isReserve.Store(flags.isReserve)
 	entry.hold = r.holdFor(entry)
+	entry.rescueHold = r.escalationHoldFor(entry)
 	r.live.Store(published.with(entry))
 	r.pushMembershipLocked()
 	if r.publications != nil {
@@ -191,7 +250,16 @@ func (r *Registry) refuseIfDrainingLocked(escrowID string) error {
 
 // Retire stops routing to an escrow; its session is released once the requests already running end.
 func (r *Registry) Retire(escrowID string) error {
-	entry, closing := r.unpublish(escrowID)
+	return r.retire(escrowID, false)
+}
+
+// RetireAtNonceCap is Retire for an escrow at its nonce cap, whose running races may still escalate on it. See routing.md, "Picking an escrow".
+func (r *Registry) RetireAtNonceCap(escrowID string) error {
+	return r.retire(escrowID, true)
+}
+
+func (r *Registry) retire(escrowID string, nonceCapped bool) error {
+	entry, closing := r.unpublish(escrowID, nonceCapped)
 	if !closing {
 		return nil
 	}
@@ -199,14 +267,19 @@ func (r *Registry) Retire(escrowID string) error {
 }
 
 // unpublish takes an escrow out of routing and reports whether the caller owns its close.
-func (r *Registry) unpublish(escrowID string) (*escrowEntry, bool) {
+func (r *Registry) unpublish(escrowID string, nonceCapped bool) (*escrowEntry, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	// Recorded even for an escrow not live: one still opening must not publish after its retirement.
+	for listing := range r.listings {
+		listing.retired[escrowID] = struct{}{}
+	}
 	published := r.live.Load()
 	entry, known := published.byID[escrowID]
 	if !known {
 		return nil, false
 	}
+	entry.nonceCapped = nonceCapped
 	r.live.Store(published.without(escrowID))
 	if r.membership != nil {
 		r.membership.RemoveEscrow(escrowID)

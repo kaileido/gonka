@@ -33,6 +33,7 @@ type dispatcherDeps struct {
 	predicates          func(chain.PhaseSnapshot) availability
 	acquireSlot         func(participant string, cost limits.TokenCost, overFullWindow bool) (func(), limits.Admission)
 	holdEscrow          func() (func(), bool)
+	escalationHold      func() (func(), bool)
 	observer            dispatchObserver
 	now                 func() time.Time
 	matchWait           time.Duration

@@ -334,6 +334,8 @@ type Session struct {
 	catchingUp []atomic.Int32
 	// catchUpRefusals remembers each host's last catch-up refusal while its backoff runs.
 	catchUpRefusals map[int]*catchUpRefusal
+	// catchUpFaults holds each host's catch-up fault signal. See hostCatchUpFault.
+	catchUpFaults map[int]chan struct{}
 
 	chainMaxNonce          atomic.Uint32
 	composingFinalizeRound bool
@@ -1276,6 +1278,9 @@ type PreparedInference struct {
 	// onSend, when set, runs once the catch-up is done, right before the
 	// request goes out.
 	onSend func()
+	// onCatchUpFault, when set, runs at most once, when the chunked catch-up
+	// before the send finds the host unreachable.
+	onCatchUpFault func()
 }
 
 // NeedsCatchUp reports whether SendOnly must first run a chunked catch-up.
@@ -1284,6 +1289,11 @@ func (p *PreparedInference) NeedsCatchUp() bool { return p.farBehind }
 // OnSend registers fn to run once SendOnly has finished any catch-up and is
 // about to send the request. Set it before SendOnly.
 func (p *PreparedInference) OnSend(fn func()) { p.onSend = fn }
+
+// OnCatchUpFault registers fn to run, on the goroutine running
+// CatchUpBeforeSend and at most once, when a catch-up chunk that send waits on
+// goes unanswered by the host at the transport level. Set it before the send.
+func (p *PreparedInference) OnCatchUpFault(fn func()) { p.onCatchUpFault = fn }
 
 // HostBinding describes the host slot that the next nonce will be
 // dispatched to. It is supplied to ParamsForHost so the chooser can make
@@ -1898,13 +1908,13 @@ func (s *Session) CatchUpBeforeSend(ctx context.Context, p *PreparedInference) e
 		return nil
 	}
 	if p.farBehind {
-		catchUp, err := s.catchUpForSend(ctx, p.hostIdx, p.diff.Nonce)
+		catchUp, err := s.catchUpForSendWith(ctx, p.hostIdx, p.diff.Nonce, p.onCatchUpFault)
 		if err != nil {
 			return fmt.Errorf("catch up host %d before nonce %d: %w", p.hostIdx, p.diff.Nonce, err)
 		}
 		p.catchUp = catchUp
 	} else {
-		p.catchUp = s.drainOversizedBacklog(ctx, p.hostIdx, p.catchUp, p.diff.Nonce)
+		p.catchUp = s.drainOversizedBacklog(ctx, p.hostIdx, p.catchUp, p.diff.Nonce, p.onCatchUpFault)
 	}
 	p.farBehind, p.caughtUp = false, true
 	return nil
@@ -2191,7 +2201,7 @@ const catchUpChunkTimeout = 60 * time.Second
 //
 // This costs the request the drain: a host far behind delays its own next inference by however long the
 // chunks take, up to catchUpChunkTimeout each. Chosen over sending one body a proxy will refuse.
-func (s *Session) drainOversizedBacklog(ctx context.Context, hostIdx int, catchUp []types.Diff, targetNonce uint64) []types.Diff {
+func (s *Session) drainOversizedBacklog(ctx context.Context, hostIdx int, catchUp []types.Diff, targetNonce uint64, onFault func()) []types.Diff {
 	backlog := catchUp
 	if len(backlog) > 0 && backlog[len(backlog)-1].Nonce == targetNonce {
 		backlog = backlog[:len(backlog)-1]
@@ -2203,7 +2213,7 @@ func (s *Session) drainOversizedBacklog(ctx context.Context, hostIdx int, catchU
 	logging.Warn("catch-up too large to ride the inference, draining it first", "subsystem", "session",
 		"escrow", s.escrowID, "host", hostIdx, "nonce", targetNonce,
 		"backlog_diffs", len(backlog))
-	if err := s.awaitHostCatchUp(ctx, hostIdx, targetNonce-1); err != nil {
+	if err := s.awaitHostCatchUp(ctx, hostIdx, targetNonce-1, onFault); err != nil {
 		logging.Warn("draining the catch-up failed; the request carries it after all", "subsystem", "session",
 			"escrow", s.escrowID, "host", hostIdx, "error", err)
 		return catchUp

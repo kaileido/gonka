@@ -1001,6 +1001,48 @@ func TestAddIsIdempotentAndOpensNoSecondSession(t *testing.T) {
 }
 
 // Test flow:
+//  1. Build a registry with two escrows, publish the first, and take a listing.
+//  2. Retire both: the first while live, the second before it was ever published.
+//  3. Add both through the listing and assert neither routes and no session was opened for them.
+//  4. Add both through a listing taken after the retirements and assert both route again.
+func TestAListingSkipsAnEscrowRetiredSinceItWasTaken(t *testing.T) {
+	t.Parallel()
+	factory := newSessions(map[string]*fakeSession{"1": newFakeSession("hostA"), "2": newFakeSession("hostB")})
+	registry := New(Deps{ServingSessions: factory.open, Now: fixedClock()})
+	mustAdd(t, registry, "1", "qwen")
+	stale := registry.Listing()
+	defer stale.Close()
+
+	for _, escrowID := range []string{"1", "2"} {
+		if err := registry.Retire(escrowID); err != nil {
+			t.Fatalf("Retire(%s) = %v, want nil", escrowID, err)
+		}
+	}
+	for _, escrowID := range []string{"1", "2"} {
+		if err := stale.Add(context.Background(), escrowID, "qwen"); err != nil {
+			t.Fatalf("stale listing Add(%s) = %v, want nil", escrowID, err)
+		}
+		if _, routable := registry.Routable(escrowID); routable {
+			t.Errorf("escrow %s routes through a listing taken before its retirement", escrowID)
+		}
+	}
+	if got := factory.calls.Load(); got != 1 {
+		t.Fatalf("factory calls = %d, want 1", got)
+	}
+
+	fresh := registry.Listing()
+	defer fresh.Close()
+	for _, escrowID := range []string{"1", "2"} {
+		if err := fresh.Add(context.Background(), escrowID, "qwen"); err != nil {
+			t.Fatalf("fresh listing Add(%s) = %v, want nil", escrowID, err)
+		}
+		if _, routable := registry.Routable(escrowID); !routable {
+			t.Errorf("escrow %s does not route through a listing taken after its retirement", escrowID)
+		}
+	}
+}
+
+// Test flow:
 //  1. Build a registry whose session factory refuses a concurrent open, the way SQLite refuses a second writer.
 //  2. Call `Add` for the same escrow ID from two goroutines at once.
 //  3. Assert both callers succeed with no error.

@@ -86,10 +86,16 @@ func (o RaceOutcome) sampleExemption(a AttemptOutcome) SampleExemption {
 		return ExemptEscrowLookupLimited
 	case a.emptyStream() && !o.Succeeded:
 		return ExemptEmptyStreamNoWinner
-	case a.Terminal == TerminalClientCancelled:
+	case a.Terminal == TerminalClientCancelled && !o.silentPastDeadline(a):
 		return ExemptClientCancelled
 	}
 	return SampleRecorded
+}
+
+// silentPastDeadline is a loser of a served race that missed an unexcused deadline with no token before the race cancelled it; the cancellation does not excuse that miss.
+func (o RaceOutcome) silentPastDeadline(a AttemptOutcome) bool {
+	return o.Succeeded && !o.Lifecycle.ClientGone && !o.PoCBypassActive && !o.IsWinner(a) &&
+		!a.NonceFinished && a.FirstToken.IsZero() && a.missedADeadline()
 }
 
 func (o RaceOutcome) Sample(a AttemptOutcome) (perf.Sample, SampleExemption) {

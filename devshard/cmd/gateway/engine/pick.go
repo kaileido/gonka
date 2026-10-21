@@ -67,6 +67,7 @@ func (c *raceCoordinator) startPick(reason string, params any) {
 	ctx, cancel := context.WithTimeout(c.drain.race, schedulerPickTimeout)
 	c.pickCancel, c.pickStarted, c.pickReason, c.pickStopped = cancel, c.deps.Now(), reason, false
 	profile := c.requestProfile(params)
+	profile.Escalation = true
 	go func() {
 		assignment, err := c.deps.Picker.Pick(ctx, profile)
 		c.picked <- pickedHost{assignment: assignment, err: err}

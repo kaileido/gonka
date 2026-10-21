@@ -314,12 +314,19 @@ func syncChainSeed(cfg *config.File) {
 	// Distinct on-chain participants: one per KEY_NAME. Hosts sharing a
 	// KEY_NAME are replicas, not extra identities. Solos keep their own key
 	// and a direct InferenceURL so gateway/gossip bypass the sticky pool.
+	// With the proxy overlay, the pooled InferenceUrl is the overlay proxy
+	// in front of versiond-router, the way join's InferenceUrl is the
+	// public proxy: peer RPC and JSON then share that one port.
+	pooledURL := routerURL
+	if config.ProxyOverlayFromEnv() {
+		pooledURL = config.ProxyOverlayURL
+	}
 	participants := make([]config.Participant, 0, len(cfg.Hosts))
 	for _, h := range config.OnChainIdentityHosts(cfg) {
 		if h.Address == "" {
 			continue
 		}
-		url := routerURL
+		url := pooledURL
 		if cfg.Versiond.Mode == config.VersiondModeMulti && !config.IsRouterPooledHost(cfg, h) {
 			url = fmt.Sprintf("http://%s:%d", h.ID, config.DefaultHostPort)
 		}
@@ -333,32 +340,35 @@ func syncChainSeed(cfg *config.File) {
 	if len(cfg.Escrows) == 0 {
 		cfg.Escrows = []config.Escrow{{ID: 1}}
 	}
-	e := &cfg.Escrows[0]
-	if e.ID == 0 {
-		e.ID = 1
-	}
-	e.Creator = cfg.User.Address
-	e.Slots = slots
-	if e.Amount == 0 {
-		e.Amount = config.DefaultEscrowAmount
-	}
-	if e.EpochIndex == 0 {
-		e.EpochIndex = cfg.Epoch.Index
-	}
-	if e.AppHash == "" {
-		e.AppHash = config.DefaultAppHash
-	}
-	if e.ModelID == "" {
-		e.ModelID = config.DefaultModelID
-	}
-	if e.TokenPrice == 0 {
-		e.TokenPrice = config.DefaultTokenPrice
-	}
-	if e.ValidationRate == 0 {
-		e.ValidationRate = cfg.Params.ValidationRate
-	}
-	if e.VoteThresholdFactor == 0 {
-		e.VoteThresholdFactor = cfg.Params.VoteThresholdFactor
+	// A model mix has one escrow per model; each needs the same chain fields.
+	for i := range cfg.Escrows {
+		e := &cfg.Escrows[i]
+		if e.ID == 0 {
+			e.ID = uint64(i) + 1
+		}
+		e.Creator = cfg.User.Address
+		e.Slots = slots
+		if e.Amount == 0 {
+			e.Amount = config.DefaultEscrowAmount
+		}
+		if e.EpochIndex == 0 {
+			e.EpochIndex = cfg.Epoch.Index
+		}
+		if e.AppHash == "" {
+			e.AppHash = config.DefaultAppHash
+		}
+		if e.ModelID == "" {
+			e.ModelID = config.DefaultModelID
+		}
+		if e.TokenPrice == 0 {
+			e.TokenPrice = config.DefaultTokenPrice
+		}
+		if e.ValidationRate == 0 {
+			e.ValidationRate = cfg.Params.ValidationRate
+		}
+		if e.VoteThresholdFactor == 0 {
+			e.VoteThresholdFactor = cfg.Params.VoteThresholdFactor
+		}
 	}
 
 	if len(cfg.Hosts) > 0 && cfg.Hosts[0].Address != "" {

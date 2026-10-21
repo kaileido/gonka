@@ -75,6 +75,23 @@ type SettlementSource interface {
 	BuildSettlement(ctx context.Context, escrowID string) (chain.SettlementInput, error)
 }
 
+// nonceCapRetirer is a SettlementSource whose Retire for a nonce cap still lets the escrow's running races escalate on it while it stays busy. See ../docs/routing.md, "Picking an escrow".
+type nonceCapRetirer interface {
+	RetireAtNonceCap(escrowID string) error
+}
+
+// nonceCapRetirement marks the ctx of a retirement for the escrow's nonce cap, the one reason routing exempts.
+type nonceCapRetirement struct{}
+
+func retiringAtNonceCap(ctx context.Context) context.Context {
+	return context.WithValue(ctx, nonceCapRetirement{}, true)
+}
+
+func atNonceCap(ctx context.Context) bool {
+	capped, _ := ctx.Value(nonceCapRetirement{}).(bool)
+	return capped
+}
+
 // ExhaustionProbe names the reason routing would retire an escrow on, empty while it may still be picked. See README.md, "Depletion marks".
 type ExhaustionProbe interface {
 	Exhaustion(escrowID string) scheduler.ExhaustionReason

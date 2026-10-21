@@ -135,6 +135,13 @@ type MockOpenAINodeCfg struct {
 	Hang          bool    `yaml:"hang,omitempty"`
 	FailureRate   float64 `yaml:"failure_rate,omitempty"`
 	HTTPStatus    int     `yaml:"http_status,omitempty"`
+	// TTFTP99 and TokenIntervalP99 switch the delays to seeded lognormal draws.
+	TTFTP99          string `yaml:"ttft_p99,omitempty"`
+	TokenIntervalP99 string `yaml:"token_interval_p99,omitempty"`
+	JitterSeed       uint64 `yaml:"jitter_seed,omitempty"`
+	// Host binds this node to one host ID (HostCfg.ID) in mock-dapi, so only
+	// that host acquires it. Empty keeps the node in the shared pool.
+	Host string `yaml:"host,omitempty"`
 }
 
 // VersiondCfg holds versiond supervisor defaults for compose.
@@ -222,6 +229,8 @@ type HostCfg struct {
 	// so identity count and router-pool membership follow this field rather
 	// than roster position. Empty keeps the 2-of-N default below.
 	KeyName string `yaml:"key_name"`
+	// Env adds or replaces environment variables of this host's container.
+	Env map[string]string `yaml:"env,omitempty"`
 }
 
 // UserCfg is the devshardctl operator identity.
@@ -270,14 +279,15 @@ const (
 	DefaultKeyringPassword    = "testenv1"
 	DefaultVersiondRouterHost = "versiond-router"
 	DefaultVersiondRouterPort = 8080
-	// DefaultVersiondRouterH2Port is versiond-router's inner h2c listen.
-	// Overlay proxy:{DefaultRPCH2Port} speaks proto h2 here. JSON stays
-	// on DefaultVersiondRouterPort.
-	DefaultVersiondRouterH2Port = 8081
-	// DefaultProxyService / DefaultRPCH2Port are the opt-in overlay hop
-	// (docker-compose.proxy.yml). JSON/catalog stay on DefaultEscrowSlotURL.
+	// DefaultProxyService / DefaultProxyPort are the opt-in overlay public
+	// hop (docker-compose.proxy.yml): a one-port stand-in for join's
+	// proxy-router. Peer RPC (HTTP/2 preface) and JSON (HTTP/1.1) share it,
+	// as they share join's :80/:443. With the overlay on, pooled hosts'
+	// InferenceUrl is ProxyOverlayURL; without it, DefaultEscrowSlotURL.
 	DefaultProxyService     = "proxy"
-	DefaultRPCH2Port        = 8443
+	DefaultProxyPort        = 8080
+	ProxyOverlayURL         = "http://proxy:8080"
+	ProxyOverlayEnv         = "TESTENV_PROXY_OVERLAY"
 	DefaultDevshardctlHost  = "devshardctl"
 	DefaultPostgresHost     = "devshard-postgres"
 	DefaultPostgresPort     = 5432
@@ -481,6 +491,18 @@ func (c *File) ApplyDefaults() {
 	}
 }
 
+// ProxyOverlayFromEnv is whether TESTENV_PROXY_OVERLAY asks for the proxy
+// overlay. Default citest leaves it unset: peers dial versiond-router:8080
+// directly. The overlay rerun puts the proxy in front of that port.
+func ProxyOverlayFromEnv() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(ProxyOverlayEnv))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
 // RouterBaseURL returns the in-network HTTP origin for versiond-router (container port).
 // Host-published ports (e.g. citest 18080) are for localhost probes only; see EndpointsFromConfig.
 func RouterBaseURL(c *File) string {
@@ -622,6 +644,42 @@ func OnChainIdentityHosts(c *File) []HostCfg {
 	return identities
 }
 
+// PostgresServiceFor is the Postgres service (and PGHOST) h stores in. With
+// PerParticipant every on-chain identity has its own service, shared by its
+// replicas; otherwise all hosts use Postgres.Host.
+func PostgresServiceFor(c *File, h HostCfg) string {
+	if c == nil {
+		return ""
+	}
+	if !c.Postgres.PerParticipant {
+		return c.Postgres.Host
+	}
+	name := VersiondKeyName(c, h)
+	for _, p := range OnChainIdentityHosts(c) {
+		if VersiondKeyName(c, p) == name {
+			return DefaultPostgresHost + "-" + p.ID
+		}
+	}
+	return DefaultPostgresHost + "-" + h.ID
+}
+
+// PostgresServices lists every Postgres service of the stack, in roster order.
+// It is empty when Postgres is disabled.
+func PostgresServices(c *File) []string {
+	if c == nil || !c.Postgres.Enabled {
+		return nil
+	}
+	if !c.Postgres.PerParticipant {
+		return []string{c.Postgres.Host}
+	}
+	identities := OnChainIdentityHosts(c)
+	out := make([]string, 0, len(identities))
+	for _, h := range identities {
+		out = append(out, PostgresServiceFor(c, h))
+	}
+	return out
+}
+
 // KeyNameReplicaCount is how many containers load h's KEY_NAME. More than one
 // means h is part of a replicated (HA) identity.
 func KeyNameReplicaCount(c *File, h HostCfg) int {
@@ -717,6 +775,10 @@ func (c *File) Validate() error {
 	if c.Versiond.Mode == VersiondModeSingle && c.Postgres.Enabled {
 		return errors.New("versiond.mode single must use postgres.enabled: false (file payload fallback); use mode multi for shared Postgres")
 	}
+	hostIDs := make(map[string]bool, len(c.Hosts))
+	for _, h := range c.Hosts {
+		hostIDs[h.ID] = true
+	}
 	seenMLNodes := make(map[string]struct{}, len(c.MockOpenAI.Nodes))
 	for i, node := range c.MockOpenAI.Nodes {
 		if strings.TrimSpace(node.Name) == "" {
@@ -733,6 +795,9 @@ func (c *File) Validate() error {
 		}
 		if node.HTTPStatus != 0 && (node.HTTPStatus < 400 || node.HTTPStatus > 599) {
 			return fmt.Errorf("mock_openai.nodes[%d] http_status must be between 400 and 599", i)
+		}
+		if node.Host != "" && !hostIDs[node.Host] {
+			return fmt.Errorf("mock_openai.nodes[%d].host %q is not a configured host", i, node.Host)
 		}
 		seenMLNodes[node.Name] = struct{}{}
 	}

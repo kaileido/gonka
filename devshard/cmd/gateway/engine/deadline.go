@@ -329,11 +329,16 @@ func (c *raceCoordinator) plan() deadlinePlan {
 	}
 }
 
+// clockStart is the send, or while the catch-up runs the first time it found the host unreachable, a minute after launch at the latest. See race.md, "Deadlines".
 func (attempt *liveAttempt) clockStart() time.Time {
 	if !attempt.sendTime.IsZero() || attempt.launchTime.IsZero() {
 		return attempt.sendTime
 	}
-	return attempt.launchTime.Add(maxCatchUpBeforeSend)
+	latest := attempt.launchTime.Add(maxCatchUpBeforeSend)
+	if !attempt.catchUpFault.IsZero() && attempt.catchUpFault.Before(latest) {
+		return attempt.catchUpFault
+	}
+	return latest
 }
 
 func (c *raceCoordinator) escalationRequest() EscalationRequest {

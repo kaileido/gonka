@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -55,8 +56,9 @@ func chainBackedSessions(records devshardLookup, storageDir string) sessionSourc
 		if err != nil {
 			return chainSources{}, errors.Join(err, follower.Close())
 		}
+		escrowBridge := bridge.NewGRPCBridge(chainClient)
 		return chainSources{
-			Serving:    servingSessions(records, storageDir, bridge.NewGRPCBridge(chainClient), heightSettings, follower, governance, routePrefix, adoption, steps),
+			Serving:    servingSessions(records, storageDir, escrowBridge, heightSettings, follower, governance, routePrefix, adoption, steps),
 			ReadOnly:   readOnlySessions(records, storageDir),
 			Reader:     grpcChain,
 			Transport:  grpcChain,
@@ -64,6 +66,7 @@ func chainBackedSessions(records devshardLookup, storageDir string) sessionSourc
 			Governance: governance,
 
 			ModelSnapshots: grpcChain,
+			Hosts:          escrowBridge,
 		}, nil
 	}
 }
@@ -81,34 +84,43 @@ func resolveStorageDir(explicit *string) (string, error) {
 
 // publishEscrows brings the registry to what the store calls active, builders at a time. See operations.md, "Boot".
 func (g *gateway) publishEscrows(ctx context.Context) (int, error) {
+	// Taken before the list, so an escrow parked after the list read its row active is not reopened from it.
+	listing := g.escrows.Listing()
+	defer listing.Close()
 	records, err := g.store.ListDevshards(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("listing devshards: %w", err)
 	}
-	return publishEscrows(ctx, records, g.builders, g.addEscrow, g.escrows.Retire, unservableDeactivation(ctx, g.store), g.events.EscrowUnservable, g.events.EscrowUnopened)
+	add := func(ctx context.Context, record store.DevshardRecord) error { return addServing(ctx, listing, record) }
+	return publishEscrows(ctx, records, g.builders, add, g.escrows.Retire, unservableDeactivation(ctx, g.store), g.events.EscrowUnservable, g.events.EscrowUnopened)
 }
 
 type devshardDeactivator interface {
 	MarkDevshardGoneFromChain(ctx context.Context, escrowID string) error
 	SetDevshardActive(ctx context.Context, escrowID string, active bool) error
+	DeleteDevshard(ctx context.Context, escrowID string) error
 }
 
-// unservableDeactivation marks a row the chain lacks gone from chain, so it leaves the unsettled count; any other unservable row is only deactivated.
+// unservableDeactivation marks a row the chain lacks gone from chain and drops one it holds settled, as settlement would, so neither stays in the unsettled count; any other unservable row is only deactivated.
 func unservableDeactivation(ctx context.Context, records devshardDeactivator) func(escrowID string, cause error) error {
 	return func(escrowID string, cause error) error {
-		if errors.Is(cause, bridge.ErrEscrowNotFound) {
+		switch {
+		case errors.Is(cause, bridge.ErrEscrowNotFound):
 			return records.MarkDevshardGoneFromChain(ctx, escrowID)
+		case errors.Is(cause, bridge.ErrEscrowSettled):
+			return records.DeleteDevshard(ctx, escrowID)
 		}
 		return records.SetDevshardActive(ctx, escrowID, false)
 	}
 }
 
-func (g *gateway) addEscrow(ctx context.Context, record store.DevshardRecord) error {
-	return addServing(ctx, g.escrows, record)
+type escrowAdder interface {
+	Add(ctx context.Context, escrowID, model string) error
+	AddReserve(ctx context.Context, escrowID, model string) error
 }
 
 // addServing publishes an active row, a reserve as one, so every path that routes a row reads its role.
-func addServing(ctx context.Context, escrows *registry.Registry, record store.DevshardRecord) error {
+func addServing(ctx context.Context, escrows escrowAdder, record store.DevshardRecord) error {
 	if record.RotationRole == escrow.RoleReserve {
 		return escrows.AddReserve(ctx, record.EscrowID, record.Model)
 	}
@@ -155,7 +167,7 @@ func publishEscrows(
 		escrowID := active[index].EscrowID
 		switch {
 		case err == nil:
-		case errors.Is(err, bridge.ErrEscrowNotFound), errors.Is(err, env.ErrPrivateKeyMissing):
+		case errors.Is(err, bridge.ErrEscrowNotFound), errors.Is(err, bridge.ErrEscrowSettled), errors.Is(err, env.ErrPrivateKeyMissing):
 			unservable(escrowID, err)
 			if deactivateErr := deactivate(escrowID, err); deactivateErr != nil {
 				problems = append(problems, fmt.Errorf("deactivating escrow %s: %w", escrowID, deactivateErr))
@@ -170,14 +182,84 @@ func publishEscrows(
 
 // republishOnDevshardWrites keeps routing in step with the rotation lifecycle, which knows no registry.
 func (g *gateway) republishOnDevshardWrites(ctx context.Context, unopenedAtBoot int) <-chan struct{} {
-	return republishEscrows(ctx, g.devshardWork, unopenedAtBoot, g.publishEscrows)
+	var reopen func() bool
+	if g.hosts != nil {
+		reopen = func() bool { return retireListedAbsentHosts(g.hosts, g.router, g.escrows) }
+	}
+	return republishEscrows(ctx, g.devshardWork, unopenedAtBoot, g.publishEscrows, reopen)
+}
+
+type absentHostMarks interface {
+	AbsentHosts() map[string][]string
+	ForgetAbsentHosts(escrowID string)
+}
+
+type liveEscrows interface {
+	Routable(escrowID string) (scheduler.Escrow, bool)
+	Candidates(model string) []scheduler.Escrow
+	Snapshot() []registry.EscrowState
+	IsBusy(escrowID string) bool
+	Retire(escrowID string) error
+}
+
+// retireListedAbsentHosts retires each live escrow holding a dead slot whose participant the chain lists again, and reports whether it retired one, so the republish reopens it. See routing.md, "A slot the chain did not list at open".
+func retireListedAbsentHosts(hosts HostDirectory, marks absentHostMarks, escrows liveEscrows) bool {
+	listed := map[string]bool{}
+	isListed := func(participant string) bool {
+		known, probed := listed[participant]
+		if !probed {
+			_, err := hosts.GetHostInfo(participant)
+			known = err == nil
+			listed[participant] = known
+		}
+		return known
+	}
+	retired := false
+	marked := marks.AbsentHosts()
+	for escrowID, participants := range marked {
+		candidate, live := escrows.Routable(escrowID)
+		if !live {
+			marks.ForgetAbsentHosts(escrowID)
+			continue
+		}
+		if !slices.ContainsFunc(participants, isListed) || !modelServedThroughDrain(escrows, marked, candidate) {
+			continue
+		}
+		logging.Info("reopening escrow: a participant absent at its open is listed again", logkey.Escrow, escrowID)
+		if err := escrows.Retire(escrowID); err != nil {
+			logging.Error("retiring escrow to reopen it", logkey.Escrow, escrowID, logkey.Error, err)
+		}
+		marks.ForgetAbsentHosts(escrowID)
+		retired = true
+	}
+	return retired
 }
 
 // unopenedEscrowRetryDelay is the lifecycle tick, so an escrow that would not open is retried as often as rotation looks at it.
 const unopenedEscrowRetryDelay = escrow.TickInterval
 
-// republishEscrows republishes on every devshard write, and on a timer while an active escrow is left unopened. See operations.md, "Boot".
-func republishEscrows(ctx context.Context, writes <-chan struct{}, unopenedAtBoot int, publish func(context.Context) (int, error)) <-chan struct{} {
+// absentHostProbeInterval bounds the chain lookups for dead slots to one per marked participant per lifecycle tick.
+const absentHostProbeInterval = escrow.TickInterval
+
+// modelServedThroughDrain reports whether retiring the escrow leaves its model served: it closes at once, another of the model's escrows with no absent mark routes, or another routes while none is out of routing.
+func modelServedThroughDrain(escrows liveEscrows, marked map[string][]string, candidate scheduler.Escrow) bool {
+	if !escrows.IsBusy(candidate.ID) {
+		return true
+	}
+	others := slices.DeleteFunc(escrows.Candidates(candidate.Model), func(other scheduler.Escrow) bool { return other.ID == candidate.ID })
+	if slices.ContainsFunc(others, func(other scheduler.Escrow) bool { return len(marked[other.ID]) == 0 }) {
+		return true
+	}
+	for _, state := range escrows.Snapshot() {
+		if state.Model == candidate.Model && !state.Accepting {
+			return false
+		}
+	}
+	return len(others) > 0
+}
+
+// republishEscrows republishes on every devshard write, on a timer while an active escrow is left unopened, and once reopen retires an escrow to reopen it. See operations.md, "Boot".
+func republishEscrows(ctx context.Context, writes <-chan struct{}, unopenedAtBoot int, publish func(context.Context) (int, error), reopen func() bool) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -186,12 +268,22 @@ func republishEscrows(ctx context.Context, writes <-chan struct{}, unopenedAtBoo
 		if unopenedAtBoot == 0 {
 			retry.Stop()
 		}
+		var probe <-chan time.Time
+		if reopen != nil {
+			probes := time.NewTicker(absentHostProbeInterval)
+			defer probes.Stop()
+			probe = probes.C
+		}
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-writes:
 			case <-retry.C:
+			case <-probe:
+				if !reopen() {
+					continue
+				}
 			}
 			unopened, err := publish(ctx)
 			if err != nil && ctx.Err() == nil {
@@ -234,6 +326,19 @@ func (w devshardWrites) MarkDevshardGoneFromChain(ctx context.Context, escrowID 
 
 func (w devshardWrites) DeleteDevshard(ctx context.Context, escrowID string) error {
 	return w.report(w.Store.DeleteDevshard(ctx, escrowID))
+}
+
+// ParkForSettlement reports the park, so a pass that listed the row active before it is followed by one that does not.
+func (w devshardWrites) ParkForSettlement(ctx context.Context, escrowID string) error {
+	return w.report(w.Store.ParkForSettlement(ctx, escrowID))
+}
+
+func (w devshardWrites) ParkForSettlementIfActive(ctx context.Context, escrowID string) (bool, error) {
+	parked, err := w.Store.ParkForSettlementIfActive(ctx, escrowID)
+	if parked {
+		w.changed()
+	}
+	return parked, err
 }
 
 func (w devshardWrites) report(err error) error {
@@ -305,6 +410,12 @@ type chainSources struct {
 	Governance     *runtimeParams
 	PublicAPI      *http.Client
 	ModelSnapshots vocabulary.EpochGroupDataQuery
+	Hosts          HostDirectory
+}
+
+// HostDirectory is the chain's participant lookup, the one a session open asks.
+type HostDirectory interface {
+	GetHostInfo(address string) (*bridge.HostInfo, error)
 }
 
 type seedDevshard struct {
@@ -401,12 +512,21 @@ func servingSessions(records devshardLookup, storageDir string, escrowBridge bri
 		if err != nil {
 			return nil, err
 		}
+		// A boot seed writes back the row settlement dropped, so the chain decides. See ../docs/operations.md, "Boot".
+		onChain, err := escrowBridge.GetEscrow(escrowID)
+		switch {
+		case err != nil:
+			return nil, fmt.Errorf("get escrow: %w", err)
+		case onChain.Settled:
+			return nil, fmt.Errorf("escrow %s: %w", escrowID, bridge.ErrEscrowSettled)
+		}
 		sessionTimeouts := env.LoadE2E().SessionTimeouts
 		session, machine, err := user.NewHTTPSession(user.HTTPSessionConfig{
 			OpenAbsentHostsAsDeadSlots: true,
 			PrivateKeyHex:              keyHex,
 			EscrowID:                   escrowID,
 			Bridge:                     escrowBridge,
+			Escrow:                     onChain,
 			StoragePath:                storagePath,
 			RoutePrefix:                escrowRoutePrefix(record, routePrefix),
 			RefusalTimeoutSeconds:      sessionTimeouts.RefusalTimeoutSeconds,

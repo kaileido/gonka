@@ -29,19 +29,24 @@ The state is not a column; it is the combination of four:
 | row deleted | — | — | settled and confirmed; the escrow is finished |
 | false | false | `""` | deactivated by hand, or gone from chain (`gone_from_chain` set) |
 
+A deleted row leaves nothing for `escrows_json` to recognise, so the boot seed writes a settled escrow back as serving; publication reads the chain, refuses to open an escrow it reports settled and deletes the row again ([`operations.md`](./operations.md), "Boot", steps 4 and 5).
+
 *Starved*, *full* and *idle* are not states of a row: `liquidity.Classify` computes them from the escrow's money each tick and nothing stores them (see [`liquidity/README.md`](../liquidity/README.md), "Flags"). A starved escrow stays serving and routing spends it first on requests it can afford; only a nonce cap, a planned retire or the settlement deadline takes a row out of service.
 
 `rotation_role` (`regular` / `temp`) and `rotation_epoch` say which set the escrow belongs to — a regular is labelled with the latest epoch, a temp with the epoch it bridges into, the effective epoch plus one; `route_prefix` is the URL path this escrow's hosts serve on, falling back to the gateway's own prefix when empty.
 
 `chain_epoch` and `amount` are what the chain stamped on the escrow and locked for it, 0 until read; `gone_from_chain` marks a row the chain confirmed it no longer holds. None of the three is a state: no upsert writes them (`store/README.md`, "The devshard registry"). The tick reads the first two lazily, sixteen unresolved rows a tick, each tick starting after the last row the previous one read so a row that never resolves cannot starve the rest; a row's first failed read is narrated once (`escrow chain epoch and amount unresolved`). A create reads them as soon as its row is registered (`escrow/chain_facts.go`; see [`escrow/README.md`](../escrow/README.md), "Chain epochs and amounts").
 
+`committed` below is the commitment row of a create not yet resolved; every other state is the devshard row the create produced.
+
 ```mermaid
 stateDiagram-v2
-    [*] --> committed: row + intent written
-    committed --> serving: create tx lands (reconcile)
+    [*] --> committed: commitment written, then create tx sent
+    committed --> serving: create lands, devshard row written (createFor, or reconcile later)
     committed --> [*]: tx can no longer land
     serving --> parked: planned retire / nonce cap / settlement deadline
     serving --> inactive: gone from chain, or Deactivate
+    inactive --> serving: Activate, or re-registration as active
     parked --> broadcast: settle tx sent
     broadcast --> [*]: confirmed, row deleted
     broadcast --> parked: rejected, or past its TTL
@@ -83,11 +88,11 @@ Steps 1–12 return their errors into an `errors.Join`; one failing model or esc
 1. Resolve the signer from `model.private_key_env` — by name; the key itself is never written anywhere.
 2. `onPrepared`: write the **commitment** row (tx hash, model, role, epoch, created-at) *before* broadcasting. A failed write aborts with no broadcast: **no broadcast without durable intent.**
 3. Broadcast. If the process dies here, the commitment is the only trace — and it is enough.
-4. On the next tick, `reconcile` resolves every commitment.
+4. On success, `createFor` writes the devshard row, active, and drops the commitment (`persistEscrow`). A commitment that outlives that — the process died, the wait for the escrow id failed, or the row could not be written — is resolved by `reconcile` on a later tick.
 
 Before step 2 the chain client refuses a create the wallet cannot pay for — spendable `ngonka` below `amount` plus the fee — without writing a commitment or broadcasting (`chain/txclient.go`, `CreateEscrow`). The refusal does not open the create breaker and is narrated once per (model, role) until a create succeeds (`escrow/commitments.go`, `narrateUnderfunded`).
 
-Before the chain client is asked at all, the manager refuses a create whose `amount` cannot pay one full-context request of its model: the model's retirement floor (`config.Limits.RetirementReserve`, the context length as prompt bytes the scheduler retires an escrow below) times the chain's `token_price`, plus its `fee_per_nonce` (`scheduler.RequestCost`, the price routing retires an escrow below), plus the `create_devshard_fee` the chain takes out of the amount before the escrow's first balance — all three read from the devshard escrow params the observer polls (`escrow/commitments.go`, `creationFloor`). Such an escrow would be retired by the next tick's `markSpent` and replaced by another just as short, every tick, each round paying a create and a settle. The refusal is narrated once per (model, role) as `EscrowCreateBelowFloor` until a create succeeds, it opens no breaker, so raising `amount` takes effect on the next tick, and an operator's create answers 400. A price the observer has not read yet skips the check, and a product that overflows is refused.
+Before the chain client is asked at all, the manager refuses a create whose `amount` cannot pay one full-context request of its model: the model's retirement floor (`config.Limits.RetirementReserve`, the context length as prompt bytes, never less than one capped answer) times the chain's `token_price`, plus its `fee_per_nonce` (`scheduler.RequestCost`), plus the `create_devshard_fee` the chain takes out of the amount before the escrow's first balance — all three read from the devshard escrow params the observer polls (`escrow/commitments.go`, `creationFloor`). The floor is a minimum for creating an escrow, not a threshold that retires one: routing declines an escrow only for a request it cannot pay, a balance mark is dropped ("Depletion"), and a starved escrow keeps serving until the funding planner retires it by its own rules ("The funding planner"). The refusal is narrated once per (model, role) as `EscrowCreateBelowFloor` until a create succeeds, it opens no breaker, so raising `amount` takes effect on the next tick, and an operator's create answers 400. A price the observer has not read yet skips the check, and a product that overflows is refused.
 
 `reconcileOne` has exactly five outcomes:
 
@@ -160,9 +165,15 @@ graph TD
     P --> AS{"a settle tx<br/>already on chain?"}
     AS -->|"confirmed"| OK["done, caller deletes the row"]
     AS -->|"inside its TTL"| IF
-    AS -->|"rejected / expired"| B{"requests still<br/>spending nonces?"}
+    AS -->|"lookup failed"| ERR["error, row kept"]
+    AS -->|"none, or rejected / expired (hash cleared)"| B{"requests still<br/>spending nonces,<br/>and not forced?"}
     B -->|yes| BUSY["ErrDevshardBusy — drains, retried"]
-    B -->|no| F["Finalize → BuildSettlement → broadcast → clear pending"]
+    B -->|no| GC{"escrow absent or<br/>settled on chain?"}
+    GC -->|yes| GONE["ErrEscrowPruned / ErrEscrowSettledOnChain,<br/>caller deletes the row"]
+    GC -->|"no, or lookup failed"| F["Finalize → BuildSettlement → save hash → broadcast → await commit"]
+    F -->|failed| ERR
+    F -->|committed| CLR["clear pending"]
+    CLR --> OK
 ```
 
 **Park comes before the reconciliation.** The caller deletes the row on success, and a row that is gone can no longer take the escrow out of routing — an escrow put back into service by hand would otherwise keep serving with nothing left to un-publish it. For the same reason `Activate`, and a re-registration through `register` (`POST /v1/admin/devshards`, `/import`), both refuse a row that is parked or carries a settle hash (`ErrDevshardNotActivatable`, HTTP 409): serving from it again spends nonces the settlement does not account for.

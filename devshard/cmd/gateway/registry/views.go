@@ -33,13 +33,54 @@ func (r *Registry) Routable(escrowID string) (scheduler.Escrow, bool) {
 
 func (e *escrowEntry) candidate() scheduler.Escrow {
 	return scheduler.Escrow{
-		ID:          e.id,
-		Model:       e.model,
-		SessionID:   e.sessionID,
-		Session:     e.stream,
-		ActiveUsers: int(e.inFlight.Load()),
-		IsReserve:   e.isReserve.Load(),
-		Hold:        e.hold,
+		ID:             e.id,
+		Model:          e.model,
+		SessionID:      e.sessionID,
+		Session:        e.stream,
+		ActiveUsers:    int(e.inFlight.Load()),
+		IsReserve:      e.isReserve.Load(),
+		Hold:           e.hold,
+		EscalationHold: e.rescueHold,
+	}
+}
+
+// RetiredAtNonceCap finds an escrow retired at its nonce cap that a race still holds; only that race's escalations may use it. See routing.md, "Picking an escrow".
+func (r *Registry) RetiredAtNonceCap(escrowID string) (scheduler.Escrow, bool) {
+	r.mu.Lock()
+	var found *escrowEntry
+	for entry := range r.draining {
+		if entry.id == escrowID && entry.rescuableLocked() {
+			found = entry
+			break
+		}
+	}
+	r.mu.Unlock()
+	if found == nil || !found.accepting() {
+		return scheduler.Escrow{}, false
+	}
+	return found.candidate(), true
+}
+
+// rescuableLocked holds while a race keeps the retired escrow open: it is busy, so no settlement that waits for the drain has started.
+func (e *escrowEntry) rescuableLocked() bool {
+	return e.nonceCapped && !e.closeClaimed && e.busy()
+}
+
+// escalationHoldFor is holdFor that also holds the entry once it is retired at its nonce cap, while it is rescuable.
+func (r *Registry) escalationHoldFor(entry *escrowEntry) func() (func(), bool) {
+	return func() (func(), bool) {
+		if !entry.accepting() {
+			return nil, false
+		}
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if r.live.Load().byID[entry.id] == entry {
+			return r.holdLocked(entry), true
+		}
+		if _, draining := r.draining[entry]; !draining || !entry.rescuableLocked() {
+			return nil, false
+		}
+		return r.holdLocked(entry), true
 	}
 }
 

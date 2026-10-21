@@ -23,6 +23,10 @@ func (c *raceCoordinator) apply(event AttemptEvent) {
 		if c.feedsFleet(attempt) {
 			c.deps.Fleet.recordDispatch(attempt, attempt.clockStart(), c.request.InputTokens)
 		}
+	case AttemptCatchUpFaulted:
+		if attempt.catchUpFault.IsZero() {
+			attempt.catchUpFault = event.At
+		}
 	case AttemptReceipt:
 		attempt.receiptTime = event.At
 	case AttemptFirstToken:
@@ -63,6 +67,9 @@ func (c *raceCoordinator) complete(attempt *liveAttempt, event AttemptEvent) {
 	if rulesOutRetry(*attempt.outcome, c.deps.ModelContextLength, c.request.InputTokens+c.request.OutputTokens) {
 		c.retryRuledOut = true
 		c.stopPicking()
+	}
+	if attempt.outcome.HostAbsent {
+		c.deps.Picker.HostAbsent(c.escrowID, attempt.participant)
 	}
 	if attempt.outcome.StateDivergent {
 		c.stateDiverged(attempt)

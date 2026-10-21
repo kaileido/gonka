@@ -127,6 +127,7 @@ Checked after every step by `invariants_test.go`. A test that legitimately break
 | `TestAHedgeDoesNotRetireAnEscrowThatCanStillPay` | a hedge on an escrow near its floor must not report it exhausted | nothing is created, no balance mark reaches the planner and the escrow still serves |
 | `TestAPinnedHedgeThatCannotPayNeverMarksItsEscrow` | a pinned hedge that cannot pay must be declined without marking its escrow | every hedge is declined as `ErrPinnedEscrowShort`, nothing is created and the escrow is never marked |
 | `TestAHedgeTheEscrowCanPayIsSent` | the balance a race's hedge is priced against is already net of the race's first attempt, so counting the race's own hold again declined a hedge the escrow could pay | the request is answered, no hedge is declined as `ErrPinnedEscrowShort` and both attempts start on the escrow |
+| `TestASlotAbsentAtOpenServesOnceItsHostIsListedAgain` | a session opened while a participant was off the chain holds a dead slot for its life, so its nonces burn until the escrow retires | once the participant is listed again the escrow is reopened while idle: every request is answered, no further nonce burns as absent from chain and the participant is sent to again |
 
 ### Bursts — `bursts_test.go`
 

@@ -58,6 +58,7 @@ func (f *fakeSession) LatestNonce() uint64 {
 type fakeEscrows struct {
 	mu      sync.Mutex
 	byModel map[string][]Escrow
+	retired map[string]Escrow
 	queries []string
 }
 
@@ -66,6 +67,13 @@ func (f *fakeEscrows) Candidates(model string) []Escrow {
 	defer f.mu.Unlock()
 	f.queries = append(f.queries, model)
 	return f.byModel[model]
+}
+
+func (f *fakeEscrows) RetiredAtNonceCap(escrowID string) (Escrow, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	retired, ok := f.retired[escrowID]
+	return retired, ok
 }
 
 type fakeWeights struct {

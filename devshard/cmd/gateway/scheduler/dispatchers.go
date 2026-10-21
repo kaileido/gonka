@@ -41,6 +41,7 @@ func (s *Scheduler) dispatcherFor(escrow Escrow) (*dispatcher, error) {
 			predicates:          s.predicates(escrow),
 			acquireSlot:         s.acquireSlot(escrow),
 			holdEscrow:          escrow.Hold,
+			escalationHold:      escrow.EscalationHold,
 			observer:            s.observer,
 			now:                 s.now,
 			matchWait:           s.matchWait(),

@@ -138,14 +138,14 @@ func (t *Tracker) RecordSample(s Sample) {
 	if evicted || host.ejection.ejectedUntil != ejectedUntilBefore {
 		t.rebuildEjectedViewLocked(now, perf)
 	}
-	t.narrateEjectionTransition(key, host, now)
+	t.narrateEjectionTransition(key, host, now, ejectedUntilBefore)
 }
 
-// narrateEjectionTransition runs under t.mu and narrates HostWithheld or HostReturned only on the change; the state moves with or without a narrator.
-func (t *Tracker) narrateEjectionTransition(key hostKey, host *hostState, now time.Time) {
+// narrateEjectionTransition runs under t.mu and narrates HostWithheld or HostReturned only on the change, counting a lapse the same sample renews as a new withholding; the state moves with or without a narrator.
+func (t *Tracker) narrateEjectionTransition(key hostKey, host *hostState, now, ejectedUntilBefore time.Time) {
 	withheldNow := host.ejection.ejected(now)
 	switch {
-	case withheldNow && !host.ejection.wasWithheld:
+	case withheldNow && (!host.ejection.wasWithheld || host.ejection.ejectedUntil != ejectedUntilBefore):
 		host.ejection.wasWithheld = true
 		if t.narrator == nil {
 			return

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"devshard/transport"
+	"devshard/user"
 )
 
 func (s *attemptState) classify(ctx context.Context, spec AttemptSpec, err error) {
@@ -15,7 +16,8 @@ func (s *attemptState) classify(ctx context.Context, spec AttemptSpec, err error
 	if err != nil {
 		s.lifecycle.EscrowMissing = transport.IsUpstreamEscrowNotFound(err)
 		s.stateDivergent = errors.Is(err, ErrStateRootDivergence)
-		s.localFault = errors.Is(err, ErrLocalRootUnavailable)
+		s.hostAbsent = errors.Is(err, user.ErrHostAbsentFromChain)
+		s.localFault = errors.Is(err, ErrLocalRootUnavailable) || s.hostAbsent
 		s.upstreamStatus, s.upstreamBody = upstreamRefusal(err)
 		s.terminal = classifyDispatchError(ctx, err)
 		s.capability = capabilityOfDispatchError(err)
@@ -167,6 +169,7 @@ func (s *attemptState) outcome(spec AttemptSpec) *AttemptOutcome {
 
 		StateDivergent:  s.stateDivergent,
 		LocalFault:      s.localFault,
+		HostAbsent:      s.hostAbsent,
 		GatewayPressure: s.gatewayPressure,
 	}
 }
