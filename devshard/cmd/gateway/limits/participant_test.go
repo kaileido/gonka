@@ -1448,18 +1448,72 @@ func TestAFreshHostIsPricedAtTheContextLengthGovernanceReports(t *testing.T) {
 //  1. Configure an operator pin of 8,000 context tokens for "pinned".
 //  2. Observe governance reporting a context length of 400,000 for the same model.
 //  3. Acquire one request for "pinned".
-//  4. Assert its input window is priced at the pinned 8,000 tokens, not governance's 400,000.
-func TestAnOperatorsPinOutranksWhatGovernanceReports(t *testing.T) {
+//  4. Assert its input window is priced at governance's 400,000 tokens, not the pinned 8,000.
+func TestWhatGovernanceReportsOutranksAnOperatorsPin(t *testing.T) {
 	t.Parallel()
 	settings := pricedConfig()
 	settings.Pricing.ContextTokensByModel = map[string]int64{"pinned": 8_000}
-	l := newTestLimiter(settings, fixedNow(testEpoch))
-	l.ObserveModels(map[string]int64{"pinned": 400_000})
+	limiter := newTestLimiter(settings, fixedNow(testEpoch))
+	limiter.ObserveModels(map[string]int64{"pinned": 400_000})
 
-	l.Acquire("p", "pinned", oneToken)
+	limiter.Acquire("p", "pinned", oneToken)
 
-	if input, _ := l.windowsOf(t, "p", "pinned"); input != 4*8_000 {
-		t.Fatalf("input window = %v, want %v: an operator who pinned a context length means it", input, 4*8_000)
+	if input, _ := limiter.windowsOf(t, "p", "pinned"); input != 4*400_000 {
+		t.Fatalf("input window = %v, want %v: governance moves before an operator can react, so its length wins", input, 4*400_000)
+	}
+}
+
+// Test flow:
+//  1. Configure an operator pin of 8,000 context tokens for "pinned" and observe nothing for it.
+//  2. Acquire one request for "pinned".
+//  3. Assert its input window is priced at the pinned 8,000 tokens, not the fallback.
+func TestAnOperatorsPinPricesAModelGovernanceDoesNotName(t *testing.T) {
+	t.Parallel()
+	settings := pricedConfig()
+	settings.Pricing.ContextTokensByModel = map[string]int64{"pinned": 8_000}
+	limiter := newTestLimiter(settings, fixedNow(testEpoch))
+
+	limiter.Acquire("p", "pinned", oneToken)
+
+	if input, _ := limiter.windowsOf(t, "p", "pinned"); input != 4*8_000 {
+		t.Fatalf("input window = %v, want %v: the pin stands in when governance names no length", input, 4*8_000)
+	}
+}
+
+// Test flow:
+//  1. Observe governance reporting 400,000 context tokens for "dropped", then a reply that no longer names it.
+//  2. Reconfigure with an operator pin of 8,000 tokens for "dropped" and acquire one request.
+//  3. Assert the input window is priced at the pinned 8,000 tokens, not the 400,000 governance stopped naming.
+func TestAnOperatorsPinOutranksALengthGovernanceStoppedNaming(t *testing.T) {
+	t.Parallel()
+	limiter := newTestLimiter(pricedConfig(), fixedNow(testEpoch))
+	limiter.ObserveModels(map[string]int64{"dropped": 400_000})
+	limiter.ObserveModels(map[string]int64{})
+	pinned := pricedConfig()
+	pinned.Pricing.ContextTokensByModel = map[string]int64{"dropped": 8_000}
+	limiter.Reconfigure(pinned)
+
+	limiter.Acquire("p", "dropped", oneToken)
+
+	if input, _ := limiter.windowsOf(t, "p", "dropped"); input != 4*8_000 {
+		t.Fatalf("input window = %v, want %v: a length governance no longer names must not outrank the operator's pin", input, 4*8_000)
+	}
+}
+
+// Test flow:
+//  1. Observe governance reporting 400,000 context tokens for "dropped", then a reply that no longer names it.
+//  2. Acquire one request for "dropped" with no operator pin.
+//  3. Assert the input window keeps the 400,000 tokens the model was last priced at, not the fallback.
+func TestALengthGovernanceStoppedNamingIsKeptWithoutAPin(t *testing.T) {
+	t.Parallel()
+	limiter := newTestLimiter(pricedConfig(), fixedNow(testEpoch))
+	limiter.ObserveModels(map[string]int64{"dropped": 400_000})
+	limiter.ObserveModels(map[string]int64{})
+
+	limiter.Acquire("p", "dropped", oneToken)
+
+	if input, _ := limiter.windowsOf(t, "p", "dropped"); input != 4*400_000 {
+		t.Fatalf("input window = %v, want %v: without a pin a model keeps the length it was last priced at", input, 4*400_000)
 	}
 }
 

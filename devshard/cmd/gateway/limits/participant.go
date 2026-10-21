@@ -33,6 +33,7 @@ type cutoffNarrator interface {
 type ParticipantLimiter struct {
 	mu              sync.RWMutex
 	cfg             ParticipantConfig
+	reportedContext map[string]int64
 	observedContext map[string]int64
 	observedWeights map[string]map[string]float64
 	states          map[key]*hostState
@@ -132,6 +133,7 @@ func (l *ParticipantLimiter) ObserveModels(contextTokens map[string]int64) {
 		l.observedContext = make(map[string]int64, len(contextTokens))
 	}
 	maps.Copy(l.observedContext, contextTokens)
+	l.reportedContext = maps.Clone(contextTokens)
 	for tracked, state := range l.states {
 		state.bounds = l.windowsForLocked(tracked.participant, tracked.model)
 		state.input.raiseTo(state.bounds.Input.Min)

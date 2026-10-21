@@ -21,7 +21,10 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// NoMaxModelLen is the --max-model-len of a model whose args carry no plain number for it.
 const (
+	NoMaxModelLen uint64 = 0
+
 	maxModelLenFlag = "--max-model-len"
 	txNotFoundText  = "tx not found"
 )
@@ -233,7 +236,7 @@ func (g *GRPCChain) Models(ctx context.Context) (map[string]ModelParams, error) 
 	return models, nil
 }
 
-// maxModelLenOf reads vLLM's --max-model-len from governance model_args; 0 when the args carry no plain number for it.
+// maxModelLenOf reads vLLM's --max-model-len from governance model_args; NoMaxModelLen when the args carry no plain number for it.
 func maxModelLenOf(args []string) uint64 {
 	for index, arg := range args {
 		value, joined := strings.CutPrefix(arg, maxModelLenFlag+"=")
@@ -246,11 +249,11 @@ func maxModelLenOf(args []string) uint64 {
 		}
 		parsed, err := strconv.ParseUint(value, 10, 64)
 		if err != nil {
-			return 0
+			return NoMaxModelLen
 		}
 		return parsed
 	}
-	return 0
+	return NoMaxModelLen
 }
 
 // EscrowParams reports fetched=false when the chain carries no devshard escrow params -- not enabled, rather than unread.

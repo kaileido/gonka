@@ -410,18 +410,21 @@ func TestValidateAcceptsUnsetAdminKey(t *testing.T) {
 
 // Test flow:
 //  1. For each table case's operator pin in `model_limits` and governance's --max-model-len for the model, call `Limits.ContextLength`.
-//  2. Assert the operator's pin wins, governance fills in without one, and a model neither names, or governance names past MaxContextTokens, is unknown (0).
-func TestContextLengthTakesTheOperatorsPinOverGovernance(t *testing.T) {
+//  2. Assert governance wins, the operator's pin fills in without a usable governed length, and a model neither names is unknown (0).
+func TestContextLengthTakesGovernanceOverTheOperatorsPin(t *testing.T) {
 	const model = "model-a"
 	pinned := int64(262_144)
+	pinnedLimits := Limits{ModelLimits: map[string]ModelLimits{model: {MaxModelLen: &pinned}}}
 	testCases := []struct {
 		name     string
 		limits   Limits
 		governed uint64
 		want     uint64
 	}{
-		{name: "operator_pin", limits: Limits{ModelLimits: map[string]ModelLimits{model: {MaxModelLen: &pinned}}}, governed: 400_000, want: 262_144},
+		{name: "governance_over_a_pin", limits: pinnedLimits, governed: 400_000, want: 400_000},
 		{name: "governance_without_a_pin", limits: Limits{ModelLimits: map[string]ModelLimits{model: {}}}, governed: 400_000, want: 400_000},
+		{name: "pin_when_governance_names_none", limits: pinnedLimits, want: 262_144},
+		{name: "pin_when_governance_names_past_what_a_window_could_hold", limits: pinnedLimits, governed: MaxContextTokens + 1, want: 262_144},
 		{name: "neither_names_the_model"},
 		{name: "governance_past_what_a_window_could_hold", governed: MaxContextTokens + 1},
 	}

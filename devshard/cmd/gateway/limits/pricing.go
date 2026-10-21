@@ -58,8 +58,8 @@ func boundsIn(requests RequestBounds, requestTokens int64) WindowBounds {
 	}
 }
 
-func pinnedOr(pinned map[string]int64, model string, fallback int64) int64 {
-	if tokens, named := pinned[model]; named && tokens > 0 {
+func namedOr(named map[string]int64, model string, fallback int64) int64 {
+	if tokens, present := named[model]; present && tokens > 0 {
 		return tokens
 	}
 	return fallback
@@ -68,8 +68,8 @@ func pinnedOr(pinned map[string]int64, model string, fallback int64) int64 {
 // windowsForLocked prices one host's model.
 func (l *ParticipantLimiter) windowsForLocked(participant, model string) ModelWindows {
 	pricing := l.cfg.Pricing
-	contextTokens := pinnedOr(pricing.ContextTokensByModel, model, pinnedOr(l.observedContext, model, pricing.FallbackContextTokens))
-	outputTokens := pinnedOr(pricing.OutputTokensByModel, model, pricing.FallbackOutputTokens)
+	contextTokens := namedOr(l.reportedContext, model, namedOr(pricing.ContextTokensByModel, model, namedOr(l.observedContext, model, pricing.FallbackContextTokens)))
+	outputTokens := namedOr(pricing.OutputTokensByModel, model, pricing.FallbackOutputTokens)
 	concurrency := earnedConcurrency(pricing.ConcurrencyPer10000Weight, l.observedWeights[model][participant])
 	if concurrency == 0 {
 		return ModelWindows{

@@ -92,7 +92,7 @@ Within one setting: a knob the setting sets beats the preset it names; a setting
 | `thinking_token_budget` | the model's budget, resolved against the final `max_tokens` | it reads the resolved value: a cap below `force_zero_below` silences thinking on every request that names a budget, and a default below it on every request that names none |
 | sampling ranges | the global bound, then the model's `sampling` limit | a model limit only narrows |
 | who may call the model, whether it is routed | `model_access`, `rotation_models_json`, escrows | filters never open or route a model; a filter refusal (for example `tools: reject`) is answered before the access check, as every filter refusal is |
-| context length | `model_limits.max_model_len`, else the chain's `--max-model-len` | filters do not read it; a host refuses an over-long request and the engine retries elsewhere |
+| context length | the chain's `--max-model-len`, else `model_limits.max_model_len` | filters do not read it; a host refuses an over-long request and the engine retries elsewhere |
 | streaming upstream, logprobs handling | `GATEWAY_FORCE_UPSTREAM_STREAMING`, `GATEWAY_LOGPROBS_OPTIMIZATION_OVERRIDE` and their settings keys | independent of filters |
 
 A filter entry lists `warnings` when the settings' limits override its filters — a cap below the floor, a cap below the budget's `force_zero_below`, or a default budget below it — so the conflict is visible where the filters are edited. Neither PUT refuses it: the two are edited separately and either order must be possible.

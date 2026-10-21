@@ -232,8 +232,10 @@ type Config struct {
 	NonceAccounting NonceAccounting
 }
 
-// PoCMode values are what Modes.PoCMode accepts, and ModelAccess values what Limits.ModelAccess accepts.
+// PoCMode values are what Modes.PoCMode accepts, ModelAccess values what Limits.ModelAccess accepts, and NoContextLength is a model whose length neither governance nor the operator names.
 const (
+	NoContextLength = chain.NoMaxModelLen
+
 	PoCModeOff     = env.PoCModeOff
 	PoCModeRelaxed = env.PoCModeRelaxed
 
@@ -255,15 +257,15 @@ func (l Limits) AccessFor(model string) string {
 	return ModelAccessAdminOnly
 }
 
-// ContextLength is the operator's max_model_len pin, else the --max-model-len governance registers; 0 when neither names a usable one. See race.md, "Escalation".
+// ContextLength is the --max-model-len governance registers, else the operator's max_model_len pin; NoContextLength when neither names a usable one. See race.md, "Escalation".
 func (l Limits) ContextLength(model string, governedMaxModelLen uint64) uint64 {
+	if governedMaxModelLen != chain.NoMaxModelLen && governedMaxModelLen <= MaxContextTokens {
+		return governedMaxModelLen
+	}
 	if pinned := l.ModelLimits[model].MaxModelLen; pinned != nil && *pinned > 0 {
 		return uint64(*pinned)
 	}
-	if governedMaxModelLen <= MaxContextTokens {
-		return governedMaxModelLen
-	}
-	return 0
+	return NoContextLength
 }
 
 // RetirementReserve is what an escrow of the model must still afford, in the chain's reserve units: its context length as prompt bytes, never less than one capped answer. See capacity.md, "The balance floor".
