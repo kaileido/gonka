@@ -202,7 +202,7 @@ func (m *Manager) settleEntered(ctx context.Context, record store.DevshardRecord
 		return chain.SettleEscrowResult{}, ErrDevshardBusy
 	}
 
-	if ended := m.endedOnChain(ctx, record.EscrowID); ended != nil {
+	if ended := m.endedOnChain(ctx, record); ended != nil {
 		return chain.SettleEscrowResult{}, fmt.Errorf("settling escrow %s: %w", record.EscrowID, ended)
 	}
 
@@ -236,12 +236,12 @@ func (m *Manager) settleEntered(ctx context.Context, record store.DevshardRecord
 	return result, nil
 }
 
-// endedOnChain fails open: only the chain answering that the escrow is absent or already settled counts, never a failed query.
-func (m *Manager) endedOnChain(ctx context.Context, escrowID string) error {
-	onChain, found, err := m.tx.GetEscrow(ctx, escrowID)
+// endedOnChain fails open: only the chain answering that the escrow is already settled, or absent once its epoch can have been pruned, counts. See escrows.md, "An escrow the chain has pruned".
+func (m *Manager) endedOnChain(ctx context.Context, record store.DevshardRecord) error {
+	onChain, found, err := m.tx.GetEscrow(ctx, record.EscrowID)
 	answered := err == nil
 	switch {
-	case answered && !found:
+	case answered && !found && m.prunableOnChain(record):
 		return ErrEscrowPruned
 	case answered && onChain.Settled:
 		return ErrEscrowSettledOnChain

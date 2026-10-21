@@ -65,7 +65,7 @@ See routing.md, "Where the nonce, the slot and the hold are taken".
 
 ## The waiter handoff
 
-A waiter's reply channel is buffered so the dispatcher's handoff never blocks on the caller, and `deliver` never blocks anyway: a full or abandoned channel means the caller is gone. `abandon` takes whatever was already handed over under the same mutex that guards delivery — leaving and taking are one step, because an assignment delivered in that same instant holds a committed nonce and a concurrency slot nobody else will give back. A cancelled caller that finds one releases the slot and the escrow hold and records the nonce as an abandoned ghost.
+A waiter's reply channel is buffered so the dispatcher's handoff never blocks on the caller, and `deliver` never blocks anyway: a full or abandoned channel means the caller is gone. `abandon` takes whatever was already handed over under the same mutex that guards delivery — leaving and taking are one step, because an assignment delivered in that same instant holds a committed nonce and a concurrency slot nobody else will give back. A cancelled caller that finds one keeps it, and so does a caller whose waiter the serve had already bound: binding happens in the `Advance` that commits, and `abandon` on a bound waiter waits for the hand-off. The nonce is committed either way, so `Pick` returns the assignment and the race sends it. See routing.md, "The per-escrow dispatcher".
 
 `submitWaiter` never blocks either: a submit arriving before the actor starts, or faster than it drains, must not stall its caller or pin the lifecycle lock. A full queue and a stopped dispatcher are reported apart, because the first is rate-limit class and the second is retryable against a fresh actor.
 

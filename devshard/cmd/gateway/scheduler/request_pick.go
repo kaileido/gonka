@@ -9,7 +9,7 @@ import (
 	"devshard/types"
 )
 
-// Pick serves one request or one escalation attempt; an escalation reuses the pinned escrow. See routing.md, "One re-pick when an escrow gives up" and "Past every escrow that cannot pay".
+// Pick serves one request or one escalation attempt; an escalation reuses the pinned escrow, and a nonce committed before ctx ends is still returned. See routing.md, "One re-pick when an escrow gives up" and "Past every escrow that cannot pay".
 func (s *Scheduler) Pick(ctx context.Context, profile RequestProfile) (Assignment, error) {
 	if profile.Escrow != "" {
 		assignment, _, err := s.pickOnce(ctx, profile, nil)
@@ -112,22 +112,25 @@ func (s *Scheduler) pickOnce(ctx context.Context, profile RequestProfile, avoide
 	}
 	defer claimed.pendingSubmits.Add(-1)
 
+	var result pickResult
 	select {
-	case result := <-queued.replyCh:
-		if result.err != nil {
-			return Assignment{}, escrow.ID, result.err
-		}
-		// Only a reserve that served a nonce is taken: a failed pick leaves it a reserve.
-		if escrow.IsReserve {
-			s.reportReserveTaken(escrow.ID)
-		}
-		return result.assignment, escrow.ID, nil
+	case result = <-queued.replyCh:
 	case <-ctx.Done():
-		if delivered, wasDelivered := queued.abandon(); wasDelivered && delivered.err == nil {
-			s.dropAssignment(delivered.assignment, profile)
+		// A committed nonce is handed over even to a caller that left: its host is owed the request. See routing.md, "The per-escrow dispatcher".
+		delivered, wasDelivered := queued.abandon()
+		if !wasDelivered || delivered.err != nil {
+			return Assignment{}, escrow.ID, ctx.Err()
 		}
-		return Assignment{}, escrow.ID, ctx.Err()
+		result = delivered
 	}
+	if result.err != nil {
+		return Assignment{}, escrow.ID, result.err
+	}
+	// Only a reserve that served a nonce is taken: a failed pick leaves it a reserve.
+	if escrow.IsReserve {
+		s.reportReserveTaken(escrow.ID)
+	}
+	return result.assignment, escrow.ID, nil
 }
 
 // claimPastFullQueues offers the request to the next escrow in the ranking while each chosen one's submit queue is full, and answers busy once none is left. See routing.md, "Past a full queue".
@@ -181,16 +184,5 @@ func (s *Scheduler) claimAndSubmit(escrow Escrow, queued *waiter) (*dispatcher, 
 		if outcome == submitFull {
 			return nil, ErrEscrowBusy
 		}
-	}
-}
-
-func (s *Scheduler) dropAssignment(assignment Assignment, profile RequestProfile) {
-	assignment.ReleaseHostSlot()
-	assignment.ReleaseEscrow()
-	if s.observer != nil {
-		s.observer.GhostBurned(assignment.Escrow, Burn{
-			Nonce: assignment.Nonce.Nonce(), Participant: assignment.Host,
-			Reason: ghostAbandoned.reason(), RequestID: profile.RequestID,
-		})
 	}
 }

@@ -25,6 +25,14 @@ func ownEpochOver(record store.DevshardRecord, snapshot chain.PhaseSnapshot) boo
 	return chainEpoch > 0 && effective > chainEpoch
 }
 
+// prunableOnChain reports whether the chain may have pruned the escrow: its resolved epoch is past its settlement window. A node behind the create height also answers absent before that.
+func (m *Manager) prunableOnChain(record store.DevshardRecord) bool {
+	if record.ChainEpoch == 0 || m.snapshots == nil {
+		return false
+	}
+	return deadlineAt(record, m.snapshots.Snapshot(), 0).passed
+}
+
 func bridgeLabel(snapshot chain.PhaseSnapshot) uint64 {
 	return effectiveEpoch(snapshot) + 1
 }

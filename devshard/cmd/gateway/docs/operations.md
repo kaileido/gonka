@@ -20,6 +20,8 @@ Three tiers, and the tier decides both who may call it and whether the kill swit
 
 The `/devshard/{id}/…` prefix pins a request to one escrow instead of letting the scheduler choose — the recovery surface for an escrow that needs attention on its own. A pinned chat to an escrow the gateway no longer routes answers 404, as an unknown devshard.
 
+`GET /devshard/{id}/v1/debug/signatures` lists the slots that signed each nonce the session still holds signatures for — the retained window plus each validator's highest — so the view stays bounded on a long-lived escrow (`user/session.go`, `dropSignaturesThroughLocked`).
+
 `POST /devshard/{id}/v1/debug/signatures/collect?nonce=N` asks the escrow's group again for its signatures at nonce `N`, which must not be ahead of the session's own, and answers `sig_weight`, `quorum_threshold`, `total_slots` and `has_quorum`. It reaches a live or draining escrow only: the signatures land in that session, which is the one a settlement builds its payload from; a settled or non-resident escrow answers 404. The call is written to the admin audit log.
 
 `/devshard/{id}/v1/debug/inferences` lists every record of the escrow, the sealed ones included: an escrow that settled has sealed all of them, and a live-only view reads as one that served nothing. Sealed records are read back from storage under the state's read lock, so on a large escrow it is a slow call; `/devshard/{id}/v1/debug/pending` reads the live records alone, since a sealed record is never unresolved.

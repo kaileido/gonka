@@ -15,6 +15,7 @@ import (
 	"devshard/cmd/gateway/limits"
 	"devshard/cmd/gateway/registry"
 	"devshard/cmd/gateway/scheduler"
+	"devshard/transport"
 	"devshard/types"
 )
 
@@ -587,13 +588,13 @@ func TestALimiterRejectionNamesTheCapItHit(t *testing.T) {
 }
 
 // Test flow:
-//  1. Build a chat completion whose content is large enough to exceed what a host accepts once base64-encoded, but still under the raw ingest cap.
+//  1. Build a chat completion whose content alone fills the host budget left beside the catch-up reserve, but still under the raw ingest cap.
 //  2. POST it.
 //  3. Assert the response is 413 and no limiter slot was taken, so the refusal precedes admission.
 func TestChatRefusesABodyNoHostCouldBeSent(t *testing.T) {
 	live := newHarness(t)
 	oversized := fmt.Sprintf(`{"model":"qwen","messages":[{"role":"user","content":%q}]}`,
-		strings.Repeat("x", 8<<20))
+		strings.Repeat("x", transport.MaxHostRequestBytes-hostCatchUpReserveBytes))
 
 	recorder := live.request(t, http.MethodPost, "/v1/chat/completions", oversized, nil)
 
@@ -606,13 +607,13 @@ func TestChatRefusesABodyNoHostCouldBeSent(t *testing.T) {
 }
 
 // Test flow:
-//  1. Build a chat completion sized to still fit a host's limit once base64-encoded.
+//  1. Build an 8 MiB chat completion, which fits a host's limit as the raw envelope bytes a prompt travels as.
 //  2. POST it.
 //  3. Assert the response is not refused as too large.
 func TestChatServesABodyThatStillFitsOnceEncoded(t *testing.T) {
 	live := newHarness(t)
 	large := fmt.Sprintf(`{"model":"qwen","messages":[{"role":"user","content":%q}]}`,
-		strings.Repeat("x", 4<<20))
+		strings.Repeat("x", 8<<20))
 
 	recorder := live.request(t, http.MethodPost, "/v1/chat/completions", large, nil)
 

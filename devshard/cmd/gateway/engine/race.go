@@ -244,7 +244,7 @@ func newCoordinator(clientCtx context.Context, deps raceDeps, request raceReques
 	}
 }
 
-// The pick is bounded because a scheduler waiting for capacity would hang, and made under the client's context so a client that leaves while its pick waits gets no primary.
+// The pick is bounded because a scheduler waiting for capacity would hang, and made under the client's context so a client that leaves while its pick waits gets no primary, unless its nonce was already committed.
 func (c *raceCoordinator) begin() error {
 	pickCtx, cancelPick := context.WithTimeout(c.drain.client, schedulerPickTimeout)
 	defer cancelPick()

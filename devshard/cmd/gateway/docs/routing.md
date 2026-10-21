@@ -122,6 +122,8 @@ The submit buffer holds `scheduler_dispatch_queue_depth` waiters (`GATEWAY_DISPA
 
 A waiter never sends the actor a message to leave. Cancellation is a flag the waiter sets on itself, because a departure message could block the actor (`decision.go`, `waiter`). The reply channel is buffered with capacity one so the hand-off never blocks on a caller who has gone away, and a small mutex orders `deliver` against `abandon` so that a nonce arriving in the same instant as a cancellation is owned by exactly one of them — rather than by neither (`decision.go`, `newWaiter`, `waiter.deliver` and `waiter.abandon`).
 
+**A committed nonce reaches its caller even after the caller left.** A serve binds its waiter inside the same `Advance` that commits the nonce (`decision.go`, `waiter.bind`). A cancellation that finds the waiter bound waits for the hand-off instead of withdrawing, and `Pick` returns the assignment rather than the context's error. The commit has already put a `MsgStartInference` with the request's own `max_tokens` in the escrow's diff; a record nobody sends stays `StatusPending`, which nothing sweeps, and settles at its full reserve credited to the host. Handed over, the race sends it on its drain context and discards the output, as devshardctl does ([race.md](./race.md), "Client departure and the drain"). A waiter that leaves before it is bound is declined: its slot and hold go back and the nonce stays uncommitted.
+
 ### The drain
 
 Each wake-up runs one drain (`dispatcher_queue.go`, `dispatcher.drain`):
@@ -139,14 +141,16 @@ flowchart TD
     H -->|acquired| HS{take escrow hold}
     H -->|refused: becomes a burn| HB{take escrow hold}
     G -->|burn| HB
-    HS -->|taken| K[commit the nonce, hand the assignment to the waiter]
+    HS -->|taken| BW{bind the waiter}
+    BW -->|bound| K[commit the nonce, hand the assignment to the waiter]
+    BW -->|already left| M
     HB -->|taken| I[commit a ghost nonce, record the reason]
     HS -->|refused: escrow retired| X[give back any slot taken,<br/>fail the queue with ErrEscrowGone]
     HB -->|refused: escrow retired| X
     X --> Z
     G -->|hold| J[decline the nonce, re-arm the timer]
     G -->|decline| M[give the nonce back,<br/>drop the abandoned waiters]
-    M --> Z
+    M --> D
     I --> L{budget spent?}
     L -->|yes| N[fail the remaining waiters<br/>with ErrNoAvailableHost]
     N --> Z
@@ -191,7 +195,7 @@ A ghost commits a real inference into the escrow's local diff and never sends it
 | `ghostCutOff` | `participant_cut_off_no_send` | The host's cut-off is open, or it is half-open with its probe already in flight. The host is broken rather than busy, and nothing is forced past this. |
 | `ghostEjected` | `participant_ejected_no_send` | The outlier detector ejected the host, and the pool-wide cap left room to honour it. |
 | `ghostExclude` | `no_compatible_request_after_stale` | The queue has already raced this host, and the hold grace expired. |
-| `ghostAbandoned` | `request_abandoned_before_dispatch` | The nonce was committed for a caller who vanished before the assignment reached it. |
+| `ghostAbandoned` | `request_abandoned_before_dispatch` | The nonce was committed for a waiter whose reply channel refused the assignment. A bound waiter's never does, so in service this count stays at zero. |
 | `ghostPrepareFailed` | `nonce_spent_on_failed_prepare` | The session committed the nonce and then failed to finish preparing it, as when reading a host's catch-up from the store fails (`user.ErrPreparedAfterCommit`, reported as `SpentNonceError`). The nonce is spent either way: the request it was committed for fails alone, the burn is recorded in its name, and the drain goes on with the rest of the queue. It does not count as a burn in a row, because a store failure says nothing about the host's window, but it does spend the drain's burn budget, so a failure that lasts costs one nonce per request. |
 | `ghostNotAllowed` | `participant_outside_allowlist` | The host is not on the participant allowlist, which is checked before every other gate. |
 | `ghostStateDiverged` | `participant_state_diverged_no_send` | The host's escrow state diverged from this gateway's, so nothing may be dispatched to it on that escrow. |
@@ -269,8 +273,8 @@ The two reservations travel as one value (`dispatcher_queue.go`, `reservation`):
 | `Advance` fails after a burn decision | never taken | given back | may or may not have committed |
 | Burn committed | never taken | given back once the nonce is committed | burned, charged its ghost reason |
 | Session commits nothing on a serve (nil prepared) | given back | given back | none |
-| Waiter abandoned between decision and hand-off | given back | given back | committed, charged `ghostAbandoned` |
-| Caller cancels in the instant of delivery | released by `dropAssignment` | released | committed, charged `ghostAbandoned` |
+| Waiter abandoned before the serve binds it | given back | given back | not committed — the intent declines |
+| Caller cancels after the serve bound it | kept, handed to the caller | handed over | spent: the race sends it and discards the output |
 | Normal dispatch | kept, released by the engine when the attempt ends | handed over: the race takes its own hold and the assignment's is released | spent |
 | No dispatch target (escrow rotated out mid-race) | released by the engine | **kept**, transferred to the race | committed, left for the timeout vote |
 

@@ -497,7 +497,7 @@ func TestPickReturnsTheContextErrorWhenCancelledWhileQueued(t *testing.T) {
 //  1. Run 200 races of `Pick` against an immediately cancelled context, releasing the host slot and escrow hold whenever a caller wins one.
 //  2. Assert no slots are left held after every race.
 //  3. Assert no escrow holds are left outstanding.
-//  4. Assert every admission is accounted for: taken by a caller or recorded as an abandoned ghost burn.
+//  4. Assert every committed nonce was taken by a caller and none was burned as abandoned.
 func TestPickReleasesTheSlotWhenCancellationRacesTheAssignment(t *testing.T) {
 	leakcheck.VerifyNone(t)
 	test := newSchedulerHarness(t, schedulerConfig{})
@@ -516,22 +516,18 @@ func TestPickReleasesTheSlotWhenCancellationRacesTheAssignment(t *testing.T) {
 	}
 	test.scheduler.Stop()
 
-	held, admitted := test.limiter.slots()
+	held, _ := test.limiter.slots()
 	if held != 0 {
 		t.Fatalf("slots held = %d after %d races, want every admission accounted for", held, races)
 	}
 	if outstanding := test.holds.outstanding(); outstanding != 0 {
 		t.Fatalf("escrow holds still out = %d after %d races, want every hold accounted for", outstanding, races)
 	}
-	dropped := 0
-	for _, reason := range test.observer.burns() {
-		if reason == ghostAbandoned.reason() {
-			dropped++
-		}
+	if _, _, commits := test.session(t, escrowA).report(); len(commits) != takenByCallers {
+		t.Fatalf("commits = %d, want the %d taken by callers", len(commits), takenByCallers)
 	}
-	if admitted != takenByCallers+dropped {
-		t.Fatalf("admitted = %d, want the %d taken by callers plus the %d recorded as abandoned",
-			admitted, takenByCallers, dropped)
+	if burns := test.observer.burns(); slices.Contains(burns, ghostAbandoned.reason()) {
+		t.Fatalf("ghost burns = %v, want no committed nonce burned as abandoned", burns)
 	}
 }
 
@@ -1208,19 +1204,34 @@ func TestReapingADispatcherDoesNotHandBackTheSpentReplay(t *testing.T) {
 }
 
 // Test flow:
-//  1. Drop an assignment directly, naming a request that had already left.
-//  2. Assert the recorded burn was made during that same request, the one whose `Pick` gave up with the assignment already in hand.
-func TestADroppedAssignmentNamesTheRequestThatLeft(t *testing.T) {
+//  1. Build a scheduler whose session cancels the caller's context right after deciding the nonce, and pick under that context.
+//  2. Assert the pick returns the committed assignment on `hostB` at nonce 1 rather than the context's error.
+//  3. Assert no nonce was burned and the assignment still holds its host slot and escrow hold.
+func TestAPickCancelledAfterTheCommitReturnsTheAssignment(t *testing.T) {
 	test := newSchedulerHarness(t, schedulerConfig{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	test.session(t, escrowA).afterDecide = func(HostBinding) { cancel() }
 
-	test.scheduler.dropAssignment(
-		Assignment{Escrow: escrowA, Host: hostA, Nonce: preparedNonce{nonce: 3}},
-		RequestProfile{RequestID: "request-gone", Model: modelA},
-	)
-
-	if got := test.observer.burnRequests(); !slices.Equal(got, []string{"request-gone"}) {
-		t.Fatalf("burned during = %v, want the request whose Pick gave up with the assignment in hand", got)
+	assignment, err := test.scheduler.Pick(ctx, RequestProfile{RequestID: "request-gone", Model: modelA})
+	if err != nil {
+		t.Fatalf("Pick after the commit = %v, want the committed assignment", err)
 	}
+	if assignment.Host != hostB || assignment.Nonce.Nonce() != 1 {
+		t.Fatalf("assignment = %s at nonce %d, want %s at nonce 1", assignment.Host, assignment.Nonce.Nonce(), hostB)
+	}
+	if burns := test.observer.burns(); len(burns) != 0 {
+		t.Fatalf("ghost burns = %v, want none for a committed nonce handed to its caller", burns)
+	}
+	if held, _ := test.limiter.slots(); held != 1 {
+		t.Fatalf("slots held = %d, want the assignment's own", held)
+	}
+	if outstanding := test.holds.outstanding(); outstanding != 1 {
+		t.Fatalf("escrow holds out = %d, want the assignment's own", outstanding)
+	}
+	assignment.ReleaseHostSlot()
+	assignment.ReleaseEscrow()
+	test.scheduler.Stop()
 }
 
 func (h *schedulerHarness) markReserve(escrowID string) {

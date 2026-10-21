@@ -796,6 +796,10 @@ func (c *callLog) contains(call string) bool {
 	return slices.Contains(c.snapshot(), call)
 }
 
+func prunedEpochSnapshot() chain.PhaseSnapshot {
+	return chain.PhaseSnapshot{EpochIndex: 53, EffectiveEpochIndex: 52, BlockHeight: 1_000}
+}
+
 func prunedTxClient(t *testing.T) *fakeTxClient {
 	t.Helper()
 	return &fakeTxClient{
@@ -808,12 +812,13 @@ func prunedTxClient(t *testing.T) *fakeTxClient {
 }
 
 // Test flow:
-//  1. Seed the store with one parked record whose escrow the chain no longer holds.
+//  1. Seed the store with one parked record created in chain epoch 50, whose escrow the chain no longer holds at effective epoch 52.
 //  2. Settle it through the admin entry.
 //  3. Assert it reports ErrEscrowPruned without finalizing or broadcasting, and the row is dropped.
 func TestSettleDropsAnEscrowTheChainNoLongerHolds(t *testing.T) {
 	testStore := newFakeStore()
 	record := parkedRecord("21")
+	record.ChainEpoch = 50
 	testStore.devshards[record.EscrowID] = record
 	calls := &callLog{}
 	m := &Manager{
@@ -821,6 +826,7 @@ func TestSettleDropsAnEscrowTheChainNoLongerHolds(t *testing.T) {
 		store:            testStore,
 		signer:           &fakeSignerSource{signer: testSigner(t)},
 		settlementSource: &fakeSettlementSource{calls: calls},
+		snapshots:        &fakeSnapshotSource{snapshot: prunedEpochSnapshot()},
 		config:           holderWithSettlementEnabled(true),
 	}
 
@@ -838,18 +844,20 @@ func TestSettleDropsAnEscrowTheChainNoLongerHolds(t *testing.T) {
 }
 
 // Test flow:
-//  1. Seed the store with one parked record whose escrow the chain no longer holds.
+//  1. Seed the store with one parked record created in chain epoch 50, whose escrow the chain no longer holds at effective epoch 52.
 //  2. Run `settlePending` with the settlement toggle enabled.
 //  3. Assert it returns nil and the row is dropped, so the tick stops retrying it.
 func TestSettlePendingDropsAnEscrowTheChainNoLongerHolds(t *testing.T) {
 	testStore := newFakeStore()
 	record := parkedRecord("22")
+	record.ChainEpoch = 50
 	testStore.devshards[record.EscrowID] = record
 	m := &Manager{
 		tx:               prunedTxClient(t),
 		store:            testStore,
 		signer:           &fakeSignerSource{signer: testSigner(t)},
 		settlementSource: &fakeSettlementSource{},
+		snapshots:        &fakeSnapshotSource{snapshot: prunedEpochSnapshot()},
 		config:           holderWithSettlementEnabled(true),
 	}
 
@@ -858,6 +866,59 @@ func TestSettlePendingDropsAnEscrowTheChainNoLongerHolds(t *testing.T) {
 	}
 	if _, ok := testStore.snapshotDevshard(record.EscrowID); ok {
 		t.Fatal("row still present for an escrow the chain pruned, want it dropped")
+	}
+}
+
+// Test flow:
+//  1. Seed the store with a parked record created in chain epoch 50, while the chain's effective epoch is still 50 or 51 or the record's epoch is unresolved.
+//  2. Answer the escrow lookup as absent, the way a node behind the create height does, and fail the settle broadcast.
+//  3. Settle it through the admin entry.
+//  4. Assert the answer is not taken as a prune: the settle was attempted, its error is not ErrEscrowPruned, and the row is kept for a retry.
+func TestSettleKeepsAnEscrowTheChainCannotHavePrunedYet(t *testing.T) {
+	cases := []struct {
+		name       string
+		chainEpoch uint64
+		effective  uint64
+	}{
+		{name: "in its own epoch", chainEpoch: 50, effective: 50},
+		{name: "in the epoch after", chainEpoch: 50, effective: 51},
+		{name: "with its epoch unresolved", chainEpoch: 0, effective: 90},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			testStore := newFakeStore()
+			record := parkedRecord("23")
+			record.ChainEpoch = testCase.chainEpoch
+			testStore.devshards[record.EscrowID] = record
+			broadcasts := 0
+			tx := &fakeTxClient{
+				getEscrowFn: func(context.Context, string) (chain.EscrowInfo, bool, error) { return chain.EscrowInfo{}, false, nil },
+				settleEscrowFn: func(context.Context, *signing.Secp256k1Signer, chain.SettlementInput) (chain.SettleEscrowResult, error) {
+					broadcasts++
+					return chain.SettleEscrowResult{}, errors.New("escrow not found")
+				},
+			}
+			m := &Manager{
+				tx:               tx,
+				store:            testStore,
+				signer:           &fakeSignerSource{signer: testSigner(t)},
+				settlementSource: &fakeSettlementSource{calls: &callLog{}},
+				snapshots:        &fakeSnapshotSource{snapshot: chain.PhaseSnapshot{EpochIndex: testCase.effective + 1, EffectiveEpochIndex: testCase.effective, BlockHeight: 1_000}},
+				config:           holderWithSettlementEnabled(true),
+			}
+
+			_, err := m.Settle(context.Background(), record.EscrowID, false)
+
+			if err == nil || errors.Is(err, ErrEscrowPruned) {
+				t.Fatalf("Settle() = %v, want the broadcast's own error, not ErrEscrowPruned", err)
+			}
+			if broadcasts != 1 {
+				t.Fatalf("settle broadcasts = %d, want 1", broadcasts)
+			}
+			if _, ok := testStore.snapshotDevshard(record.EscrowID); !ok {
+				t.Fatal("row dropped for an escrow the chain cannot have pruned yet")
+			}
+		})
 	}
 }
 
