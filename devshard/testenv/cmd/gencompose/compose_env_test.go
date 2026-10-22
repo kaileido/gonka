@@ -121,7 +121,7 @@ func TestWriteCompose_PrebuiltImages(t *testing.T) {
 	}
 	cfg := perHostEnvConfig(t)
 	services := render(cfg)
-	require.NotContains(t, renderServices(t, cfg)["mock-dapi"], "MOCK_DAPI_VERSION_NAME")
+	require.NotContains(t, renderServices(t, cfg)["mock-dapi"], "MOCK_DAPI_VERSIONS_JSON")
 	require.Equal(t, "devshard-versiond:latest", services["versiond-0"].Image)
 	require.NotEmpty(t, services["versiond-0"].Build)
 	require.NotEmpty(t, services["versiond-router"].Build)
@@ -143,5 +143,44 @@ func TestWriteCompose_PrebuiltImages(t *testing.T) {
 
 	cfg.Versiond.VersionName = "v6"
 	cfg.MockDapi.AnnounceVersion = true
-	require.Equal(t, "v6", renderServices(t, cfg)["mock-dapi"]["MOCK_DAPI_VERSION_NAME"])
+	require.Contains(t, renderServices(t, cfg)["mock-dapi"]["MOCK_DAPI_VERSIONS_JSON"], `"name":"v6"`)
+}
+
+// Test flow:
+// 1. Let every host also run v6 next to v4.2 and give the gateway extra env.
+// 2. Render compose.
+// 3. Check versiond forces and mounts both versions, mock-dapi lists both, and the gateway gets its extra env.
+func TestWriteCompose_ExtraVersionsAndGatewayEnv(t *testing.T) {
+	cfg := perHostEnvConfig(t)
+	cfg.Versiond.VersionName = "v4.2"
+	cfg.Versiond.ExtraVersions = []config.ExtraVersion{{Name: "v6", HostBinaryMount: "/builds/v6/devshardd"}}
+	cfg.MockDapi.AnnounceVersion = true
+	cfg.Devshardctl.Env = map[string]string{"DEVSHARD_REQUIRE_HEIGHT_SEED": "false"}
+	outPath := filepath.Join(t.TempDir(), "docker-compose.yml")
+	require.NoError(t, writeCompose(cfg, outPath))
+	body, err := os.ReadFile(outPath)
+	require.NoError(t, err)
+	var compose struct {
+		Services map[string]struct {
+			Environment map[string]string `yaml:"environment"`
+			Volumes     []string          `yaml:"volumes"`
+		} `yaml:"services"`
+	}
+	require.NoError(t, yaml.Unmarshal(body, &compose))
+	host := compose.Services["versiond-0"]
+	require.Equal(t, "v4.2,v6", host.Environment["VERSIOND_FORCE"])
+	require.Equal(t, "/opt/devshard/devshardd-v6", host.Environment["VERSIOND_OVERRIDE_v6"])
+	require.Contains(t, host.Volumes, "/builds/v6/devshardd:/opt/devshard/devshardd-v6:ro")
+	require.JSONEq(t, `[{"name":"v4.2","binary":"file:///opt/devshard/devshardd","sha256":"0000000000000000000000000000000000000000000000000000000000000000"},{"name":"v6","binary":"file:///opt/devshard/devshardd-v6","sha256":"0000000000000000000000000000000000000000000000000000000000000000"}]`, compose.Services["mock-dapi"].Environment["MOCK_DAPI_VERSIONS_JSON"])
+	require.Equal(t, "false", compose.Services["devshardctl"].Environment["DEVSHARD_REQUIRE_HEIGHT_SEED"])
+}
+
+// Test flow:
+// 1. Give the gateway an extra env key the template already sets.
+// 2. Check compose is refused instead of rendering a duplicate key.
+func TestWriteCompose_GatewayEnvRejectsTemplateKey(t *testing.T) {
+	cfg := perHostEnvConfig(t)
+	cfg.Devshardctl.Env = map[string]string{"DEVSHARD_QUIET_SETTLE_DELAY": "5m"}
+	err := writeCompose(cfg, filepath.Join(t.TempDir(), "docker-compose.yml"))
+	require.ErrorContains(t, err, "devshardctl env DEVSHARD_QUIET_SETTLE_DELAY is already set")
 }

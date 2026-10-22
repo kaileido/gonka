@@ -1,6 +1,7 @@
 package loadtest
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"debug/buildinfo"
@@ -15,6 +16,8 @@ import (
 	"strings"
 
 	"devshard/testenv/config"
+
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -32,6 +35,26 @@ type Build struct {
 	BinaryVersion string      `yaml:"binary_version" json:"binary_version"`
 	Devshardd     string      `yaml:"devshardd" json:"devshardd"`
 	Images        BuildImages `yaml:"images" json:"images"`
+	// Versions are further devshardd versions every host runs next to Protocol.
+	Versions []BuildVersion `yaml:"versions" json:"versions,omitempty"`
+	Gateway  BuildGateway   `yaml:"gateway" json:"gateway"`
+	// PeerRPC sets the peer transport of the gateway and the hosts; unset keeps the harness's native gRPC.
+	PeerRPC BuildPeerRPC `yaml:"peer_rpc" json:"peer_rpc"`
+}
+
+type BuildPeerRPC struct {
+	GRPC      *bool `yaml:"grpc" json:"grpc,omitempty"`
+	H2Upgrade *bool `yaml:"h2_upgrade" json:"h2_upgrade,omitempty"`
+}
+
+type BuildVersion struct {
+	Name      string `yaml:"name" json:"name"`
+	Devshardd string `yaml:"devshardd" json:"devshardd"`
+}
+
+type BuildGateway struct {
+	// Env adds gateway env, e.g. a production gateway's settings.
+	Env map[string]string `yaml:"env" json:"env,omitempty"`
 }
 
 type BuildImages struct {
@@ -45,21 +68,39 @@ type BuildRecord struct {
 	Build
 	DevsharddSHA256 string            `json:"devshardd_sha256"`
 	DevsharddTags   string            `json:"devshardd_tags"`
+	VersionsSHA256  map[string]string `json:"versions_sha256,omitempty"`
 	ImageIDs        map[string]string `json:"image_ids"`
 }
 
 // LoadBuild reads a build file; a relative devshardd path is relative to the file.
 func LoadBuild(path string) (*Build, error) {
 	var build Build
-	if err := loadYAML(path, &build); err != nil {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	// Strict: an unknown key is a typo or a field this checkout lacks, never a silent no-op.
+	decoder := yaml.NewDecoder(bytes.NewReader(body))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&build); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	dir, err := filepath.Abs(filepath.Dir(path))
+	if err != nil {
 		return nil, err
 	}
-	if build.Devshardd != "" && !filepath.IsAbs(build.Devshardd) {
-		dir, err := filepath.Abs(filepath.Dir(path))
-		if err != nil {
-			return nil, err
+	resolve := func(p string) string {
+		if p == "" || filepath.IsAbs(p) {
+			return p
 		}
-		build.Devshardd = filepath.Join(dir, build.Devshardd)
+		return filepath.Join(dir, p)
+	}
+	build.Devshardd = resolve(build.Devshardd)
+	for i, version := range build.Versions {
+		if strings.TrimSpace(version.Name) == "" || strings.TrimSpace(version.Devshardd) == "" || version.Name == build.Protocol {
+			return nil, fmt.Errorf("build %s: versions[%d] needs a name other than protocol and a devshardd", path, i)
+		}
+		build.Versions[i].Devshardd = resolve(version.Devshardd)
 	}
 	for _, field := range []struct{ name, value string }{
 		{"name", build.Name},
@@ -85,6 +126,11 @@ func (b *Build) apply(cfg *config.File) {
 	cfg.VersiondRouter.Image = b.Images.VersiondRouter
 	cfg.Devshardctl.Image = b.Images.Gateway
 	cfg.MockDapi.AnnounceVersion = true
+	cfg.Versiond.ExtraVersions = nil
+	for _, version := range b.Versions {
+		cfg.Versiond.ExtraVersions = append(cfg.Versiond.ExtraVersions, config.ExtraVersion{Name: version.Name, HostBinaryMount: version.Devshardd})
+	}
+	cfg.Devshardctl.Env = b.Gateway.Env
 }
 
 // recordBuild checks that every image is present locally, so Compose never
@@ -105,6 +151,14 @@ func recordBuild(ctx context.Context, build *Build, outputDir string) error {
 	record.DevsharddSHA256 = sum
 	if record.DevsharddTags, err = devsharddBuildTags(build.Devshardd); err != nil {
 		return fmt.Errorf("build %s: %w", build.Name, err)
+	}
+	for _, version := range build.Versions {
+		if record.VersionsSHA256 == nil {
+			record.VersionsSHA256 = map[string]string{}
+		}
+		if record.VersionsSHA256[version.Name], err = fileSHA256(version.Devshardd); err != nil {
+			return fmt.Errorf("build %s: %w", build.Name, err)
+		}
 	}
 	body, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {

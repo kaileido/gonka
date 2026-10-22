@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"os"
 	"os/signal"
@@ -58,7 +59,13 @@ func main() {
 	}
 	cfg.ChainID = envOr("CHAIN_ID", cfg.ChainID)
 	cfg.BinaryDir = os.Getenv("MOCK_DAPI_BINARY_DIR")
-	if v := versionFromEnv(); v.Name != "" {
+	if raw := os.Getenv("MOCK_DAPI_VERSIONS_JSON"); raw != "" {
+		var versions []cosrv.Version
+		if err := json.Unmarshal([]byte(raw), &versions); err != nil || len(versions) == 0 {
+			log.Fatalf("mock-dapi: MOCK_DAPI_VERSIONS_JSON: want a non-empty JSON list of versions: %v", err)
+		}
+		cfg.Versions = versions
+	} else if v := versionFromEnv(); v.Name != "" {
 		cfg.Versions = []cosrv.Version{v}
 	}
 	if v := os.Getenv("MOCK_DAPI_CHAIN_POLL_INTERVAL"); v != "" {

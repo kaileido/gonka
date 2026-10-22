@@ -86,9 +86,20 @@ func TestLoadTestComposeEnvEnablesH2(t *testing.T) {
 	t.Setenv("DEVSHARD_RPC_H2_UPGRADE", "false")
 	t.Setenv("DEVSHARD_RPC_GRPC", "false")
 
-	env := loadTestComposeEnv()
+	env := loadTestComposeEnv(nil)
 	require.Empty(t, testEnvValue(env, "DEVSHARD_RPC_H2_UPGRADE"), "the HTTP/2 default must not be forced off")
 	require.Equal(t, "true", testEnvValue(env, "DEVSHARD_RPC_GRPC"))
+}
+
+// Test flow:
+// 1. Give a build gRPC off and HTTP/2 upgrade off, as a production gateway runs.
+// 2. Check the compose env drops the forced gRPC and sets the upgrade switch, and the log line names both.
+func TestLoadTestComposeEnvFollowsBuildPeerRPC(t *testing.T) {
+	off := false
+	env := loadTestComposeEnv(&Build{PeerRPC: BuildPeerRPC{GRPC: &off, H2Upgrade: &off}})
+	require.Empty(t, testEnvValue(env, "DEVSHARD_RPC_GRPC"))
+	require.Equal(t, "false", testEnvValue(env, "DEVSHARD_RPC_H2_UPGRADE"))
+	require.Equal(t, "h2_upgrade=false grpc=off", peerRPCTransport(env))
 }
 
 func testEnvValue(env []string, key string) string {

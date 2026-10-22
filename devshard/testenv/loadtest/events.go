@@ -645,13 +645,14 @@ func participantAddress(cfg *config.File, host config.HostCfg) string {
 
 type composeEventOps struct {
 	dir, project, compose string
+	build                 *Build
 	// docker runs one Docker CLI command and returns its trimmed stdout; tests replace it.
 	docker func(ctx context.Context, args ...string) (string, error)
 }
 
 func (o composeEventOps) Compose(ctx context.Context, args ...string) error {
 	// Same env as `up`, so compose resolves the project exactly as it was started.
-	return runCommandWithEnv(ctx, o.dir, loadTestComposeEnv(), "docker", append([]string{"compose", "-p", o.project, "-f", o.compose}, args...)...)
+	return runCommandWithEnv(ctx, o.dir, loadTestComposeEnv(o.build), "docker", append([]string{"compose", "-p", o.project, "-f", o.compose}, args...)...)
 }
 
 // CPULimit reads the container's CPU limit in CPUs; 0 means it has none.
@@ -817,7 +818,7 @@ func startEvents(ctx context.Context, opts RunnerConfig, cfg *config.File, proje
 	if err != nil || len(planned) == 0 {
 		return nil, err
 	}
-	ops := composeEventOps{dir: opts.TestenvDir, project: project, compose: compose, docker: func(ctx context.Context, args ...string) (string, error) {
+	ops := composeEventOps{dir: opts.TestenvDir, project: project, compose: compose, build: opts.Build, docker: func(ctx context.Context, args ...string) (string, error) {
 		return dockerOutput(ctx, opts.TestenvDir, args...)
 	}}
 	mocks := newHTTPMockControl(cfg)
