@@ -5,6 +5,7 @@ Counts a chat prompt's tokens with the tokenizer the chain pins for the model, s
 ## What it owns
 
 - `bpe.go` — `Load` reads a Hugging Face `tokenizer.json` into a `Counter`; `Counter.Count` is its exact token count of a text, without the special tokens a chat template adds.
+- `added.go` — the file's `added_tokens`, found in a text before it is normalized and pre-tokenized, each one token.
 - `merge.go` — the merge loop: lowest rank first, leftmost on a tie, as Hugging Face BPE applies merges. A piece of up to `scanMergeBytes` (24) bytes is merged by scanning its few symbols, a longer one with a heap of candidate pairs.
 - `pairs.go` — `pairTable`: the merge of a pair of tokens, in an open-addressed table with a bit filter in front of it.
 - `pretokenize.go` — hand-written scanners for the split patterns the pinned tokenizers use, found by the pattern's `canonicalPattern` spelling (raw CR and LF as `\r` and `\n`, `\"` as `"`), so DeepSeek-V4's raw line breaks select the same scanner as the escaped form. A rule with a scanner keeps its compiled regexp2 pattern too, as the fallback and the tests' reference.
@@ -35,6 +36,18 @@ The files do not ship with the gateway: the three in use today are 36 MB togethe
 
 On the three pinned tokenizers (MiniMax-M2.7, DeepSeek-V4-Flash-0731, GLM-5.3-Flash) `Count` matches Hugging Face `tokenizers` exactly on every text of the comparison: English, Russian, Chinese, Go source, JSON, mixed, and adversarial text, from 200 B to 1 MB. The unit tests pin the same agreement on small tokenizers of each shape (`testdata/`, built with `tokenizers` 0.23.3).
 
+### Added tokens
+
+A `tokenizer.json` lists `added_tokens` (DeepSeek-V4-Flash 1,283, MiniMax-M2.7 54, GLM-5.3-Flash 36, Qwen2.5 22): `<think>`, `<minimax:tool_call>`, `<｜User｜>` and the like. Hugging Face `tokenizers` finds them before anything else (`AddedVocabulary::extract_and_normalize`, 0.23.3), so a host that encodes the rendered prompt with it counts a literal `<think>` in a message as one token, not the five or six its bytes merge to. `Count` does the same:
+
+- **Raw entries** (`normalized: false`) are matched in the text as given; **normalized entries** are matched in each gap between raw matches after that gap is normalized, by their normalized content. A gap normalizes on its own, as Hugging Face normalizes it.
+- **Matching** is leftmost first and longest at the same start, the trie's `LeftmostLongest`, over bytes, without overlaps.
+- **`lstrip` and `rstrip`** widen a match over the Unicode `White_Space` run before or after it, Rust's `\s`, which is Go's `unicode.IsSpace`.
+- **Every match is one token**; the text between matches is pre-tokenized and merged as before. An entry repeated in the file keeps its last flags, as Hugging Face's map by content does, and an empty one is skipped.
+- **Refused as `ErrUnsupported`:** a `single_word` entry, because its word test is Rust regex's Unicode `\w`, whose tables Go does not carry at the same version; and two normalized entries with the same normalized content, which Hugging Face's trie refuses to build. No pinned file has either.
+
+On MiniMax-M2.7, DeepSeek-V4-Flash-0731, GLM-5.3-Flash and Qwen2.5, `Count` matches Hugging Face `tokenizers` 0.23.3 on 26,135 texts, 22,775 of them holding added tokens: every entry of each file at the start, middle and end, adjacent, inside words, between spaces and line breaks, before a mark NFC composes with it, cut short by a byte at either end, and random mixes of entries and ordinary text. `TestCountSplitsOnAddedTokensAsHuggingFace` pins the same agreement on two testdata tokenizers that carry added tokens with every flag but `single_word`. `TestIDsMatchTheOriginal` compares with the original implementation, which counted added tokens as ordinary text, only the texts that hold none of the tokenizer's added tokens.
+
 ## Estimating a long prompt
 
 Up to `exactBudgetBytes` (64 KiB) in all, `MinimumTokens` counts every part exactly. Above it, it counts `sampleWindows` (8) windows of 8 KiB, one per eighth of the prompt, and scales their tokens per byte to the prompt's length. Each window starts at its own offset inside its eighth, `windowPhaseStep` (half a window) further than the window before it, so a prompt that alternates every few kilobytes is not sampled on one side of the alternation only. Parts are counted on their own, as the template separates messages, and a window that spans parts counts each share on its own.
@@ -45,16 +58,16 @@ The sampled estimate is what it costs to stay bounded, and it misses on a prompt
 
 ## The byte bound
 
-`MaximumTokens` is what a prompt's tokens can be at most, from its length alone, so the context check tokenizes only a prompt that bound does not clear. A pre-token is a stretch of the text, pre-tokens do not overlap, and the merge loop starts from one symbol per byte and only joins symbols, so `Count` of a text is at most the UTF-8 length of what it tokenizes: the text itself, or its NFC form for a tokenizer that normalizes. A special token's spelling in a message is counted as ordinary text, so the bound holds for it too; the chat template's own tokens are not part of either count.
+`MaximumTokens` is what a prompt's tokens can be at most, from its length alone, so the context check tokenizes only a prompt that bound does not clear. A pre-token is a stretch of the text, pre-tokens do not overlap, and the merge loop starts from one symbol per byte and only joins symbols, so `Count` of a text is at most the UTF-8 length of what it tokenizes: the text itself, or its NFC form for a tokenizer that normalizes. An added token is one token of at least one byte, so the bound holds for it too; the chat template's own tokens are not part of either count.
 
-- **Up to `exactBudgetBytes`** `MinimumTokens` is the sum of each part's `Count`, so the bound is the parts' bytes, after NFC for a tokenizer that normalizes.
+- **Up to `exactBudgetBytes`** `MinimumTokens` is the sum of each part's `Count`, so the bound is the parts' bytes, after NFC for a tokenizer that normalizes. NFC is taken per gap between raw added tokens, as `Count` takes it, not over the whole part: NFC of the whole can join a raw token's last character to the marks after it (a jamo token before its vowel and final turns 9 bytes into 3) while the token still counts one and the marks their own.
 - **Past it** `MinimumTokens` scales the sampled windows' tokens per byte to the prompt's raw length, so the bound is the raw length times the most a window's text can grow before it is counted: 1, or `nfcMaxExpansion` (3, the most NFC grows UTF-8 by, UAX #15) for a tokenizer that normalizes a prompt that is not all ASCII. A window of nothing but U+1D160, which NFC turns from 4 bytes into 12, comes close to it.
 
 The bound is loose, since a token usually covers several bytes, and costs one pass over the text, so a prompt is tokenized only when `max_tokens` and the template leave it less room in the context than its bytes.
 
 ## Bounds
 
-- **Work per call is bounded by the budget**, whatever the prompt's length: at most 64 KiB reach the pre-tokenizer and the merge loop. The worst case measured is a 64 KiB run the pre-tokenizer cannot split (64 KiB of spaces, one pre-token), 30–75 ms on a loaded Apple M4; mixed prose, code and CJK of the same size take 2–5 ms.
+- **Work per call is bounded by the budget**, whatever the prompt's length: at most 64 KiB reach the pre-tokenizer and the merge loop. The worst case measured is a 64 KiB run the pre-tokenizer cannot split (64 KiB of spaces, one pre-token), 30–75 ms on a loaded Apple M4; mixed prose, code and CJK of the same size take 2–5 ms. Finding added tokens walks the trie from each byte that starts one, as deep as the text follows an entry; its worst measured cost is 64 KiB of an unclosed DeepSeek placeholder prefix, 2.0 ms without added tokens and 4.5 ms with them.
 - **Nothing outlives a call.** A pre-token of up to `maxRememberedPiece` (64) bytes is remembered in a direct-mapped table of at most `maxMemoSlots` (65,536) slots, so a word that repeats within a text is usually merged once, and one that collides with another forgets it and is merged again; longer pre-tokens rarely repeat and are not remembered. The table is cleared when the call returns and pooled for the next call, so no prompt's words are retained.
 - **A `Counter` is immutable once loaded** and is shared by every request.
 - **`maxTokenizerBytes`** (64 MiB) bounds one `tokenizer.json` read; the largest pinned today is about 20 MB.

@@ -9,9 +9,11 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
+const decomposedSyllable = "\u1100\u1161\u11a8"
+
 var boundFragments = []string{
 	"the ", "quick ", "Шлюз ", "网关", "😀", "é", "ą́", "क़", "שּׁ", "\U0001d160",
-	"각", "̈́", "<|im_start|>", "<｜User｜>", "\n\n", "   ", `{"id":1,"tags":["a"]}`, "0123456789",
+	"각", "̈́", "<|im_start|>", "<｜User｜>", "<think>", "<e\u0301>", " [MASK]", "<sep> ", decomposedSyllable, "\n\n", "   ", `{"id":1,"tags":["a"]}`, "0123456789",
 }
 
 func randomBoundText(size int, rng *rand.Rand) string {
@@ -34,7 +36,7 @@ func splitIntoParts(text string, parts int) []string {
 }
 
 // Test flow:
-//  1. Load every testdata tokenizer, NFC and not, and build prompts of random ASCII, Cyrillic, CJK, emoji, special-token spellings, decomposed accents and characters NFC expands, and one of only the character NFC expands most, from empty to past exactBudgetBytes, in one to three parts.
+//  1. Load every testdata tokenizer, NFC and not, with added tokens and without, and build prompts of random ASCII, Cyrillic, CJK, emoji, special-token and added-token spellings, decomposed accents and characters NFC expands, one of only the character NFC expands most, and one of only a decomposed Hangul syllable, whose leading jamo is an added token NFC would otherwise compose, from empty to past exactBudgetBytes, in one to three parts.
 //  2. Take MaximumTokens and MinimumTokens of each.
 //  3. Assert MinimumTokens never exceeds MaximumTokens.
 func TestMaximumTokensBoundsMinimumTokensOnEveryText(t *testing.T) {
@@ -43,6 +45,7 @@ func TestMaximumTokensBoundsMinimumTokensOnEveryText(t *testing.T) {
 	builders := []func(size int) string{
 		func(size int) string { return randomBoundText(size, rng) },
 		func(size int) string { return strings.Repeat("\U0001d160", size/len("\U0001d160")) },
+		func(size int) string { return strings.Repeat(decomposedSyllable, size/len(decomposedSyllable)) },
 		func(size int) string { return norm.NFD.String(randomBoundText(size, rng)) },
 	}
 	texts := make([]string, 0, len(sizes)*len(builders))
@@ -51,7 +54,7 @@ func TestMaximumTokensBoundsMinimumTokensOnEveryText(t *testing.T) {
 			texts = append(texts, build(size))
 		}
 	}
-	for _, name := range []string{"isolated", "ignore-merges", "removed-nfc", "sequence"} {
+	for _, name := range []string{"isolated", "ignore-merges", "removed-nfc", "sequence", "added-tokens", "added-tokens-nfc"} {
 		counter := loadTestdata(t, name)
 		for index, text := range texts {
 			prompt := splitIntoParts(text, 1+index%3)

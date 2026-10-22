@@ -35,11 +35,13 @@ var memoSeed = maphash.MakeSeed()
 
 // Counter is one model's byte-level BPE tokenizer, kept only to count tokens. It is immutable once loaded.
 type Counter struct {
-	nfc        bool
-	splits     []splitRule
-	byteSymbol [byteValues]uint32
-	pairs      *pairTable
-	whole      map[string]struct{}
+	nfc                   bool
+	rawAddedTokens        addedTokens
+	normalizedAddedTokens addedTokens
+	splits                []splitRule
+	byteSymbol            [byteValues]uint32
+	pairs                 *pairTable
+	whole                 map[string]struct{}
 }
 
 type merge struct {
@@ -55,6 +57,7 @@ type splitRule struct {
 }
 
 type tokenizerFile struct {
+	AddedTokens  []addedTokenSpec `json:"added_tokens"`
 	Normalizer   *normalizerSpec  `json:"normalizer"`
 	PreTokenizer preTokenizerSpec `json:"pre_tokenizer"`
 	Model        struct {
@@ -128,6 +131,9 @@ func Load(r io.Reader) (*Counter, error) {
 	counter := &Counter{pairs: newPairTable(len(model.Merges))}
 	var err error
 	if counter.nfc, err = normalizes(file.Normalizer); err != nil {
+		return nil, err
+	}
+	if counter.rawAddedTokens, counter.normalizedAddedTokens, err = addedTokenSets(file.AddedTokens, counter.nfc); err != nil {
 		return nil, err
 	}
 	if counter.splits, err = splitRules(file.PreTokenizer); err != nil {
@@ -279,13 +285,13 @@ func byteSymbols() [byteValues]string {
 
 func pairKey(left, right uint32) uint64 { return uint64(left)<<pairKeyShift | uint64(right) }
 
-// Count returns text's exact token count, without the special tokens a chat template adds.
+// Count returns text's exact token count, without the special tokens a chat template adds; an added token's content in text is one token.
 func (c *Counter) Count(text string) (int, error) {
-	pieces, err := c.preTokens(text)
+	pieces, added, err := c.preTokens(text)
 	if err != nil {
 		return 0, err
 	}
-	return c.countPieces(pieces), nil
+	return added + c.countPieces(pieces), nil
 }
 
 func (c *Counter) countPieces(pieces []string) int {
@@ -335,25 +341,30 @@ func memoSlots(pieces int) int {
 	return min(maxMemoSlots, max(minMemoSlots, 1<<bits.Len(uint(pieces/memoPiecesPerSlot))))
 }
 
-// preTokens is the text, normalized, cut by every split rule in turn.
-func (c *Counter) preTokens(text string) ([]string, error) {
-	if c.nfc {
-		text = norm.NFC.String(text)
+// preTokens is the text cut at its added tokens, each gap normalized and cut at its normalized added tokens, then cut by every split rule in turn; added is how many added tokens it held.
+func (c *Counter) preTokens(text string) (pieces []string, added int, err error) {
+	gaps, added := c.rawAddedTokens.split(text, nil)
+	pieces = make([]string, 0, len(gaps))
+	for _, gap := range gaps {
+		if c.nfc {
+			gap = norm.NFC.String(gap)
+		}
+		var found int
+		pieces, found = c.normalizedAddedTokens.split(gap, pieces)
+		added += found
 	}
-	pieces := []string{text}
 	var runes []rune
 	for _, rule := range c.splits {
 		next := make([]string, 0, len(pieces))
 		for _, piece := range pieces {
-			var err error
 			next, runes, err = rule.split(next, piece, runes)
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 		}
 		pieces = next
 	}
-	return pieces, nil
+	return pieces, added, nil
 }
 
 func (r splitRule) split(into []string, piece string, runes []rune) ([]string, []rune, error) {

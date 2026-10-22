@@ -49,9 +49,19 @@ func (c *Counter) MaximumTokens(prompt []string) uint64 {
 	}
 	normalized := 0
 	for _, part := range prompt {
-		normalized += len(norm.NFC.String(part))
+		normalized += c.normalizedBytes(part)
 	}
 	return uint64(normalized)
+}
+
+// normalizedBytes is text's length with each gap between its raw added tokens in NFC, as Count normalizes it; an added token is one token of at least one byte.
+func (c *Counter) normalizedBytes(text string) int {
+	gaps, _ := c.rawAddedTokens.split(text, nil)
+	total := len(text)
+	for _, gap := range gaps {
+		total += len(norm.NFC.String(gap)) - len(gap)
+	}
+	return total
 }
 
 func isASCII(text string) bool {

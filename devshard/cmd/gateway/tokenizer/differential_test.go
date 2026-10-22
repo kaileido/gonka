@@ -1,6 +1,7 @@
 package tokenizer
 
 import (
+	"errors"
 	"fmt"
 	"math/rand/v2"
 	"os"
@@ -38,7 +39,7 @@ const (
 	randomBreakOneIn            = 4
 )
 
-var differentialTestdataNames = []string{"isolated", "ignore-merges", "removed-nfc", "sequence"}
+var differentialTestdataNames = []string{"isolated", "ignore-merges", "removed-nfc", "sequence", "added-tokens", "added-tokens-nfc"}
 
 var differentialNamedTexts = map[string]string{
 	"empty":            "",
@@ -270,15 +271,20 @@ func variantPieceIDs(c *Counter, piece string, scratch *mergeScratch) []uint32 {
 	return ids
 }
 
+var errHoldsAddedTokens = errors.New("text holds added tokens, which the original counts as ordinary text")
+
 func compareWithOriginal(r *referenceCounter, text string) error {
 	c := r.Counter
 	wantPieces, err := r.originalPreTokens(text)
 	if err != nil {
 		return fmt.Errorf("original split: %w", err)
 	}
-	gotPieces, err := c.preTokens(text)
+	gotPieces, added, err := c.preTokens(text)
 	if err != nil {
 		return fmt.Errorf("split: %w", err)
+	}
+	if added > 0 {
+		return errHoldsAddedTokens
 	}
 	if !slices.Equal(gotPieces, wantPieces) {
 		return fmt.Errorf("pre-tokens differ for %d-byte text: got %d, want %d", len(text), len(gotPieces), len(wantPieces))
@@ -307,28 +313,32 @@ func compareWithOriginal(r *referenceCounter, text string) error {
 // Test flow:
 //  1. Load every testdata tokenizer and every tokenizer.json in GATEWAY_TOKENIZER_DIR, each with the c66c386bc implementation frozen beside it.
 //  2. Build the inputs: named texts in every script and shape with their short prefixes, long runs, the seed, golden and bench texts, random UTF-8, random valid text, random bytes, mutated fragments, and windows of the corpora in GATEWAY_BENCH_CORPUS_DIR.
-//  3. For each tokenizer and input, assert the current pre-tokens and full token ID sequence equal the original's (regexp2 split, heap merge).
+//  3. For each tokenizer and input that holds none of its added tokens, assert the current pre-tokens and full token ID sequence equal the original's (regexp2 split, heap merge).
 //  4. Assert Count, called twice so the second call meets the pooled memo, equals the number of IDs.
 func TestIDsMatchTheOriginal(t *testing.T) {
 	inputs := differentialInputs(t)
 	for _, tokenizer := range differentialTokenizers(t) {
-		mismatches := 0
+		mismatches, skipped := 0, 0
 		for _, input := range inputs {
-			if err := compareWithOriginal(tokenizer.reference, input.text); err != nil {
+			err := compareWithOriginal(tokenizer.reference, input.text)
+			switch {
+			case errors.Is(err, errHoldsAddedTokens):
+				skipped++
+			case err != nil:
 				mismatches++
 				if mismatches <= differentialMaxReported {
 					t.Errorf("%s / %s: %v", tokenizer.name, input.name, err)
 				}
 			}
 		}
-		t.Logf("%s: %d inputs, %d mismatches", tokenizer.name, len(inputs), mismatches)
+		t.Logf("%s: %d inputs, %d with added tokens skipped, %d mismatches", tokenizer.name, len(inputs), skipped, mismatches)
 	}
 }
 
 // Test flow:
 //  1. Skip unless GATEWAY_TOKENIZER_SWEEP is set; it is the exhaustive sweep.
 //  2. For every Unicode scalar value, build texts that put it first, last, between letters, digits, spaces and line breaks, and after contraction quotes.
-//  3. For each tokenizer and text, assert the pre-tokens, IDs and Count equal the original's.
+//  3. For each tokenizer and text that holds none of its added tokens, assert the pre-tokens, IDs and Count equal the original's.
 func TestIDsMatchTheOriginalOnEveryRune(t *testing.T) {
 	if os.Getenv(sweepVariable) == "" {
 		t.Skipf("set %s to sweep every rune", sweepVariable)
@@ -346,7 +356,8 @@ func TestIDsMatchTheOriginalOnEveryRune(t *testing.T) {
 					for _, context := range sweepContexts {
 						text := strings.Replace(context, "%s", string(value), 1)
 						compared.Add(1)
-						if err := compareWithOriginal(tokenizer.reference, text); err != nil && mismatches.Add(1) <= differentialMaxReported {
+						err := compareWithOriginal(tokenizer.reference, text)
+						if err != nil && !errors.Is(err, errHoldsAddedTokens) && mismatches.Add(1) <= differentialMaxReported {
 							t.Errorf("%s: U+%04X in %q: %v", tokenizer.name, value, context, err)
 						}
 					}
@@ -365,7 +376,7 @@ var (
 
 // Test flow:
 //  1. Load the tokenizers once, and seed the corpus with the golden and short named texts.
-//  2. For each fuzzed text and tokenizer index, compare the current pre-tokens, IDs and Count with the original's.
+//  2. For each fuzzed text and tokenizer index, skip a text that holds the tokenizer's added tokens, and compare the current pre-tokens, IDs and Count with the original's.
 //  3. Fail on the first difference.
 func FuzzIDsMatchTheOriginal(f *testing.F) {
 	fuzzTokenizersOnce.Do(func() { fuzzTokenizers = differentialTokenizers(f) })
@@ -382,7 +393,11 @@ func FuzzIDsMatchTheOriginal(f *testing.F) {
 			t.Skip()
 		}
 		tokenizer := fuzzTokenizers[int(which)%len(fuzzTokenizers)]
-		if err := compareWithOriginal(tokenizer.reference, text); err != nil {
+		err := compareWithOriginal(tokenizer.reference, text)
+		if errors.Is(err, errHoldsAddedTokens) {
+			t.Skip()
+		}
+		if err != nil {
 			t.Fatalf("%s: %v", tokenizer.name, err)
 		}
 	})
