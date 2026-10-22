@@ -11,7 +11,6 @@ const (
 	exactBudgetBytes        = 64 << 10
 	sampleWindows           = 8
 	windowBytes             = exactBudgetBytes / sampleWindows
-	windowPhaseStep         = windowBytes / 2
 	sampledOvercountPercent = 7
 	wholePercent            = 100
 )
@@ -85,7 +84,7 @@ func (c *Counter) estimate(prompt []string) (tokens uint64, sampled bool, err er
 	span := total / sampleWindows
 	var sampledTokens, sampledBytes uint64
 	for window := range sampleWindows {
-		start := window*span + (window*windowPhaseStep)%(span-windowBytes+1)
+		start := windowStart(window, span)
 		windowTokens, windowBytesCounted, err := c.countRange(prompt, start, start+windowBytes)
 		if err != nil {
 			return 0, true, err
@@ -94,6 +93,11 @@ func (c *Counter) estimate(prompt []string) (tokens uint64, sampled bool, err er
 		sampledBytes += windowBytesCounted
 	}
 	return (sampledTokens*uint64(total) + sampledBytes/2) / max(sampledBytes, 1), true, nil
+}
+
+// windowStart places window inside its span-byte eighth: the first at the eighth's start, the last ending at its end, the others evenly between.
+func windowStart(window, span int) int {
+	return window*span + window*(span-windowBytes)/(sampleWindows-1)
 }
 
 func (c *Counter) countRange(prompt []string, start, end int) (tokens, bytesCounted uint64, err error) {
