@@ -127,7 +127,7 @@ func (attempt *liveAttempt) recordDeadlines(outcome *AttemptOutcome) {
 // An attempt goroutine knows only its own cancellation, not the crown, the silence, the backstop or the nonce's finish.
 func (c *raceCoordinator) racedTerminal(attempt *liveAttempt, outcome AttemptOutcome) Terminal {
 	terminal := outcome.Terminal
-	if terminal == TerminalLost && attempt.cutShort(outcome) {
+	if terminal == TerminalLost && attempt.answerTruncated(outcome) {
 		terminal = TerminalStreamTruncated
 	}
 	if terminal == TerminalClientCancelled && attempt.backstopped {
@@ -142,7 +142,7 @@ func (c *raceCoordinator) racedTerminal(attempt *liveAttempt, outcome AttemptOut
 	return terminal
 }
 
-func (attempt *liveAttempt) cutShort(outcome AttemptOutcome) bool {
+func (attempt *liveAttempt) answerTruncated(outcome AttemptOutcome) bool {
 	return !outcome.HostTerminated && !attempt.nonceFinished
 }
 

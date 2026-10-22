@@ -5,14 +5,17 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+
+	"devshard/cmd/gateway/filters"
+	"devshard/cmd/gateway/limits"
 )
 
 // Test flow:
 //  1. For each host script in the table (content then [DONE], content on a finished nonce, both, and neither), run a one-host race through the engine.
-//  2. Assert the error Run returns, the status that error maps to, whether the race succeeded, and the winner's terminal.
+//  2. Assert the error Run returns, the status that error maps to, whether the race succeeded, the winner's terminal, and the verdict the limiter reads from it.
 //  3. Assert a winner whose nonce is unfinished is still planned a posted timeout vote.
-func TestAnAnswerCutShortFailsTheRace(t *testing.T) {
-	const sseDone = "data: [DONE]\n\n"
+func TestATruncatedAnswerFailsTheRace(t *testing.T) {
+	sseDone := string(filters.SSEDoneEvent)
 	testCases := []struct {
 		name          string
 		chunks        []string
@@ -21,11 +24,12 @@ func TestAnAnswerCutShortFailsTheRace(t *testing.T) {
 		wantStatus    int
 		wantSucceeded bool
 		wantTerminal  Terminal
+		wantVerdict   limits.Verdict
 	}{
-		{name: "a finished answer", chunks: []string{roleEvent, contentEvent("whole"), sseDone}, finished: true, wantStatus: http.StatusOK, wantSucceeded: true, wantTerminal: TerminalWon},
-		{name: "a terminated answer on an unfinished nonce", chunks: []string{roleEvent, contentEvent("whole"), sseDone}, wantStatus: http.StatusOK, wantSucceeded: true, wantTerminal: TerminalWon},
-		{name: "an unterminated answer on a finished nonce", chunks: []string{roleEvent, contentEvent("whole")}, finished: true, wantStatus: http.StatusOK, wantSucceeded: true, wantTerminal: TerminalWon},
-		{name: "an answer cut short", chunks: []string{roleEvent, contentEvent("half")}, wantErr: ErrAnswerTruncated, wantStatus: http.StatusBadGateway, wantTerminal: TerminalStreamTruncated},
+		{name: "a finished answer", chunks: []string{roleEvent, contentEvent("whole"), sseDone}, finished: true, wantStatus: http.StatusOK, wantSucceeded: true, wantTerminal: TerminalWon, wantVerdict: limits.Success},
+		{name: "a terminated answer on an unfinished nonce", chunks: []string{roleEvent, contentEvent("whole"), sseDone}, wantStatus: http.StatusOK, wantSucceeded: true, wantTerminal: TerminalWon, wantVerdict: limits.ModelOutcome},
+		{name: "an unterminated answer on a finished nonce", chunks: []string{roleEvent, contentEvent("whole")}, finished: true, wantStatus: http.StatusOK, wantSucceeded: true, wantTerminal: TerminalWon, wantVerdict: limits.Success},
+		{name: "a truncated answer", chunks: []string{roleEvent, contentEvent("half")}, wantErr: ErrAnswerTruncated, wantStatus: http.StatusBadGateway, wantTerminal: TerminalStreamTruncated, wantVerdict: limits.TransportFault},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -41,7 +45,7 @@ func TestAnAnswerCutShortFailsTheRace(t *testing.T) {
 			reported := sim.reported(t)
 			sim.settleAll()
 
-			if !errors.Is(err, testCase.wantErr) || (testCase.wantErr == nil && err != nil) {
+			if !errors.Is(err, testCase.wantErr) {
 				t.Fatalf("Run() error = %v, want %v", err, testCase.wantErr)
 			}
 			if status := StatusForError(err); status != testCase.wantStatus {
@@ -59,6 +63,9 @@ func TestAnAnswerCutShortFailsTheRace(t *testing.T) {
 			}
 			if winner.Terminal != testCase.wantTerminal {
 				t.Errorf("winner terminal = %v, want %v", winner.Terminal, testCase.wantTerminal)
+			}
+			if verdict, _ := reported.Verdict(winner); verdict != testCase.wantVerdict {
+				t.Errorf("winner verdict = %v, want %v", verdict, testCase.wantVerdict)
 			}
 			if testCase.finished {
 				return

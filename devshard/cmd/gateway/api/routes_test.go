@@ -338,7 +338,7 @@ func TestAStreamCarriesTheTerminatorOnEveryExit(t *testing.T) {
 //  2. POST the chat once buffered and once streaming.
 //  3. Assert the buffered reply is 502 with the error's message and none of the partial content.
 //  4. Assert the stream keeps the content, ends with the error event, and carries no [DONE].
-func TestAnAnswerCutShortReachesTheClientAsAnError(t *testing.T) {
+func TestATruncatedAnswerReachesTheClientAsAnError(t *testing.T) {
 	const partial = "data: {\"choices\":[{\"delta\":{\"content\":\"half\"}}]}\n\n"
 
 	buffered := newHarness(t)
@@ -364,7 +364,7 @@ func TestAnAnswerCutShortReachesTheClientAsAnError(t *testing.T) {
 		t.Fatalf("streamed body = %q, want it to end with %q", body, wantTail)
 	}
 	if strings.Contains(body, "[DONE]") {
-		t.Fatalf("streamed body = %q, want no terminator on an answer cut short", body)
+		t.Fatalf("streamed body = %q, want no terminator on a truncated answer", body)
 	}
 }
 
