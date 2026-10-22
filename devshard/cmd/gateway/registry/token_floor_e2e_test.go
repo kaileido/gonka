@@ -58,7 +58,7 @@ func TestWhatTheFiltersProduceTheChainAccepts(t *testing.T) {
 //  1. Build a live stream over a real state machine and advance it with a ghost intent.
 //  2. Assert the commit succeeds and the committed record reserves `state.MinReservationTokens` and costs that reservation at the escrow's token price.
 //  3. Assert the payload a refusal-timeout verifier rebuilds for that nonce passes `host.VerifyPayload` against the committed record.
-func TestAGhostBurnReservesTheChainFloor(t *testing.T) {
+func TestAGhostBurnReservesTheStateMachineFloor(t *testing.T) {
 	stream, session, _ := newLiveStream(t, 1, 1, 1)
 
 	prepared, err := stream.Advance(func(scheduler.HostBinding) scheduler.NonceIntent {
@@ -76,7 +76,7 @@ func TestAGhostBurnReservesTheChainFloor(t *testing.T) {
 		t.Fatalf("no committed record for burned nonce %d", prepared.Nonce())
 	}
 	if record.MaxTokens != state.MinReservationTokens {
-		t.Errorf("ghost MaxTokens = %d, want the chain floor %d", record.MaxTokens, state.MinReservationTokens)
+		t.Errorf("ghost MaxTokens = %d, want the state machine floor %d", record.MaxTokens, state.MinReservationTokens)
 	}
 	wantCost, err := state.ReservedCost(uint64(len(ghostPrompt)), state.MinReservationTokens, machine.Config().TokenPrice)
 	if err != nil {

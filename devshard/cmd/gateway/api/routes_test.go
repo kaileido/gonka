@@ -283,7 +283,7 @@ func TestANonStreamingReplyIsStrippedOfItsInternalFields(t *testing.T) {
 //  2. For each case, POST a streaming chat completion with that outcome.
 //  3. Assert the body ends with the case's expected tail.
 //  4. Where specified, assert the terminator appears exactly once.
-func TestAStreamCarriesTheTerminatorOnEveryExit(t *testing.T) {
+func TestAStreamCarriesTheTerminatorOnEveryExitButATruncatedAnswer(t *testing.T) {
 	testCases := []struct {
 		name     string
 		chunks   []string

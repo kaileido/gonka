@@ -167,7 +167,6 @@ func (c *clientStream) Fail(cause error) error {
 	if _, err := c.emitLocked(errorEvent(cause)); err != nil {
 		return err
 	}
-	// A [DONE] would tell a client that skips error events the answer was whole.
 	if errors.Is(cause, engine.ErrAnswerTruncated) {
 		c.flushLocked()
 		return tailErr

@@ -252,7 +252,7 @@ func TestGhostPromptAgreesWithItsReservation(t *testing.T) {
 		t.Errorf("ghostPrompt max_tokens = %d, reservation = %d", body.MaxTokens, ghostMaxTokens)
 	}
 	if ghostMaxTokens < state.MinReservationTokens {
-		t.Errorf("ghostMaxTokens = %d, below the floor %d the chain refuses", ghostMaxTokens, state.MinReservationTokens)
+		t.Errorf("ghostMaxTokens = %d, below the floor %d the state machine refuses", ghostMaxTokens, state.MinReservationTokens)
 	}
 }
 
