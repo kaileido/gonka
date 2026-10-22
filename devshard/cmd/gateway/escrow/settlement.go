@@ -68,7 +68,7 @@ func (m *Manager) settleParked(ctx context.Context, parked []pendingSettle) erro
 		settling.Go(func() {
 			defer settle.leave()
 			_, err := m.settleAndDrop(ctx, settle.record, settle.urgent)
-			if err == nil || nothingLeftToSettle(err) || errors.Is(err, store.ErrDevshardNotFound) {
+			if err == nil || nothingLeftToSettle(err) || deferredRetire(err) || errors.Is(err, store.ErrDevshardNotFound) {
 				return
 			}
 			collected.Lock()
@@ -296,7 +296,7 @@ func (m *Manager) settleAndDrop(ctx context.Context, record store.DevshardRecord
 func (m *Manager) alreadySettled(ctx context.Context, record store.DevshardRecord) (string, bool, error) {
 	hash, broadcastAt, err := m.store.DevshardSettleTxHash(ctx, record.EscrowID)
 	if err != nil {
-		return "", false, err
+		return "", false, fmt.Errorf("reading settle tx of escrow %s: %w", record.EscrowID, err)
 	}
 	if hash == "" {
 		return "", false, nil

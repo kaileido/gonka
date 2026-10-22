@@ -7,6 +7,14 @@ type ejectionState struct {
 	ejectedUntil  time.Time
 	ejectionCount int
 	wasWithheld   bool
+	trigger       ejectionTrigger
+}
+
+type ejectionTrigger struct {
+	reason              string
+	consecutiveFailures int
+	failureRate         float64
+	failureVolume       float64
 }
 
 type ejectionPolicy struct {
@@ -28,21 +36,25 @@ func newEjectionPolicy(consecutiveFailThreshold int, failureRateThreshold, failu
 }
 
 func (p ejectionPolicy) evaluate(h *hostPerf, state *ejectionState, now time.Time) {
-	rate, volume := h.failureRate(now)
-	triggered := h.consecutiveFail >= p.consecutiveFailThreshold ||
-		(volume >= p.failureRateMinVolume && rate >= p.failureRateThreshold)
-
-	if triggered {
-		if !state.ejected(now) {
-			state.ejectionCount++
-			state.ejectedUntil = now.Add(min(p.base*time.Duration(state.ejectionCount), p.max))
-			h.resetOutcomeCounters()
-		}
+	if state.ejected(now) {
+		h.resetOutcomeCounters()
 		return
 	}
-	if !state.ejected(now) {
+	rate, volume := h.failureRate(now)
+	consecutiveTripped := h.consecutiveFail >= p.consecutiveFailThreshold
+	rateTripped := volume >= p.failureRateMinVolume && rate >= p.failureRateThreshold
+	if !consecutiveTripped && !rateTripped {
 		state.decayEjectionCount(p.max, now)
+		return
 	}
+	reason := ejectionReasonFailureRate
+	if consecutiveTripped {
+		reason = ejectionReasonConsecutiveFailures
+	}
+	state.ejectionCount++
+	state.ejectedUntil = now.Add(min(p.base*time.Duration(state.ejectionCount), p.max))
+	state.trigger = ejectionTrigger{reason: reason, consecutiveFailures: h.consecutiveFail, failureRate: rate, failureVolume: volume}
+	h.resetOutcomeCounters()
 }
 
 func (s *ejectionState) ejected(now time.Time) bool {

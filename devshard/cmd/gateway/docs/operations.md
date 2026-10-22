@@ -309,7 +309,7 @@ On the first chain snapshot and whenever the effective epoch moves forward, one 
 
 ## Logs
 
-The gateway writes a line for every event that **moves money, changes what it will serve, or is an operator's own doing** — and for very little else. Failures on the money path are not logged separately: each is returned as an error naming its own step (`resolving signer for escrow X`, `building settlement for escrow X`) and the escrow tick logs the joined result once. A success has no such carrier, which is why the successful transitions are the ones written down.
+The gateway writes a line for every event that **moves money, changes what it will serve, or is an operator's own doing** — and for very little else. Failures on the money path are not logged separately: each is returned as an error naming its own step (`resolving signer for escrow X`, `building settlement for escrow X`) and the escrow tick logs the joined result once as `escrow tick failed`. A busy or in-flight settle is deferred to a later tick, not a failure, and is not part of it. A success has no such carrier, which is why the successful transitions are the ones written down.
 
 Lines are JSON objects by default. Promtail lifts `level` into a Loki label (`deploy/join/observability/promtail-config.yaml`), and the Loki panels parse the rest with `| json`, so a gateway switched to `DEVSHARD_LOG_FORMAT=text` empties those panels.
 
@@ -339,7 +339,7 @@ Three mechanisms withhold work from a host, each on its own trigger, and each is
 
 | Line | Trigger | Carries |
 | --- | --- | --- |
-| `host withheld from routing` (`perf/tracker.go`) | five failures in a row, or a failure rate from 15% over a volume from 20 | **Warn** — which trigger fired, the rung, the run length, the rate and its volume, and how long the withholding lasts |
+| `host withheld from routing` (`perf/tracker.go`) | five failures in a row, or a failure rate from 15% over a volume from 20 | **Warn** — which trigger fired, the rung, the run length, the rate and its volume that tripped it, and how long the withholding lasts |
 | `host back in routing` (`perf/tracker.go`) | first sample after the withholding lapsed | the rung it decayed to |
 | `host cut off after transport faults` (`limits/reaction.go`) | three cut-off faults in a row — a transport fault, an empty answer that left its nonce open, or a `429`/`503` from a host that carried nothing else of ours for this model when it refused — or one failed half-open probe | **Warn** — which of the two, the backoff depth, and how long the cut-off lasts. The line's name and its `consecutive_transport_faults` reason are what dashboards and log queries match on, so both keep the wording they have whatever the run was made of |
 | `host back after its cut-off` (`limits/reaction.go`) | the probe answered | the backoff depth it decayed to |

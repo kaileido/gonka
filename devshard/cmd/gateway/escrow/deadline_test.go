@@ -245,7 +245,7 @@ func (source *recordingSettlementSource) IsBusy(escrowID string) bool {
 // Test flow:
 //  1. Store five parked rows of chain epoch 8 outside any margin and two of chain epoch 7 inside the margin of the switch into epoch 9, every escrow still busy.
 //  2. Settle the pending rows once.
-//  3. Assert the two inside the margin were finalized despite being busy, and the four earliest of the other five by deadline order were tried and deferred as busy: the budget counted only them.
+//  3. Assert the two inside the margin were finalized despite being busy, and the four earliest of the other five by deadline order were tried and deferred as busy, which is no tick failure: the budget counted only them.
 func TestPendingSettlesRunWithTheMarginForcedAndUnbudgeted(t *testing.T) {
 	testStore := newFakeStore()
 	devshards := make([]store.DevshardRecord, 0, 7)
@@ -270,8 +270,8 @@ func TestPendingSettlesRunWithTheMarginForcedAndUnbudgeted(t *testing.T) {
 	}
 	err := manager.settlePending(context.Background(), snapshotBeforeTheSwitch, devshards)
 
-	if !errors.Is(err, ErrDevshardBusy) {
-		t.Fatalf("settlePending() = %v, want the deferred busy settles reported", err)
+	if err != nil {
+		t.Fatalf("settlePending() = %v, want nil: deferred busy settles are no tick failure", err)
 	}
 	slices.Sort(source.finalized)
 	if !slices.Equal(source.finalized, []string{"30", "31"}) {

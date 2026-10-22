@@ -262,3 +262,39 @@ func TestInvariantQuarantineReasonFollowsTheBackgroundWindowThatProducesIt(t *te
 	require.False(t, marker.Passed)
 	require.Equal(t, "mismatched=2", marker.Actual)
 }
+
+// Test flow:
+//  1. For each case, build gateway samples of one participant's attempt-failure counter, one every 10 seconds, with a fault window from 60 s to 120 s.
+//  2. Leave the participant's series out of the samples whose case value is nil.
+//  3. Assert attemptFailuresIncreased reports an increase exactly when the counter rose inside the window, counting a restart's drop as new failures.
+func TestAttemptFailuresIncreasedIsResetAware(t *testing.T) {
+	const participant = "gonka1hang"
+	start := time.Date(2026, 10, 22, 20, 35, 0, 0, time.UTC)
+	span := timeSpan{From: start.Add(60 * time.Second), To: start.Add(120 * time.Second)}
+	value := func(v float64) *float64 { return &v }
+	cases := []struct {
+		name   string
+		values []*float64
+		want   bool
+	}{
+		{name: "restart inside the window, then new failures", values: []*float64{value(61), value(61), value(61), value(61), value(61), value(61), value(61), value(61), value(0), value(3), value(21), value(21), value(21)}, want: true},
+		{name: "flat through the window", values: []*float64{value(61), value(61), value(61), value(61), value(61), value(61), value(61), value(61), value(61), value(61), value(61), value(61), value(61)}, want: false},
+		{name: "restart inside the window, no new failures", values: []*float64{value(61), value(61), value(61), value(61), value(61), value(61), value(61), value(61), value(0), value(0), value(0), value(0), value(0)}, want: false},
+		{name: "plain rise inside the window", values: []*float64{value(5), value(5), value(5), value(5), value(5), value(5), value(5), value(5), value(9), value(9), value(9), value(9), value(9)}, want: true},
+		{name: "series missing from one sample", values: []*float64{value(61), value(61), value(61), value(61), value(61), value(61), value(61), nil, value(61), value(61), value(61), value(61), value(61)}, want: false},
+		{name: "first failures inside the window", values: []*float64{nil, nil, nil, nil, nil, nil, nil, value(2), value(2), value(2), value(2), value(2), value(2)}, want: true},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			var in InvariantInputs
+			for index, counter := range testCase.values {
+				sample := MetricsSample{At: start.Add(time.Duration(index) * 10 * time.Second), Target: "gateway", Domain: map[string]float64{}}
+				if counter != nil {
+					sample.Domain[attemptFailureKey(participant, "empty_stream")] = *counter
+				}
+				in.Metrics = append(in.Metrics, sample)
+			}
+			require.Equal(t, testCase.want, newInvariantContext(in).attemptFailuresIncreased(participant, span))
+		})
+	}
+}

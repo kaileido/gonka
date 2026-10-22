@@ -253,3 +253,73 @@ func TestEjectionPolicyEvaluateDoesNotReEjectOnFirstSuccessAfterRateTrigger(t *t
 		t.Fatal("ejected() after one success right after rejoin = true, want false (stale decayed failures must not re-trigger the rate check)")
 	}
 }
+
+// Test flow:
+//  1. Build an ejection policy with a consecutive-fail threshold of 5 and a failure-rate threshold of 0.15 over a minimum volume of 20.
+//  2. Record 5 failures and evaluate, so the consecutive trigger ejects the host at rung 1.
+//  3. Record 4 more failures while the host is still ejected, as attempts in flight at the trigger would.
+//  4. After the ejection lapses, record 30 successes, evaluating after each.
+//  5. Assert the host is never ejected again and stays at rung 1.
+func TestEjectionPolicyEvaluateJudgesReleasedHostOnlyOnOutcomesAfterRelease(t *testing.T) {
+	policy := newEjectionPolicy(5, 0.15, 20, 30*time.Second, 120*time.Second)
+	h := newHostPerf(10 * time.Minute)
+	state := &ejectionState{}
+	recordFailures(h, 5, testEpoch)
+	policy.evaluate(h, state, testEpoch)
+	if !state.ejected(testEpoch) {
+		t.Fatal("ejected() after 5 consecutive failures = false, want true")
+	}
+
+	duringEjection := testEpoch.Add(10 * time.Second)
+	for range 4 {
+		h.recordSample(Sample{Responsive: false}, duringEjection)
+		policy.evaluate(h, state, duringEjection)
+	}
+
+	released := state.ejectedUntil
+	for index := range 30 {
+		at := released.Add(time.Duration(index+1) * 500 * time.Millisecond)
+		h.recordSample(Sample{Responsive: true}, at)
+		policy.evaluate(h, state, at)
+		if state.ejected(at) {
+			t.Fatalf("re-ejected at rung %d after %d successes since release, want no ejection", state.ejectionCount, index+1)
+		}
+	}
+	if state.ejectionCount != 1 {
+		t.Fatalf("ejectionCount after a clean release = %d, want 1", state.ejectionCount)
+	}
+}
+
+// Test flow:
+//  1. Build an ejection policy driven only by failure rate, with a minimum volume of 20.
+//  2. Record 25 failures and evaluate, so the host is ejected at rung 1.
+//  3. Record 4 more failures while the host is still ejected.
+//  4. After the ejection lapses, record 19 failures at one instant, evaluating after each, and assert the host is not ejected below the minimum volume.
+//  5. Record a 20th failure and assert the host is ejected again at rung 2.
+func TestEjectionPolicyEvaluateReEjectsHostStillFailingAfterRelease(t *testing.T) {
+	policy := newEjectionPolicy(1000, 0.15, 20, 30*time.Second, 120*time.Second)
+	h := newHostPerf(10 * time.Minute)
+	state := &ejectionState{}
+	recordFailures(h, 25, testEpoch)
+	policy.evaluate(h, state, testEpoch)
+
+	duringEjection := testEpoch.Add(10 * time.Second)
+	for range 4 {
+		h.recordSample(Sample{Responsive: false}, duringEjection)
+		policy.evaluate(h, state, duringEjection)
+	}
+
+	at := state.ejectedUntil.Add(time.Second)
+	for range 19 {
+		h.recordSample(Sample{Responsive: false}, at)
+		policy.evaluate(h, state, at)
+	}
+	if state.ejected(at) {
+		t.Fatal("ejected() after 19 failures since release (minimum volume 20) = true, want false")
+	}
+	h.recordSample(Sample{Responsive: false}, at)
+	policy.evaluate(h, state, at)
+	if !state.ejected(at) || state.ejectionCount != 2 {
+		t.Fatalf("after 20 failures since release: ejected=%v count=%d, want ejected at rung 2", state.ejected(at), state.ejectionCount)
+	}
+}

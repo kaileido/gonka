@@ -63,6 +63,28 @@ func TestEjectionIsNarratedWhenItStarts(t *testing.T) {
 }
 
 // Test flow:
+//  1. Build a tracker with a no-cap perf config and a recording narrator attached.
+//  2. Record failure, failure, success, failure, success for participant-a/model-a, so the failure rate trips at the minimum volume with no consecutive-failure run.
+//  3. Assert exactly one withholding was narrated, with reason "failure_rate", the rate 0.6 and the volume 5 that tripped it, and no consecutive failures.
+func TestFailureRateEjectionIsNarratedWithTheRateThatTrippedIt(t *testing.T) {
+	perf := noCap(testPerf())
+	tracker := newTestTracker(perf, fixedNow(testEpoch))
+	narrator := &recordingHostNarrator{}
+	tracker.SetNarrator(narrator)
+
+	for _, responsive := range []bool{false, false, true, false, true} {
+		tracker.RecordSample(Sample{ParticipantKey: "participant-a", Model: "model-a", Responsive: responsive})
+	}
+
+	require.Len(t, narrator.withheld, 1)
+	withheld := narrator.withheld[0]
+	require.Equal(t, "failure_rate", withheld.Reason)
+	require.InDelta(t, 0.6, withheld.FailureRate, 1e-9)
+	require.InDelta(t, 5.0, withheld.FailureVolume, 1e-9)
+	require.Equal(t, 0, withheld.ConsecutiveFailures)
+}
+
+// Test flow:
 //  1. Build a tracker and eject participant-a/model-a via consecutive failures before attaching a recording narrator.
 //  2. Advance the clock past the ejection window and record one responsive sample.
 //  3. Assert the narrator recorded exactly one return for participant-a/model-a.
@@ -150,4 +172,25 @@ func TestAnUnnarratedTrackerStillWithholds(t *testing.T) {
 	failAllConsecutive(tracker, "participant-a", "model-a", perf.ConsecutiveFailThreshold)
 
 	require.True(t, tracker.Ejected("participant-a", "model-a"))
+}
+
+// Test flow:
+//  1. Build a tracker with a no-cap perf config and a recording narrator attached.
+//  2. Record five failures for participant-a/model-a with the consecutive-failure threshold raised to five, so the run and the failure rate both trip on the fifth.
+//  3. Assert exactly one withholding was narrated, with reason "consecutive_failures", a run of five, and the rate 1 over the volume 5 that tripped with it.
+func TestEjectionTrippedByBothTriggersIsNarratedAsConsecutiveFailures(t *testing.T) {
+	perf := noCap(testPerf())
+	perf.ConsecutiveFailThreshold = 5
+	tracker := newTestTracker(perf, fixedNow(testEpoch))
+	narrator := &recordingHostNarrator{}
+	tracker.SetNarrator(narrator)
+
+	failAllConsecutive(tracker, "participant-a", "model-a", perf.ConsecutiveFailThreshold)
+
+	require.Len(t, narrator.withheld, 1)
+	withheld := narrator.withheld[0]
+	require.Equal(t, "consecutive_failures", withheld.Reason)
+	require.Equal(t, 5, withheld.ConsecutiveFailures)
+	require.InDelta(t, 1.0, withheld.FailureRate, 1e-9)
+	require.InDelta(t, 5.0, withheld.FailureVolume, 1e-9)
 }
