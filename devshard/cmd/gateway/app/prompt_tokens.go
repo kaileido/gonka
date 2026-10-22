@@ -26,13 +26,16 @@ func (p pinnedPromptTokens) MinimumPromptTokens(model string, body []byte) (uint
 	return tokens, err == nil
 }
 
+func knownEpoch(snapshots phaseSnapshots) func() (uint64, bool) {
+	return func() (uint64, bool) {
+		epoch := snapshots.Snapshot().EpochIndex
+		return epoch, epoch != chain.EpochIndexUnknown
+	}
+}
+
 func promptTokens(modelSnapshots vocabulary.EpochGroupDataQuery, snapshots phaseSnapshots) api.PromptTokens {
 	if modelSnapshots == nil {
 		return nil
 	}
-	currentEpoch := func() (uint64, bool) {
-		epoch := snapshots.Snapshot().EpochIndex
-		return epoch, epoch != chain.EpochIndexUnknown
-	}
-	return pinnedPromptTokens{library: tokenizer.NewLibrary(vocabulary.ChainModelSource{Query: modelSnapshots}, currentEpoch)}
+	return pinnedPromptTokens{library: tokenizer.NewLibrary(vocabulary.ChainModelSource{Query: modelSnapshots}, knownEpoch(snapshots))}
 }
