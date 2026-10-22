@@ -24,7 +24,10 @@ const (
 	unpinned          = ""
 )
 
-var errNoTokenizer = errors.New("pinned revision has no tokenizer.json")
+var (
+	errNoTokenizer   = errors.New("pinned revision has no tokenizer.json")
+	errParsePanicked = errors.New("tokenizer.json parse panicked")
+)
 
 // ModelSource returns the Hugging Face repo and commit the chain pins for a model in an epoch; vocabulary.ChainModelSource satisfies it.
 type ModelSource interface {
@@ -38,6 +41,7 @@ type Library struct {
 	httpClient *http.Client
 	now        func() time.Time
 	background func(task func())
+	parse      func(r io.Reader) (*Counter, error)
 
 	mu     sync.Mutex
 	models map[string]*pinnedTokenizer
@@ -67,8 +71,11 @@ func (p *pinnedTokenizer) settle(epoch uint64, pinned revision, counter *Counter
 	p.epoch, p.revision, p.counter, p.loading = epoch, pinned, counter, false
 }
 
-func (p *pinnedTokenizer) retryAfter(at time.Time) {
+func (p *pinnedTokenizer) retryAfter(at time.Time, pinMoved bool) {
 	p.loading, p.retryAt = false, at
+	if pinMoved {
+		p.counter = nil
+	}
 }
 
 // NewLibrary builds a library that reads each model's pin on chain for the epoch the epoch func reports, nothing while it knows none, and the tokenizer from the Hugging Face hub.
@@ -79,6 +86,7 @@ func NewLibrary(source ModelSource, epoch func() (epoch uint64, known bool)) *Li
 		httpClient: &http.Client{},
 		now:        time.Now,
 		background: func(task func()) { go task() },
+		parse:      Load,
 		models:     make(map[string]*pinnedTokenizer),
 	}
 }
@@ -113,17 +121,20 @@ func (l *Library) refresh(model string, epoch uint64, held revision) {
 		return
 	}
 	var counter *Counter
-	if err == nil {
+	pinMoved := err == nil
+	if pinMoved {
 		counter, err = l.load(ctx, pinned)
 	}
 	switch {
 	case err == nil:
 		logging.Info("prompt tokenizer loaded", logkey.Model, model, logkey.Tokenizer, pinned.String(), logkey.DurationMS, l.now().Sub(started).Milliseconds())
+	case errors.Is(err, errParsePanicked):
+		logging.Error("prompt tokenizer parse panicked; the model's prompts are not checked until its pin moves", logkey.Model, model, logkey.Tokenizer, pinned.String(), logkey.Error, err)
 	case errors.Is(err, errNoTokenizer), errors.Is(err, ErrUnsupported):
 		logging.Info("model has no tokenizer the gateway reads; its prompts are not checked against its context length", logkey.Model, model, logkey.Tokenizer, pinned.String(), logkey.Error, err)
 	default:
 		logging.Warn("prompt tokenizer could not be loaded; prompts are not checked until it is", logkey.Model, model, logkey.Error, err)
-		l.update(model, func(entry *pinnedTokenizer) { entry.retryAfter(l.now().Add(retryInterval)) })
+		l.update(model, func(entry *pinnedTokenizer) { entry.retryAfter(l.now().Add(retryInterval), pinMoved) })
 		return
 	}
 	l.update(model, func(entry *pinnedTokenizer) { entry.settle(epoch, pinned, counter) })
@@ -173,9 +184,18 @@ func (l *Library) load(ctx context.Context, pinned revision) (*Counter, error) {
 	case len(raw) > maxTokenizerBytes:
 		return nil, fmt.Errorf("%w: %s is over %d bytes", ErrUnsupported, address, maxTokenizerBytes)
 	}
-	counter, err := Load(bytes.NewReader(raw))
+	counter, err := l.parseRecovering(raw)
 	if err != nil {
 		return nil, fmt.Errorf("%w: load %s: %w", ErrUnsupported, address, err)
 	}
 	return counter, nil
+}
+
+func (l *Library) parseRecovering(raw []byte) (counter *Counter, err error) {
+	defer func() {
+		if panicked := recover(); panicked != nil {
+			counter, err = nil, fmt.Errorf("%w: %v", errParsePanicked, panicked)
+		}
+	}()
+	return l.parse(bytes.NewReader(raw))
 }

@@ -208,3 +208,65 @@ func TestLibraryWithoutAPinHoldsNoCounter(t *testing.T) {
 		t.Fatal("a model whose pin could not be read holds a counter")
 	}
 }
+
+// Test flow:
+//  1. Build a library whose tokenizer.json parser panics.
+//  2. Ask for the counter and run the load, then ask again past the retry interval and in a new epoch with the same pin, running every queued load.
+//  3. Assert the panic did not escape the load, no counter is held, and the hub was asked once, as for a file that does not load.
+func TestLibraryRecordsAPanickingLoadAsUnsupported(t *testing.T) {
+	source := &fakeSource{commit: "c1"}
+	hub := newFakeHub(t)
+	clock := &testClock{}
+	library := newTestLibrary(source, hub, 5, clock)
+	library.parse = func(io.Reader) (*Counter, error) { panic("malformed merges") }
+
+	library.Counter("m")
+	library.runPending()
+	clock.advance(2 * retryInterval)
+	library.epoch = 6
+	library.Counter("m")
+	library.runPending()
+
+	if library.loaded() || source.reads != 2 || hub.fetches != 1 {
+		t.Fatalf("loaded = %v, pin reads = %d, fetches = %d, want false, 2, 1", library.loaded(), source.reads, hub.fetches)
+	}
+}
+
+// Test flow:
+//  1. Load the tokenizer pinned at c1.
+//  2. In the next epoch, fail the pin read: assert the c1 tokenizer still counts.
+//  3. Past the retry interval, pin c2 and fail its fetch with a 503: assert no counter is held, so the c1 vocabulary no longer counts.
+//  4. Restore the hub and step past the retry interval: assert the c2 tokenizer loads.
+func TestLibraryDropsTheOldTokenizerOnlyWhenTheNewPinFailsToLoad(t *testing.T) {
+	source := &fakeSource{commit: "c1"}
+	hub := newFakeHub(t)
+	clock := &testClock{}
+	library := newTestLibrary(source, hub, 5, clock)
+	library.Counter("m")
+	library.runPending()
+
+	source.err = errors.New("chain down")
+	library.epoch = 6
+	library.Counter("m")
+	library.runPending()
+	if !library.loaded() {
+		t.Fatal("a pin read that failed dropped the loaded tokenizer")
+	}
+
+	source.err, source.commit = nil, "c2"
+	hub.status = http.StatusServiceUnavailable
+	clock.advance(retryInterval)
+	library.Counter("m")
+	library.runPending()
+	if library.loaded() {
+		t.Fatal("the c1 tokenizer still counts after the pin moved to c2 and c2 failed to load")
+	}
+
+	hub.status = http.StatusOK
+	clock.advance(retryInterval)
+	library.Counter("m")
+	library.runPending()
+	if !library.loaded() || hub.fetches != 3 {
+		t.Fatalf("loaded = %v, fetches = %d after the retry, want true, 3", library.loaded(), hub.fetches)
+	}
+}
