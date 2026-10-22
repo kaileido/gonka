@@ -45,7 +45,7 @@ func severedSession(t *testing.T, escrowID string) (*user.Session, []types.SlotA
 
 func restoredRecorder(t *testing.T, escrowID string, group []types.SlotAssignment, latestNonce uint64) *Recorder {
 	t.Helper()
-	book := accounting.NewBook(time.Now)
+	book := accounting.NewBook(func() time.Time { return time.Time{} })
 	err := book.Restore(accounting.Snapshot{SchemaVersion: accounting.SchemaVersion, Escrows: []accounting.EscrowSnapshot{
 		{Metadata: accounting.EscrowMetadata{EscrowID: escrowID, Model: "llama", Slots: group}, LatestNonce: latestNonce},
 	}})
@@ -89,15 +89,16 @@ func TestTheFirstWatchHandsOverTheDiffsTheLastRunNeverJournaled(t *testing.T) {
 
 // Test flow:
 //  1. Restore a ledger that took one diff, and watch a session whose next diff is composed while the watch reads the retained ones.
-//  2. Assert that diff reaches the journal once, through the observer, and the replay hands over only the diffs composed before it.
+//  2. Assert that diff reaches the journal once, through the observer, and the replay hands over only the service diffs composed before it: a diff that started an inference is classified by its race, not by its diff.
 func TestTheReplayStopsAtTheFirstDiffTheObserverSaw(t *testing.T) {
 	const escrowID = "escrow-1"
-	source := &composingSource{diffs: []types.Diff{{Nonce: 4}, {Nonce: 5}, {Nonce: 6}}, composedDuringRead: types.Diff{Nonce: 7}}
+	startedInference := types.Diff{Nonce: 6, Txs: []*types.DevshardTx{{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{}}}}}
+	source := &composingSource{diffs: []types.Diff{{Nonce: 4}, {Nonce: 5}, startedInference, {Nonce: 7}}, composedDuringRead: types.Diff{Nonce: 8}}
 	recorder, journal := restoredRecorder(t, escrowID, testutil.MakeGroup([]*signing.Secp256k1Signer{testutil.MustGenerateKey(t)}), 4), &composedNonces{}
 
 	recorder.watchSessionDiffs(escrowID, source, journal)
 
-	if want := []uint64{7, 5, 6}; !slices.Equal(journal.nonces, want) {
+	if want := []uint64{8, 5, 7}; !slices.Equal(journal.nonces, want) {
 		t.Fatalf("journal took diffs %v, want %v", journal.nonces, want)
 	}
 }
