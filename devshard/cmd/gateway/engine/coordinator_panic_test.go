@@ -69,3 +69,47 @@ func TestAPanickingCoordinatorCancelsTheAttemptsItLaunched(t *testing.T) {
 		t.Fatal("the host's send never returned: the panicking coordinator left its attempt running")
 	}
 }
+
+type committedPicker struct {
+	*stubPicker
+	entered    chan struct{}
+	release    chan struct{}
+	assignment scheduler.Assignment
+}
+
+func (p committedPicker) Pick(context.Context, scheduler.RequestProfile) (scheduler.Assignment, error) {
+	p.entered <- struct{}{}
+	<-p.release
+	return p.assignment, nil
+}
+
+// Test flow:
+//  1. Start a speculative pick on a paused coordinator whose picker hands over a committed nonce only once released.
+//  2. Abandon the coordinator the way a panic does, then release the pick.
+//  3. Assert the assignment's host slot and escrow hold are both given back, though no coordinator reads the pick any more.
+func TestAPanickingCoordinatorGivesBackAPickAnsweredAfterIt(t *testing.T) {
+	fixture := newRaceFixture(settledPolicy(), 2)
+	slotReleased, holdReleased := make(chan struct{}, 1), make(chan struct{}, 1)
+	picker := committedPicker{
+		stubPicker: fixture.picker,
+		entered:    make(chan struct{}, 1),
+		release:    make(chan struct{}),
+		assignment: scheduler.Assignment{
+			Escrow:     "escrow-1",
+			Host:       "host-1",
+			Nonce:      fakePrepared{nonce: 91, hostIdx: 1},
+			HostSlot:   func() { slotReleased <- struct{}{} },
+			EscrowHold: func() { holdReleased <- struct{}{} },
+		},
+	}
+	fixture.deps.Picker = picker
+	coordinator := pausedCoordinator(fixture, 2)
+
+	coordinator.startPick(coordinator.decision, coordinator.request.Params)
+	waitForValue(t, picker.entered, "the pick reaching the scheduler")
+	coordinator.abandon()
+	close(picker.release)
+
+	waitForValue(t, slotReleased, "the abandoned pick's host slot being given back")
+	waitForValue(t, holdReleased, "the abandoned pick's escrow hold being given back")
+}

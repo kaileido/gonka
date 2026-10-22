@@ -17,7 +17,7 @@ import (
 //  5. Assert no limiter slot was acquired, since the refusal must happen before admission.
 func TestChatLeavesRoomForTheEscrowsCatchUp(t *testing.T) {
 	live := newHarness(t)
-	promptBytes := 3 * (transport.MaxHostRequestBytes - hostCatchUpReserveBytes/2) / 4
+	promptBytes := transport.MaxHostRequestBytes - hostCatchUpReserveBytes/2
 	oversized := fmt.Sprintf(`{"model":"qwen","messages":[{"role":"user","content":%q}]}`, strings.Repeat("x", promptBytes))
 
 	recorder := live.request(t, http.MethodPost, "/v1/chat/completions", oversized, nil)

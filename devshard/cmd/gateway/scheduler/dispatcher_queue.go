@@ -76,6 +76,10 @@ func (d *dispatcher) drain() (time.Time, bool) {
 			offered.escrowRetired = true
 			return NonceIntent{}
 		}
+		if served, serving := offered.decision.(serve); serving && !served.waiter.bind() {
+			d.giveBack(offered.taken)
+			offered.decision = decline{}
+		}
 		return intentFor(offered.decision)
 	}
 
@@ -136,7 +140,7 @@ func (d *dispatcher) drain() (time.Time, bool) {
 			return outcome.until, true
 		case decline:
 			d.dropAbandoned()
-			return time.Time{}, false
+			continue
 		default:
 			d.failWaiting(fmt.Errorf("escrow %s: session offered no binding", d.escrowID))
 			return time.Time{}, false
