@@ -13,14 +13,15 @@ One `POST /v1/chat/completions`, from the socket to the settled nonce. Every ste
 | 3 | will it fit a host-bound body once encoded | inline in `chat`: `transport.PromptWireBytes` + `hostCatchUpReserveBytes` against `transport.MaxHostRequestBytes` | 413 |
 | 4 | authorise the model for this caller | `authorizeModel` | 400 when the model is absent; 401 |
 | 5 | is the model routable at all | `routableModel`, for a caller step 4 admitted | 503 when not ready or an offered model has nothing routable; 400 for a model nobody offers |
-| 6 | does the chain phase admit new work | `admission`, on `snapshots.Snapshot()` | 503, except a refusal that is proof-of-compute alone, which waits for step 7 |
-| 7 | cache lookup | `cacheKeyFor` → `cache.get` | — (hit returns here); a miss behind a proof-of-compute refusal answers that 503 |
-| 8 | take an admission slot and token budget | `limiter.AcquireForModel` | 429 |
-| 9 | does the chain phase still admit new work | `admission` again, on a fresh snapshot: the limiter can hold a request for minutes, and a block that began meanwhile must not get a nonce | 503 |
-| 10 | race it | `race` → `engine.Run` | see below |
-| 11 | release the slot | `defer limiter.ReleaseForModel` | — |
+| 6 | do the prompt and `max_tokens` fit the model's context | `fitsContext`: the pinned tokenizer's count, the chat template's minimum and `max_tokens` against the context length | 400 `context_length_exceeded` |
+| 7 | does the chain phase admit new work | `admission`, on `snapshots.Snapshot()` | 503, except a refusal that is proof-of-compute alone, which waits for step 8 |
+| 8 | cache lookup | `cacheKeyFor` → `cache.get` | — (hit returns here); a miss behind a proof-of-compute refusal answers that 503 |
+| 9 | take an admission slot and token budget | `limiter.AcquireForModel` | 429 |
+| 10 | does the chain phase still admit new work | `admission` again, on a fresh snapshot: the limiter can hold a request for minutes, and a block that began meanwhile must not get a nonce | 503 |
+| 11 | race it | `race` → `engine.Run` | see below |
+| 12 | release the slot | `defer limiter.ReleaseForModel` | — |
 
-Steps 4–6 run **after** normalisation because the model name is only known once the body is parsed and the per-model profile applied.
+Steps 4–7 run **after** normalisation because the model name is only known once the body is parsed and the per-model profile applied.
 
 ## Step 2 in detail: `filters.NormalizeRequest`
 
@@ -50,7 +51,29 @@ Steps 4–6 run **after** normalisation because the model name is only known onc
 
 The executor forces `logprobs` and `top_logprobs` itself, and `return_token_ids: true` beside them (`common/completionapi.ModifyRequestBodyWithLogprobsMode`), so the gateway carries the client's `logprobs` and `top_logprobs` as asked, `top_logprobs` capped at `completionapi.ForcedTopLogprobs` (5), rather than forcing them ([`filters/README.md`](../filters/README.md), "Parameter rules"). `return_token_ids` is the executor's alone: the gateway strips it from the client's request.
 
-## Step 10 in detail: the race
+## Step 6 in detail: the context check
+
+A host refuses a request whose prompt and `max_tokens` together exceed its `--max-model-len`, and it refuses it after the nonce is committed, so the escrow pays for an attempt no host could serve. Step 6 refuses it first, with OpenAI's `invalid_request_error` / `context_length_exceeded`, when
+
+```
+prompt tokens + chatTemplateMinimumTokens + max_tokens > context length
+```
+
+Each term on the left is meant as the least the host counts for it, so the check refuses only a request a host refuses: exactly so up to 64 KiB of prompt text, and past it as far as the sampled count's worst measured over-count reaches.
+
+- **What a host does.** Hosts run the gonka-ai vLLM fork at `release/v0.25.1`, the base of the ML node image. A chat request's tokenization limits are `max_model_len` and the request's `max_completion_tokens`, else its `max_tokens` ([`chat_completion/protocol.py` L552-L570](https://github.com/gonka-ai/vllm/blob/aaaba178f96b676d697d65ccf67cbc64ad247723/vllm/entrypoints/openai/chat_completion/protocol.py#L552-L570)). A rendered prompt longer than `max_model_len` less that number is refused with "This model's maximum context length is …" ([`renderers/params.py` L427-L452](https://github.com/gonka-ai/vllm/blob/aaaba178f96b676d697d65ccf67cbc64ad247723/vllm/renderers/params.py#L427-L452)). vLLM shortens `max_tokens` to the room the prompt leaves only for a request that names none ([`serve/utils/api_utils.py` L170-L206](https://github.com/gonka-ai/vllm/blob/aaaba178f96b676d697d65ccf67cbc64ad247723/vllm/entrypoints/serve/utils/api_utils.py#L170-L206)), and no request reaches a host without one, because step 2 writes it into every body.
+- **`max_tokens`** is `filters.Result.MaxTokens`, the number step 2 sends: the client's `max_tokens` or `max_completion_tokens`, the smaller of the two when both are sent, within the cap, or the default when neither is ([`filters/README.md`](../filters/README.md), "Output token limits"). A request without `max_tokens` is checked against the default, as the host checks it.
+- **The context length** is `config.Limits.ContextLength`: the `--max-model-len` governance registers, else the operator's `max_model_len` pin. A model with neither is not checked; `fallback_max_model_len` is a price, not a length, and is never checked against.
+- **Tokenizing only when it can matter.** `Counter.MaximumTokens` bounds the prompt's tokens by its bytes, after NFC where the tokenizer normalizes, without tokenizing. When that bound, the template allowance and `max_tokens` fit the context, the request is served without counting, and the answer is the one the count would give, since the count never exceeds the bound ([`tokenizer/README.md`](../tokenizer/README.md), "The byte bound"). Only a prompt whose bound is past the context is tokenized.
+- **The prompt tokens** are `Counter.MinimumTokens` of the [`tokenizer`](../tokenizer/) the epoch pins for the model, over `filters.PromptText` of the normalized body: the text the chat template renders, without the template ([`filters/README.md`](../filters/README.md), "The prompt text"); `app/prompt_tokens.go` joins the two. Up to 64 KiB the count is exact. Beyond, it is the sampled estimate less its worst measured over-count, a lower bound on every comparison text; a prompt whose dense stretch the samples land in can over-count by more, and is refused only when it comes within that excess of the context ([`tokenizer/README.md`](../tokenizer/README.md), "Estimating a long prompt").
+- **`chatTemplateMinimumTokens`** (4) is the fewest tokens a pinned chat template adds to a request: DeepSeek-V4-Flash's one-message prompt adds `<｜begin▁of▁sentence｜>`, `<｜User｜>`, `<｜Assistant｜>` and its thinking marker. The other templates add more: GLM-5.3-Flash 12 to 21 tokens and MiniMax-M2.7 16 to 38 on one to six messages, and every pinned template 112 to 274 once a tool is defined. What the allowance leaves out leaves a request unchecked, never refused.
+- **The refusal** names the context length, `max_tokens`, the prompt tokens and their total, and the ways out: shorten the messages by the excess, or lower `max_tokens` to the room the prompt leaves when that is at least one token.
+- **Fail open.** A model without a tokenizer the gateway reads, a tokenizer still loading, a pin or a body that cannot be read: the request goes on unchecked, which is how it went before the check existed.
+- **Placement.** The check runs after authorisation and routability, because it is the first step with a real CPU cost and it needs a served model's context length; before admission, the cache, the limiter and the race, so a refused prompt takes no slot and no nonce. It is not captured, like step 3's refusal, and the route's status series counts it.
+
+The limiter, the request ledger and the escalation ladder keep `filters.EstimatedPromptTokens`, the byte-based estimate their windows and deadlines are denominated in; the tokenizer's count gates step 6 and nothing else.
+
+## Step 11 in detail: the race
 
 `api/routes.go`, `race` → `engine.Run` (`engine/engine.go`).
 

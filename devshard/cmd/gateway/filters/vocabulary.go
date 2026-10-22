@@ -88,3 +88,5 @@ const (
 	ParallelToolCallsKeep  ParallelToolCallsPolicy = "keep"
 	ParallelToolCallsStrip ParallelToolCallsPolicy = "strip"
 )
+
+var jsonStringStart = []byte(`"`)

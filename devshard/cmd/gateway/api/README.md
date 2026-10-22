@@ -27,7 +27,7 @@ The only package that speaks HTTP to a client, and the one that decides what a f
 
 ## What the server is given
 
-`Deps` is everything the boundary reads or calls. `New` requires every field except `Version`, `RequestIDs` and `StopTokenVocabulary`. The first two default to empty and to a random id generator; a nil `StopTokenVocabulary` refuses every request that carries `stop_token_ids`, since no id can be proven inside the model's vocabulary without it (see [`filters/README.md`](../filters/README.md), "Stop token ids").
+`Deps` is everything the boundary reads or calls. `New` requires every field except `Version`, `RequestIDs`, `StopTokenVocabulary` and `PromptTokens`. The first two default to empty and to a random id generator; a nil `StopTokenVocabulary` refuses every request that carries `stop_token_ids`, since no id can be proven inside the model's vocabulary without it (see [`filters/README.md`](../filters/README.md), "Stop token ids"); a nil `PromptTokens` checks no prompt against its model's context length, which is what the composition root wires without a chain to read a tokenizer pin from.
 
 `Operations` holds the lifecycle actions the operator routes trigger. They span the chain client, the escrow manager and the registry, so the composition root implements them and this package only calls them.
 
@@ -106,6 +106,7 @@ Both halves of `usage` latch together over an attempt, so a row can never pair o
 - **A snapshot too old to trust is its own refusal class.** `ChainStaleError` answers 503 with `Retry-After` of one poll interval, not the one-second default: the chain has by then been unreadable for at least `chain_snapshot_max_age_seconds`. `/v1/status` reports it as `chain_snapshot_stale`, so blocked is never returned without a reason. An unset timestamp is stale — the listener opens after the observer starts, so there is no phase to serve under before the first poll lands.
 - **A fleet with no balance left retries on the escrow tick, not in a second.** A refusal carrying `types.ErrInsufficientBalance` answers 503 with `Retry-After` of `escrow.TickInterval`, the same cadence `ModelUnavailableError` takes: only a replacement escrow or a settling inference restores a balance, so the one-second default every other full shard takes would be a retry that cannot succeed. A shard that is merely busy keeps the short retry, because it passes on its own.
 - **A model the operator offers with nothing routable is the gateway not being ready, not a bad request.** `ModelUnavailableError` answers 503 with `Retry-After` of `escrow.TickInterval`, the cadence at which a drained model is parked, replaced and republished — the same precedent as `ChainStaleError` taking the chain observer's poll interval. A model nobody offers answers 400 with `UnsupportedModelError` instead, listing the supported models, and carries no `Retry-After`.
+- **A prompt past its model's context is the client's to shorten.** `ContextLengthError` answers 400 with OpenAI's `type: invalid_request_error` and `code: context_length_exceeded` (`detailForError`), the shape OpenAI-compatible clients branch on to trim a conversation; the message names the context length, `max_tokens`, the prompt's tokens and their total, and how much to cut from the messages or `max_tokens`. See [`docs/request.md`](../docs/request.md), "Step 6 in detail".
 - **A race where every attempt was refused as overloaded is the shard having nowhere to send the request, not an upstream answering badly.** `engine.ErrHostsUnavailable` answers 503 with `Retry-After` of the live `HostCutoff.BaseMS`, rounded up to whole seconds, read from `s.config` the same way every other handler reads runtime configuration — the same base a refusing host is cut off for.
 
 ## What a finished request records
@@ -114,7 +115,7 @@ Both halves of `usage` latch together over an attempt, so a row can never pair o
 
 The journal's `winnerOutputTokens` is what the client actually received, which with `duration_ms` — measured on the handler goroutine, not the line's own timestamp, which trails the request's end by however long the journal's queue held it — is what a measured output rate is computed from.
 
-`estimatePromptTokens` is the limiter's and the perf buckets' input size, not a tokenizer call.
+`estimatePromptTokens` is the limiter's and the perf buckets' input size, not a tokenizer call. The pinned tokenizer's bounds (`PromptTokens` and `PromptCount`, from the [`tokenizer`](../tokenizer/) package) gate only `fitsContext`, which tokenizes only a prompt whose byte bound the context does not clear: the windows, the ledger and the escalation deadlines stay denominated in the byte estimate, so a model with no tokenizer and one with a tokenizer are admitted and timed on the same scale.
 
 `RaceLedger` is how the engine's single recording point reaches the ledger; nothing else writes a row.
 

@@ -220,6 +220,10 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 		s.writeErrorFor(w, err)
 		return
 	}
+	if err := s.fitsContext(configuration.Limits, normalized); err != nil {
+		s.writeErrorFor(w, err)
+		return
+	}
 	refusal := admission(s.snapshots.Snapshot(), configuration.Modes, s.now(), configuration.Chain.SnapshotMaxAgeSeconds)
 	if refusal != nil && (s.cache == nil || !blockedOnlyByPoC(refusal)) {
 		s.writeErrorFor(w, refusal)
