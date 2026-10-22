@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"devshard/cmd/gateway/chain"
+	"devshard/cmd/gateway/store"
 )
 
 // Test flow:
@@ -27,6 +28,35 @@ func TestTheBridgeLabelIsTheEpochAfterTheEffectiveOne(t *testing.T) {
 			}
 			if got := bridgeLabel(testCase.snapshot); got != testCase.wantEffective+1 {
 				t.Fatalf("bridgeLabel(%s) = %d, want %d", testCase.name, got, testCase.wantEffective+1)
+			}
+		})
+	}
+}
+
+// Test flow:
+//  1. Table-driven: rows with a resolved chain epoch, rows resolved only by their label, and a row with neither, at effective epochs on both sides of the prune deadline.
+//  2. Assert prunableOnChain reads an unresolved row's label as its latest possible chain epoch: past that epoch's deadline it is prunable, one epoch earlier it is not.
+func TestPrunableOnChainReadsTheLabelOfAnUnresolvedRow(t *testing.T) {
+	testCases := []struct {
+		name          string
+		chainEpoch    uint64
+		rotationEpoch int64
+		effective     uint64
+		wantPrunable  bool
+	}{
+		{name: "resolved, past the deadline", chainEpoch: 50, effective: 52, wantPrunable: true},
+		{name: "resolved, before the deadline", chainEpoch: 50, effective: 51, wantPrunable: false},
+		{name: "label only, past the deadline", rotationEpoch: 50, effective: 52, wantPrunable: true},
+		{name: "label only, past its lower bound's deadline alone", rotationEpoch: 50, effective: 51, wantPrunable: false},
+		{name: "neither", effective: 90, wantPrunable: false},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			manager := &Manager{snapshots: &fakeSnapshotSource{snapshot: chain.PhaseSnapshot{EpochIndex: testCase.effective, EffectiveEpochIndex: testCase.effective, BlockHeight: 1_000}}}
+			record := store.DevshardRecord{EscrowID: "1", ChainEpoch: testCase.chainEpoch, RotationEpoch: testCase.rotationEpoch}
+
+			if got := manager.prunableOnChain(record); got != testCase.wantPrunable {
+				t.Fatalf("prunableOnChain(%s) = %v, want %v", testCase.name, got, testCase.wantPrunable)
 			}
 		})
 	}

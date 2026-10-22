@@ -42,7 +42,14 @@ func chainEpochOf(record store.DevshardRecord) (uint64, bool) {
 
 func deadlineAt(record store.DevshardRecord, snapshot chain.PhaseSnapshot, marginBlocks int64) settleDeadline {
 	epoch, known := chainEpochOf(record)
-	if !known || snapshotHasNoEpochYet(snapshot) {
+	if !known {
+		return settleDeadline{}
+	}
+	return deadlineOfEpoch(epoch, snapshot, marginBlocks)
+}
+
+func deadlineOfEpoch(epoch uint64, snapshot chain.PhaseSnapshot, marginBlocks int64) settleDeadline {
+	if snapshotHasNoEpochYet(snapshot) {
 		return settleDeadline{}
 	}
 	effective := effectiveEpoch(snapshot)
@@ -123,8 +130,11 @@ func (m *Manager) deactivationReason(record store.DevshardRecord) deadlineUnsett
 	return deadlineOperatorDeactivated
 }
 
-// prunedChecksPerTick bounds the chain lookups markPrunedPastDeadline makes in one tick.
-const prunedChecksPerTick = 16
+// prunedChecksPerTick bounds the chain lookups markPrunedPastDeadline makes in one tick; noSettleMargin judges a deadline at the switch block itself.
+const (
+	prunedChecksPerTick       = 16
+	noSettleMargin      int64 = 0
+)
 
 type prunedCheck int
 
@@ -144,7 +154,7 @@ func (m *Manager) markPrunedPastDeadline(ctx context.Context, snapshot chain.Pha
 	candidates := make([]int, 0, len(checked))
 	for index, record := range checked {
 		settlementOwnsIt := record.SettlementPending && policy.settles(record.Model, ownEpochOver(record, snapshot))
-		if record.Active || goneFromChain(record) || settlementOwnsIt || !deadlineAt(record, snapshot, 0).passed {
+		if record.Active || goneFromChain(record) || settlementOwnsIt || !deadlineAt(record, snapshot, noSettleMargin).passed {
 			continue
 		}
 		candidates = append(candidates, index)

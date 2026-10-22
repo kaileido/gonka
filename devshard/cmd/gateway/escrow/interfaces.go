@@ -56,11 +56,10 @@ type SignerSource interface {
 	SignerFor(privateKeyEnv string) (*signing.Secp256k1Signer, error)
 }
 
-// api/ wires this to the live engine runtime; escrow only consumes it. See README.md, "What this package expects of others".
-// TimeoutSweeper retries the execution timeouts no race is left to post. The budget is the ceiling for
-// one tick across every escrow, so the vote traffic it adds never follows the request rate.
+// TimeoutSweeper retries the execution timeouts no race is left to post, each tick and before a finalize; see README.md, "Settlement and retirement".
 type TimeoutSweeper interface {
 	SweepExecutionTimeouts(ctx context.Context, grace time.Duration, budget int) (due, applied, failed int)
+	SweepBeforeFinalize(ctx context.Context, escrowID string, budget int) (due, applied, failed int, err error) // no race grace: finalize pays what stays open
 }
 
 // SweepRecorder counts what one sweep tick did.
