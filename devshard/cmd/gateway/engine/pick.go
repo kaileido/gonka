@@ -82,7 +82,7 @@ func (c *raceCoordinator) startNextImmediate() {
 	c.startPick(c.decision, c.request.Params)
 }
 
-// applyPick spends what the scheduler answered with; an assignment the race cannot use is stranded, not dropped.
+// applyPick spends what the scheduler answered with: a committed nonce is sent even once the client left or a winner was crowned, and stranded only when the race ruled every send out. See race.md, "Client departure and the drain".
 func (c *raceCoordinator) applyPick(result pickedHost) {
 	c.catchUp()
 	c.pickCancel()
@@ -92,7 +92,7 @@ func (c *raceCoordinator) applyPick(result pickedHost) {
 	case err != nil:
 		c.reportUnfilledPick(err)
 		c.startErr, c.moreImmediate = err, 0
-	case c.cancelled || c.handedOff || c.winner != nil || c.retryRuledOut:
+	case c.cancelled || c.retryRuledOut:
 		c.strand(assignment, RoleSpeculative)
 	default:
 		c.launch(assignment, RoleSpeculative, c.pickReason)

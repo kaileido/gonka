@@ -215,6 +215,7 @@ func (b *Book) Restore(snapshot Snapshot) error {
 		}
 		escrow := newEscrowLedger(stored.Metadata)
 		escrow.latest = stored.LatestNonce
+		escrow.restoredLatest, escrow.restoredUnreplayed = stored.LatestNonce, true
 		escrow.feePerNonce = stored.FeePerNonce
 		for _, service := range stored.ServiceNonces {
 			escrow.serviceNonces[serviceKey{slotID: service.SlotID, purpose: service.Purpose}] += service.Count

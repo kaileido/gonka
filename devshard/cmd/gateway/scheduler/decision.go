@@ -26,13 +26,14 @@ func (burn) isDecision()    {}
 func (hold) isDecision()    {}
 func (decline) isDecision() {}
 
-// waiter is one request queued on an escrow's dispatcher; handoff orders deliver against abandon. See routing.md, "The per-escrow dispatcher".
+// waiter is one request queued on an escrow's dispatcher; handoff guards bound and orders deliver against abandon. See routing.md, "The per-escrow dispatcher".
 type waiter struct {
 	profile   RequestProfile
 	exclude   map[string]bool
 	enqueued  time.Time
 	replyCh   chan pickResult
 	abandoned atomic.Bool
+	bound     bool
 
 	handoff sync.Mutex
 }
@@ -68,8 +69,22 @@ func (w *waiter) deliver(result pickResult) (accepted bool) {
 	}
 }
 
+func (w *waiter) bind() bool {
+	w.handoff.Lock()
+	defer w.handoff.Unlock()
+	if w.abandoned.Load() {
+		return false
+	}
+	w.bound = true
+	return true
+}
+
 func (w *waiter) abandon() (delivered pickResult, wasDelivered bool) {
 	w.handoff.Lock()
+	if w.bound {
+		w.handoff.Unlock()
+		return <-w.replyCh, true
+	}
 	defer w.handoff.Unlock()
 	w.abandoned.Store(true)
 	select {

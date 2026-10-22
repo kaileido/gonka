@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
+	"sync/atomic"
 	"time"
 
 	"devshard/cmd/gateway/accounting"
@@ -25,7 +27,53 @@ func (n *Recorder) watchDiffs(escrowID string, session registry.EscrowSession, d
 	if watched, already := n.observing.Swap(escrowID, underlying); already && watched == underlying {
 		return
 	}
-	underlying.SetDiffObserver(func(diff types.Diff) { diffs.DiffComposed(escrowID, &diff) })
+	n.watchSessionDiffs(escrowID, underlying, diffs)
+}
+
+type diffSource interface {
+	SetDiffObserver(observer func(types.Diff))
+	Diffs() []types.Diff
+}
+
+type firstObservedDiff struct {
+	seen  atomic.Bool
+	nonce atomic.Uint64
+}
+
+func (first *firstObservedDiff) observe(nonce uint64) {
+	if !first.seen.Load() {
+		first.nonce.Store(nonce)
+		first.seen.Store(true)
+	}
+}
+
+func (n *Recorder) watchSessionDiffs(escrowID string, source diffSource, diffs DiffJournal) {
+	first := &firstObservedDiff{}
+	source.SetDiffObserver(func(diff types.Diff) {
+		first.observe(diff.Nonce)
+		diffs.DiffComposed(escrowID, &diff)
+	})
+	if n.service == nil {
+		return
+	}
+	watermark, restored := n.service.Book.TakeRestoredWatermark(escrowID)
+	if !restored {
+		return
+	}
+	// A shutdown that abandoned work closes the journal while that work still composes diffs, so the last run's ledger never took them.
+	// Every service diff it dropped lies above the watermark it saved; the replay hands over those still retained, up to the first the observer saw.
+	retained := source.Diffs()
+	seen, firstObserved := first.seen.Load(), first.nonce.Load()
+	for index := range retained {
+		diff := retained[index]
+		if diff.Nonce > watermark && (!seen || diff.Nonce < firstObserved) && !startsInference(diff) {
+			diffs.DiffComposed(escrowID, &diff)
+		}
+	}
+}
+
+func startsInference(diff types.Diff) bool {
+	return slices.ContainsFunc(diff.Txs, func(tx *types.DevshardTx) bool { return tx.GetStartInference() != nil })
 }
 
 // Start serves the ledger's listener and sweeps until ctx ends; every escrow the sweep watches hands its composed diffs to diffs.

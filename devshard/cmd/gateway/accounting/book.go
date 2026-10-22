@@ -42,6 +42,9 @@ type escrowLedger struct {
 	finalizingFrom   uint64
 	inFlightReserved uint64
 	challengedCost   uint64
+
+	restoredLatest     uint64
+	restoredUnreplayed bool
 }
 
 type serviceKey struct {
@@ -166,6 +169,18 @@ func (b *Book) MoneyTotals(escrowID string) (MoneyTotals, bool) {
 		totals.Charged += stats.Cost
 	}
 	return totals, true
+}
+
+// TakeRestoredWatermark answers once per escrow restored at start-up the latest nonce its saved ledger held. See docs/accounting.md, "Storage".
+func (b *Book) TakeRestoredWatermark(escrowID string) (latestNonce uint64, restored bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	escrow, known := b.escrows[escrowID]
+	if !known || !escrow.restoredUnreplayed {
+		return 0, false
+	}
+	escrow.restoredUnreplayed = false
+	return escrow.restoredLatest, true
 }
 
 func (b *Book) ObserveLatestNonce(escrowID string, nonce uint64) error {

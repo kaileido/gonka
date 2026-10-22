@@ -314,7 +314,7 @@ type Session struct {
 	pinnedFinishIDs  map[uint64]int
 	signatures       map[uint64]map[uint32][]byte // nonce -> slotID -> sig
 	signatureSigners map[uint64]map[uint32]cachedSignatureSigner
-	signedSlots      map[uint64]types.Bitmap128 // nonce -> slots that signed it, kept for good
+	signedSlots      map[uint64]types.Bitmap128 // nonce -> slots that signed it, trimmed with signatures
 	store            storage.Storage            // optional persistent storage
 	nonceStates      map[uint64]*nonceOutcome   // nonce -> protocol outcome
 	confirmWait      chan struct{}              // closed when a receipt is queued, so a refusal wait can stop
@@ -891,7 +891,7 @@ func (s *Session) dropSealedOutcomesLocked() {
 	}
 }
 
-// dropSignaturesThroughLocked drops signature entries at or below floor.
+// dropSignaturesThroughLocked drops signature entries and their signed slots at or below floor.
 // The current nonce is never dropped: settlement reads it from
 // Signatures(). A nonce that holds some validator's highest signature also
 // stays, so signatureStatusLocked, which credits a validator at every nonce
@@ -948,6 +948,11 @@ func (s *Session) dropSignaturesThroughLocked(floor uint64) {
 		if _, ok := keep[nonce]; nonce <= floor && !ok {
 			delete(s.signatures, nonce)
 			delete(s.signatureSigners, nonce)
+		}
+	}
+	for nonce := range s.signedSlots {
+		if _, ok := keep[nonce]; nonce <= floor && !ok {
+			delete(s.signedSlots, nonce)
 		}
 	}
 }

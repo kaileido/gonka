@@ -18,11 +18,23 @@ func ownEpochOver(record store.DevshardRecord, snapshot chain.PhaseSnapshot) boo
 	if chainEpoch == 0 && record.RotationEpoch > 0 {
 		chainEpoch = uint64(record.RotationEpoch)
 	}
-	effective := snapshot.EffectiveEpochIndex
-	if effective == 0 && snapshot.EpochIndex > 0 {
-		effective = snapshot.EpochIndex - 1
+	return chainEpoch > 0 && effectiveEpochFloor(snapshot) > chainEpoch
+}
+
+func effectiveEpochFloor(snapshot chain.PhaseSnapshot) uint64 {
+	if snapshot.EffectiveEpochIndex == 0 && snapshot.EpochIndex > 0 {
+		return snapshot.EpochIndex - 1
 	}
-	return chainEpoch > 0 && effective > chainEpoch
+	return snapshot.EffectiveEpochIndex
+}
+
+func (m *Manager) prunableOnChain(record store.DevshardRecord) bool {
+	if record.ChainEpoch == 0 || m.snapshots == nil {
+		return false
+	}
+	snapshot := m.snapshots.Snapshot()
+	snapshot.EffectiveEpochIndex = effectiveEpochFloor(snapshot)
+	return snapshot.EffectiveEpochIndex > 0 && deadlineAt(record, snapshot, 0).passed
 }
 
 func bridgeLabel(snapshot chain.PhaseSnapshot) uint64 {

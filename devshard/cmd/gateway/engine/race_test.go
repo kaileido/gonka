@@ -1607,7 +1607,7 @@ func stalledFixtureCoordinator(policy EscalationPolicy, attempts ...*liveAttempt
 // Test flow:
 //  1. Start a paused coordinator with one running attempt, a speculative pick still waiting in the scheduler and another immediate pick owed.
 //  2. Crown the running attempt.
-//  3. Assert the waiting pick was cancelled and no further pick is owed: a nonce the scheduler hands over after the crown serves nobody, is stranded, and costs a refused-timeout vote against an honest host.
+//  3. Assert the waiting pick was cancelled and no further pick is owed: a nonce the scheduler hands over after the crown is still sent, for a client that already has its answer.
 func TestCrowningAWinnerGivesUpThePickStillWaiting(t *testing.T) {
 	fixture := newRaceFixture(refusalPolicy(), 2)
 	running := &liveAttempt{nonce: 100, participant: "host-0", sendTime: testEpoch, receiptTime: testEpoch, cancel: func() {}}
@@ -2050,6 +2050,50 @@ func TestRunRaceNarrowsALateHostAtTheDeadlineAndLetsItFinish(t *testing.T) {
 	}
 	if moves := len(fixture.limiter.verdicts); moves != 0 {
 		t.Fatalf("window moves after the first = %d, want the deadline judged once", moves)
+	}
+}
+
+// Test flow:
+//  1. For each case, start a paused coordinator with one attempt live whose race wants no further attempt: its client left and the race was handed off, or a winner was crowned.
+//  2. Apply a pick answering with a committed nonce.
+//  3. Assert the nonce reaches its host and its attempt runs, rather than being stranded for a timeout vote.
+func TestACommittedPickIsSentOnceTheRaceNoLongerWantsIt(t *testing.T) {
+	cases := []struct {
+		name    string
+		client  context.Context
+		crowned bool
+	}{
+		{name: "the client left", client: departedClient()},
+		{name: "a winner was crowned", client: context.Background(), crowned: true},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			fixture := newRaceFixture(refusalPolicy(), 3)
+			arrived := make(chan uint64, 1)
+			fixture.target.scripts[451] = &hostScript{receipt: true, finished: true, arrive: arrived}
+			primary := &liveAttempt{nonce: 450, participant: "host-0", sendTime: testEpoch, receiptTime: testEpoch, cancel: func() {}}
+			coordinator := pausedCoordinatorForClient(testCase.client, fixture, 3, primary)
+			coordinator.pickCancel = func() {}
+			if testCase.crowned {
+				coordinator.winner = primary
+			} else {
+				coordinator.detach()
+			}
+
+			coordinator.applyPick(pickedHost{assignment: scheduler.Assignment{
+				Escrow: "escrow-1",
+				Host:   "host-1",
+				Nonce:  fakePrepared{nonce: 451, hostIdx: 1},
+			}})
+
+			if nonce := waitForValue(t, arrived, "the committed nonce reaching its host"); nonce != 451 {
+				t.Fatalf("sent nonce = %d, want 451", nonce)
+			}
+			awaitTracedAttemptDone(t, coordinator.events)
+			if picked := coordinator.attempts[len(coordinator.attempts)-1]; picked.nonce != 451 || picked.outcome != nil {
+				t.Fatalf("picked attempt nonce = %d outcome = %+v, want 451 launched, not stranded", picked.nonce, picked.outcome)
+			}
+		})
 	}
 }
 
