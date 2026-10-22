@@ -40,9 +40,16 @@ func splitIntoParts(text string, parts int) []string {
 func TestMaximumTokensBoundsMinimumTokensOnEveryText(t *testing.T) {
 	rng := rand.New(rand.NewPCG(1, 2))
 	sizes := []int{0, 1, 200, 4 << 10, exactBudgetBytes, exactBudgetBytes + 1, 200 << 10}
-	var texts []string
+	builders := []func(size int) string{
+		func(size int) string { return randomBoundText(size, rng) },
+		func(size int) string { return strings.Repeat("\U0001d160", size/len("\U0001d160")) },
+		func(size int) string { return norm.NFD.String(randomBoundText(size, rng)) },
+	}
+	texts := make([]string, 0, len(sizes)*len(builders))
 	for _, size := range sizes {
-		texts = append(texts, randomBoundText(size, rng), strings.Repeat("\U0001d160", size/len("\U0001d160")), norm.NFD.String(randomBoundText(size, rng)))
+		for _, build := range builders {
+			texts = append(texts, build(size))
+		}
 	}
 	for _, name := range []string{"isolated", "ignore-merges", "removed-nfc", "sequence"} {
 		counter := loadTestdata(t, name)
