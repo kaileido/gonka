@@ -39,17 +39,18 @@ func refusedAsUnavailable(attempt AttemptOutcome) bool {
 }
 
 func (o RaceOutcome) winnerTruncated() bool {
-	for _, attempt := range o.Attempts {
-		if o.IsWinner(attempt) && attempt.Terminal == TerminalStreamTruncated {
-			return true
-		}
-	}
-	return false
+	return o.winnerHolds(func(attempt AttemptOutcome) bool {
+		return attempt.Terminal == TerminalStreamTruncated && !attempt.HostTerminated && !attempt.NonceFinished
+	})
 }
 
 func (o RaceOutcome) winnerStreamed() bool {
+	return o.winnerHolds(func(attempt AttemptOutcome) bool { return attempt.ContentChunks > 0 })
+}
+
+func (o RaceOutcome) winnerHolds(holds func(AttemptOutcome) bool) bool {
 	for _, attempt := range o.Attempts {
-		if o.IsWinner(attempt) && attempt.ContentChunks > 0 {
+		if o.IsWinner(attempt) && holds(attempt) {
 			return true
 		}
 	}

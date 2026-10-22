@@ -8,10 +8,11 @@ import (
 
 	"devshard/cmd/gateway/filters"
 	"devshard/cmd/gateway/limits"
+	"devshard/transport"
 )
 
 // Test flow:
-//  1. For each host script in the table (content then [DONE], content on a finished nonce, both, and neither), run a one-host race through the engine.
+//  1. For each host script in the table (content then [DONE], content on a finished nonce, both, and neither, each ended cleanly or by a transfer the transport reports broken), run a one-host race through the engine.
 //  2. Assert the error Run returns, the status that error maps to, whether the race succeeded, the winner's terminal, and the verdict the limiter reads from it.
 //  3. Assert a winner whose nonce is unfinished is still planned a posted timeout vote.
 func TestATruncatedAnswerFailsTheRace(t *testing.T) {
@@ -20,6 +21,7 @@ func TestATruncatedAnswerFailsTheRace(t *testing.T) {
 		name          string
 		chunks        []string
 		finished      bool
+		transportErr  error
 		wantErr       error
 		wantStatus    int
 		wantSucceeded bool
@@ -30,6 +32,9 @@ func TestATruncatedAnswerFailsTheRace(t *testing.T) {
 		{name: "a terminated answer on an unfinished nonce", chunks: []string{roleEvent, contentEvent("whole"), sseDone}, wantStatus: http.StatusOK, wantSucceeded: true, wantTerminal: TerminalWon, wantVerdict: limits.ModelOutcome},
 		{name: "an unterminated answer on a finished nonce", chunks: []string{roleEvent, contentEvent("whole")}, finished: true, wantStatus: http.StatusOK, wantSucceeded: true, wantTerminal: TerminalWon, wantVerdict: limits.Success},
 		{name: "a truncated answer", chunks: []string{roleEvent, contentEvent("half")}, wantErr: ErrAnswerTruncated, wantStatus: http.StatusBadGateway, wantTerminal: TerminalStreamTruncated, wantVerdict: limits.TransportFault},
+		{name: "a broken transfer after [DONE] on an unfinished nonce", chunks: []string{roleEvent, contentEvent("whole"), sseDone}, transportErr: transport.ErrSSEStreamTruncated, wantErr: ErrWinnerIncomplete, wantStatus: http.StatusBadGateway, wantTerminal: TerminalStreamTruncated, wantVerdict: limits.TransportFault},
+		{name: "a broken transfer before [DONE] on a finished nonce", chunks: []string{roleEvent, contentEvent("whole")}, finished: true, transportErr: transport.ErrSSEStreamTruncated, wantErr: ErrWinnerIncomplete, wantStatus: http.StatusBadGateway, wantTerminal: TerminalStreamTruncated, wantVerdict: limits.TransportFault},
+		{name: "a broken transfer before [DONE] on an unfinished nonce", chunks: []string{roleEvent, contentEvent("half")}, transportErr: transport.ErrSSEStreamTruncated, wantErr: ErrAnswerTruncated, wantStatus: http.StatusBadGateway, wantTerminal: TerminalStreamTruncated, wantVerdict: limits.TransportFault},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -39,6 +44,7 @@ func TestATruncatedAnswerFailsTheRace(t *testing.T) {
 				chunks:    testCase.chunks,
 				confirmed: true,
 				finished:  testCase.finished,
+				err:       testCase.transportErr,
 			})
 
 			_, err := sim.run(context.Background())
