@@ -2,13 +2,18 @@ package escrow
 
 import (
 	"context"
+	"errors"
+	"slices"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"devshard/cmd/gateway/chain"
 	"devshard/cmd/gateway/config"
+	"devshard/cmd/gateway/store"
+	"devshard/signing"
 )
 
 type recordingSweeper struct {
@@ -17,6 +22,28 @@ type recordingSweeper struct {
 	grace   time.Duration
 	budget  int
 	blockOn chan struct{}
+
+	settleLog    *callLog
+	settleEscrow string
+	settleBudget int
+	settleSwept  [3]int
+	settleErr    error
+}
+
+func (s *recordingSweeper) SweepBeforeFinalize(_ context.Context, escrowID string, budget int) (int, int, int, error) {
+	if s.settleLog != nil {
+		s.settleLog.record("SweepBeforeFinalize")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.settleEscrow, s.settleBudget = escrowID, budget
+	return s.settleSwept[0], s.settleSwept[1], s.settleSwept[2], s.settleErr
+}
+
+func (s *recordingSweeper) settleSweptWith() (string, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.settleEscrow, s.settleBudget
 }
 
 func (s *recordingSweeper) SweepExecutionTimeouts(_ context.Context, grace time.Duration, budgetPerEscrow int) (int, int, int) {
@@ -127,4 +154,109 @@ func TestStopWaitsForASweepInFlight(t *testing.T) {
 	}
 	close(release)
 	<-stopped
+}
+
+func settlingManager(t *testing.T, sweeper *recordingSweeper, budget int64) (*Manager, *fakeSettlementSource, *callLog, store.DevshardRecord) {
+	t.Helper()
+	cfg := config.Defaults()
+	cfg.TimeoutSweep.BudgetPerTick = budget
+	testStore := newFakeStore()
+	record := store.DevshardRecord{EscrowID: "2", PrivateKeyEnv: "MODEL_A_KEY", Model: "model-a", Active: true}
+	testStore.devshards[record.EscrowID] = record
+	log := &callLog{}
+	sweeper.settleLog = log
+	settlementSource := &fakeSettlementSource{calls: log, buildInput: chain.SettlementInput{EscrowID: 2}}
+	txClient := &fakeTxClient{
+		settleEscrowFn: func(ctx context.Context, signer *signing.Secp256k1Signer, input chain.SettlementInput) (chain.SettleEscrowResult, error) {
+			return chain.SettleEscrowResult{EscrowID: input.EscrowID}, nil
+		},
+	}
+	deps := testManagerDeps(t, testStore, txClient, &fakeSnapshotSource{}, &cfg)
+	deps.Settlement = settlementSource
+	deps.Timeouts = sweeper
+	return mustManager(t, deps), settlementSource, log, record
+}
+
+// Test flow:
+//  1. Configure a sweep budget of 3 and a sweeper that applies one vote on the escrow being settled.
+//  2. Settle the escrow without force.
+//  3. Assert the settle succeeded, swept escrow 2 with the configured budget, and swept before it finalized.
+func TestSettleVotesDueTimeoutsBeforeFinalizing(t *testing.T) {
+	sweeper := &recordingSweeper{settleSwept: [3]int{1, 1, 0}}
+	manager, _, log, record := settlingManager(t, sweeper, 3)
+
+	_, err := manager.settle(context.Background(), record, false)
+
+	require.NoError(t, err)
+	escrowID, budget := sweeper.settleSweptWith()
+	require.Equal(t, "2", escrowID)
+	require.Equal(t, 3, budget)
+	calls := log.snapshot()
+	require.Less(t, slices.Index(calls, "SweepBeforeFinalize"), slices.Index(calls, "Finalize"))
+	require.NotEqual(t, -1, slices.Index(calls, "SweepBeforeFinalize"))
+}
+
+// Test flow:
+//  1. Table-driven: with a sweep budget of 3, a settle-time sweep that found the whole budget due with every vote applied, with one vote failed, with every vote failed, and one that found less than the budget.
+//  2. Settle the escrow without force on one manager and with force on another.
+//  3. Assert the unforced settle defers as busy without finalizing only while a full budget was due and a vote landed, and the forced one always finalizes.
+func TestAnUnforcedSettleWaitsWhileTheSweepSpentItsWholeBudget(t *testing.T) {
+	testCases := []struct {
+		name       string
+		swept      [3]int
+		wantDefers bool
+	}{
+		{name: "full budget applied", swept: [3]int{3, 3, 0}, wantDefers: true},
+		{name: "full budget with a failed vote", swept: [3]int{3, 2, 1}, wantDefers: true},
+		{name: "full budget all failed", swept: [3]int{3, 0, 3}, wantDefers: false},
+		{name: "less than the budget due", swept: [3]int{2, 2, 0}, wantDefers: false},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			unforced, _, unforcedLog, unforcedRecord := settlingManager(t, &recordingSweeper{settleSwept: testCase.swept}, 3)
+			forced, _, forcedLog, forcedRecord := settlingManager(t, &recordingSweeper{settleSwept: testCase.swept}, 3)
+
+			_, unforcedErr := unforced.settle(context.Background(), unforcedRecord, false)
+			_, forcedErr := forced.settle(context.Background(), forcedRecord, true)
+
+			if testCase.wantDefers {
+				require.ErrorIs(t, unforcedErr, ErrDevshardBusy)
+				require.NotContains(t, unforcedLog.snapshot(), "Finalize")
+			} else {
+				require.NoError(t, unforcedErr)
+				require.Contains(t, unforcedLog.snapshot(), "Finalize")
+			}
+			require.NoError(t, forcedErr)
+			require.Contains(t, forcedLog.snapshot(), "Finalize")
+		})
+	}
+}
+
+// Test flow:
+//  1. Configure a sweeper whose settle-time sweep fails to open the escrow's session.
+//  2. Settle the escrow with force.
+//  3. Assert the settle fails with the sweep's error and never finalizes.
+func TestASettleWhoseSweepFailsDoesNotFinalize(t *testing.T) {
+	openFailure := errors.New("session unavailable")
+	sweeper := &recordingSweeper{settleErr: openFailure}
+	manager, _, log, record := settlingManager(t, sweeper, 3)
+
+	_, err := manager.settle(context.Background(), record, true)
+
+	require.ErrorIs(t, err, openFailure)
+	require.NotContains(t, log.snapshot(), "Finalize")
+}
+
+// Test flow:
+//  1. Configure a sweep budget of 0, which turns the sweep off.
+//  2. Settle the escrow without force.
+//  3. Assert the settle succeeded without a settle-time sweep.
+func TestSettleSkipsTheSweepWithoutABudget(t *testing.T) {
+	sweeper := &recordingSweeper{settleSwept: [3]int{1, 1, 0}}
+	manager, _, log, record := settlingManager(t, sweeper, 0)
+
+	_, err := manager.settle(context.Background(), record, false)
+
+	require.NoError(t, err)
+	require.NotContains(t, log.snapshot(), "SweepBeforeFinalize")
 }

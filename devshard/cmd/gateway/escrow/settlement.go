@@ -210,6 +210,9 @@ func (m *Manager) settleEntered(ctx context.Context, record store.DevshardRecord
 	if err != nil {
 		return chain.SettleEscrowResult{}, fmt.Errorf("resolving signer for escrow %s: %w", record.EscrowID, err)
 	}
+	if err := m.sweepBeforeFinalize(ctx, record.EscrowID, force); err != nil {
+		return chain.SettleEscrowResult{}, err
+	}
 	if err := m.settlementSource.Finalize(ctx, record.EscrowID); err != nil {
 		return chain.SettleEscrowResult{}, fmt.Errorf("finalizing escrow %s: %w", record.EscrowID, err)
 	}
@@ -234,6 +237,25 @@ func (m *Manager) settleEntered(ctx context.Context, record store.DevshardRecord
 		return result, fmt.Errorf("clearing settlement pending for escrow %s: %w", record.EscrowID, err)
 	}
 	return result, nil
+}
+
+func (m *Manager) sweepBeforeFinalize(ctx context.Context, escrowID string, force bool) error {
+	if m.timeoutSweeper == nil {
+		return nil
+	}
+	budget := int(m.config.Load().TimeoutSweep.BudgetPerTick)
+	if budget <= 0 {
+		return nil
+	}
+	due, applied, failed, err := m.timeoutSweeper.SweepBeforeFinalize(ctx, escrowID, budget)
+	m.recordSweep(due, applied, failed)
+	if err != nil {
+		return fmt.Errorf("sweeping execution timeouts of escrow %s: %w", escrowID, err)
+	}
+	if !force && due >= budget && applied > 0 {
+		return fmt.Errorf("%w: escrow %s spent its timeout sweep budget with votes still landing", ErrDevshardBusy, escrowID)
+	}
+	return nil
 }
 
 // endedOnChain fails open: only the chain answering that the escrow is already settled, or absent once its epoch can have been pruned, counts. See escrows.md, "An escrow the chain has pruned".

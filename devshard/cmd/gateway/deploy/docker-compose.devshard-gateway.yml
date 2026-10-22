@@ -20,6 +20,9 @@ services:
           - ${DEVSHARD_INSTANCE_NAME:-devshard-gateway}
           - devshard-pool
     restart: unless-stopped
+    # Docker kills 10 s after SIGTERM by default, the gateway's own shutdown grace; this covers the grace,
+    # the journal's floor, the final accounting snapshot and the store close. See docs/operations.md, "Shutdown".
+    stop_grace_period: 30s
     healthcheck:
       # /healthz, not /v1/status: both survive the kill switch, but /v1/status builds the status
       # of every escrow on each probe, and /healthz does no work.

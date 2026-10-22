@@ -409,6 +409,13 @@ func (e *escrowLedger) foldSealed(inferences map[uint64]*types.InferenceRecord) 
 		e.foldCost(&money, nonce, cost)
 		e.folded[slotID] = money
 		delete(e.costs, nonce)
+		e.forgetSealed(nonce)
+	}
+}
+
+func (e *escrowLedger) forgetSealed(nonce uint64) {
+	if record, known := e.nonces[nonce]; known && !revisable(record) {
+		delete(e.nonces, nonce)
 	}
 }
 

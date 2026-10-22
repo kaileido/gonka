@@ -144,15 +144,18 @@ func (m *Manager) sweepTimeouts(ctx context.Context) {
 	m.offTickWork.Go(func() {
 		defer m.sweeping.Store(false)
 		grace := time.Duration(settings.GraceSeconds) * time.Second
-		due, applied, failed := m.timeoutSweeper.SweepExecutionTimeouts(ctx, grace, budget)
-		if m.sweepRecorder != nil {
-			m.sweepRecorder.RecordSweep(due, applied, failed)
-		}
-		if due == 0 || m.narrator == nil {
-			return
-		}
-		m.narrator.TimeoutsSwept(due, applied, failed)
+		m.recordSweep(m.timeoutSweeper.SweepExecutionTimeouts(ctx, grace, budget))
 	})
+}
+
+func (m *Manager) recordSweep(due, applied, failed int) {
+	if m.sweepRecorder != nil {
+		m.sweepRecorder.RecordSweep(due, applied, failed)
+	}
+	if due == 0 || m.narrator == nil {
+		return
+	}
+	m.narrator.TimeoutsSwept(due, applied, failed)
 }
 
 // tick is one whole tick, the work it starts off the tick included, so a caller reads what the tick did.

@@ -141,24 +141,22 @@ func (r *Registry) SettlementSession(escrowID string) (EscrowSession, bool) {
 
 // HoldSettlement: see README.md, "The published set and its readers".
 func (r *Registry) HoldSettlement(escrowID string) (EscrowSession, func(), bool) {
+	return r.holdUnclosed(escrowID, func(entry *escrowEntry) *atomic.Int64 { return &entry.settlementHolds })
+}
+
+// holdForSweep keeps a published or draining escrow's session open and busy for a timeout vote without counting it as a request. See README.md, "The published set and its readers".
+func (r *Registry) holdForSweep(escrowID string) (EscrowSession, func(), bool) {
+	return r.holdUnclosed(escrowID, func(entry *escrowEntry) *atomic.Int64 { return &entry.sweepHolds })
+}
+
+func (r *Registry) holdUnclosed(escrowID string, holdsOf func(*escrowEntry) *atomic.Int64) (EscrowSession, func(), bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	entry, known := r.settlementEntryLocked(escrowID)
 	if !known || entry.closeClaimed {
 		return nil, nil, false
 	}
-	return entry.session, r.countHoldLocked(entry, &entry.settlementHolds), true
-}
-
-// holdForSweep keeps a live escrow's session open and busy for a timeout vote without counting it as a request. See README.md, "The published set and its readers".
-func (r *Registry) holdForSweep(escrowID string) (EscrowSession, func(), bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	entry, known := r.live.Load().byID[escrowID]
-	if !known {
-		return nil, nil, false
-	}
-	return entry.session, r.countHoldLocked(entry, &entry.sweepHolds), true
+	return entry.session, r.countHoldLocked(entry, holdsOf(entry)), true
 }
 
 func (r *Registry) countHoldLocked(entry *escrowEntry, holds *atomic.Int64) func() {

@@ -5,7 +5,10 @@ import (
 	"time"
 
 	"devshard/types"
+	"devshard/user"
 )
+
+const noRaceGrace time.Duration = 0
 
 // SweepExecutionTimeouts retries the execution timeouts no race is left to post. The budget is the
 // ceiling for the whole tick, not per escrow, so the added vote traffic has one upper bound whatever
@@ -26,7 +29,7 @@ func (r *Registry) SweepExecutionTimeouts(ctx context.Context, grace time.Durati
 		state := states[(start+offset)%len(states)]
 		session, release, held := r.holdForSweep(state.ID)
 		if !held {
-			continue // retired between the snapshot and the hold; its own settlement owns it now
+			continue // closed between the snapshot and the hold; its settlement sweeps it before finalizing
 		}
 		report := func() sweepCounts {
 			defer release()
@@ -42,6 +45,16 @@ func (r *Registry) SweepExecutionTimeouts(ctx context.Context, grace time.Durati
 		failed += report.failed
 	}
 	return due, applied, failed
+}
+
+// SweepBeforeFinalize votes the execution timeouts left due on an escrow about to finalize, with no race grace; a non-resident escrow is rehydrated with a serving session.
+func (r *Registry) SweepBeforeFinalize(ctx context.Context, escrowID string, budget int) (due, applied, failed int, err error) {
+	var swept user.SweepReport
+	err = r.withServingSession(ctx, escrowID, func(session EscrowSession) error {
+		swept = session.SweepExecutionTimeouts(ctx, noRaceGrace, budget)
+		return nil
+	})
+	return swept.Due, swept.Applied, swept.Failed, err
 }
 
 type sweepCounts struct {

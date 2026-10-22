@@ -22,7 +22,7 @@ It records; it does not decide. Nothing here withholds a host from routing, chan
 
 ## How a nonce is classified
 
-A nonce is filed under a **CounterKey** — one bucket per observed combination of slot, disposition and the dimensions around it. Only combinations that happened exist, and every dimension is bounded by its producer, so an escrow holds a few hundred buckets rather than a row per nonce.
+A nonce is filed under a **CounterKey** — one bucket per observed combination of slot, disposition and the dimensions around it. Only combinations that happened exist, and every dimension is bounded by its producer, so an escrow holds a few hundred buckets rather than a row per nonce. The per-nonce rows behind the buckets last only while a nonce can still move (see "Storage").
 
 Three shapes are the same struct summed at different levels: one slot of one escrow, one host across all of them, and one epoch across all hosts. Each is the sum of the rows below it, which is why aggregation happens on read rather than in storage — every total is derivable, so a stored total could only ever disagree with its own parts.
 
@@ -60,6 +60,8 @@ Nothing queries this database except the ledger's own load at start-up — every
 A slot's money is two parts that never overlap. A nonce the chain still holds keeps its own cost, read again on every sweep and saved per nonce, because its status can still move. A nonce the chain has sealed away is folded into the slot's saved money on the first sweep that no longer sees it, and its cost is dropped, because nothing can change it any more. Saving the live costs rather than a total is what lets a restart neither lose a nonce sealed while the gateway was down nor count a live one twice, once from the save and once from the chain; folding the sealed ones keeps the live map as small as the chain's own window.
 
 Only nonces whose disposition can still move are written down. A burned or finished one cannot — no later fact lifts it — while an unfinished one can, because the protocol may finish it after the race gave up, and one still awaiting its timeout has no disposition yet.
+
+Memory keeps the same rule once the chain seals a nonce away: the sweep that folds its cost drops its row too unless its disposition can still move (`forgetSealed`). Not earlier: until the seal a finish can still meet its race report, which turns `finished_usage_unknown` into used or unused, and the money fold reads whether the nonce was burned. A sealed record has left the chain's live set, so no finish, timeout or verdict follows it, and its race reported long before the seal grace ran out. A fact that still arrives for a dropped nonce is taken as it is after a restart, which holds the same rows.
 
 ## Read next
 

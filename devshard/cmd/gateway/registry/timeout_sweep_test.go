@@ -121,3 +121,53 @@ func TestSweepHoldsTheSessionOpenAndBusyWithoutCountingAsARequest(t *testing.T) 
 	require.Equal(t, int64(0), closeCallsDuringSweep, "Close calls while the sweep holds the retired escrow")
 	require.Equal(t, int64(1), session.closeCalls.Load(), "Close calls after the sweep released")
 }
+
+// Test flow:
+//  1. Build a registry with one active escrow whose session has one execution timeout due.
+//  2. Acquire the escrow as a running race would, then retire it so it drains.
+//  3. Sweep execution timeouts.
+//  4. Assert the draining escrow was swept, then release the race and assert the session closes.
+func TestSweepVotesOnADrainingEscrow(t *testing.T) {
+	session := newFakeSession("participant-a")
+	session.sweepReport = user.SweepReport{Due: 1, Applied: 1}
+	registry := New(Deps{ServingSessions: newSessions(map[string]*fakeSession{"1": session}).open, Membership: newRecordingMembership(), Now: fixedClock()})
+	require.NoError(t, registry.Add(context.Background(), "1", "qwen"))
+	session.setPhase(types.PhaseActive)
+	_, release, acquired := registry.Acquire("1")
+	require.True(t, acquired)
+	require.NoError(t, registry.Retire("1"))
+
+	due, applied, failed := registry.SweepExecutionTimeouts(context.Background(), time.Minute, 4)
+	release()
+	awaitDrainClose(t, registry, func() bool { return session.closeCalls.Load() == 1 })
+
+	require.Equal(t, [3]int{1, 1, 0}, [3]int{due, applied, failed})
+	require.False(t, registry.IsBusy("1"))
+}
+
+// Test flow:
+//  1. Build a registry holding escrow 1, and a session factory that also serves escrow 2, which the registry does not hold.
+//  2. Sweep both before finalizing, with a budget of 5.
+//  3. Assert each session was swept with no race grace and the given budget, and only the rehydrated one was closed.
+func TestSweepBeforeFinalizeVotesWithNoRaceGrace(t *testing.T) {
+	held := newFakeSession("participant-a")
+	held.sweepReport = user.SweepReport{Due: 2, Applied: 1, Failed: 1}
+	parked := newFakeSession("participant-b")
+	parked.sweepReport = user.SweepReport{Due: 1, Applied: 1}
+	registry := New(Deps{ServingSessions: newSessions(map[string]*fakeSession{"1": held, "2": parked}).open, Membership: newRecordingMembership(), Now: fixedClock()})
+	require.NoError(t, registry.Add(context.Background(), "1", "qwen"))
+
+	heldDue, heldApplied, heldFailed, heldErr := registry.SweepBeforeFinalize(context.Background(), "1", 5)
+	parkedDue, parkedApplied, parkedFailed, parkedErr := registry.SweepBeforeFinalize(context.Background(), "2", 5)
+
+	require.NoError(t, heldErr)
+	require.NoError(t, parkedErr)
+	require.Equal(t, [3]int{2, 1, 1}, [3]int{heldDue, heldApplied, heldFailed})
+	require.Equal(t, [3]int{1, 1, 0}, [3]int{parkedDue, parkedApplied, parkedFailed})
+	for _, session := range []*fakeSession{held, parked} {
+		require.Zero(t, session.sweptGrace)
+		require.Equal(t, 5, session.sweptBudget)
+	}
+	require.Zero(t, held.closeCalls.Load())
+	require.Equal(t, int64(1), parked.closeCalls.Load())
+}

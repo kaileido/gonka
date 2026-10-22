@@ -208,6 +208,8 @@ Only the nonces whose disposition can still move are written down — those awai
 - A nonce whose race died with the process, or whose vote was still posting when it stopped, is named `abandoned_by_restart` rather than left pending for ever: no vote result ever reached the ledger, and it will still settle as a completed inference nobody checked. A stored `started` is read as unresolved for that reason (`accounting/store.go`, `Book.Restore`).
 - An unfinished nonce is re-asked on every sweep. If the protocol finished it after the race gave up, it leaves the unfinished bucket — that bucket is what settlement reads as work the participant failed to do.
 
+Memory follows the same rule from the seal on: a sealed nonce's row is dropped with its folded cost unless its disposition can still move (`accounting/book.go`, `forgetSealed`), so a running gateway does not hold a row for every nonce of every retained escrow.
+
 ## Money and tokens
 
 The ledger carries the chain's own arithmetic; it computes none of it. Eight fields ride on all three levels — the slot, the participant record and the epoch summary:

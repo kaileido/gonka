@@ -15,13 +15,19 @@ import (
 
 // Finalize collects host signatures, so a non-resident escrow is rehydrated with a serving session.
 func (r *Registry) Finalize(ctx context.Context, escrowID string) error {
-	if session, release, held := r.HoldSettlement(escrowID); held {
-		defer release()
+	return r.withServingSession(ctx, escrowID, func(session EscrowSession) error {
 		if err := session.Finalize(ctx); err != nil {
 			return err
 		}
 		r.observeFinalized(escrowID, session)
 		return nil
+	})
+}
+
+func (r *Registry) withServingSession(ctx context.Context, escrowID string, work func(EscrowSession) error) error {
+	if session, release, held := r.HoldSettlement(escrowID); held {
+		defer release()
+		return work(session)
 	}
 	if r.servingSessions == nil {
 		return fmt.Errorf("escrow %s: no serving session factory", escrowID)
@@ -30,11 +36,7 @@ func (r *Registry) Finalize(ctx context.Context, escrowID string) error {
 	if err != nil {
 		return fmt.Errorf("rehydrating serving session for escrow %s: %w", escrowID, err)
 	}
-	finalizeErr := session.Finalize(ctx)
-	if finalizeErr == nil {
-		r.observeFinalized(escrowID, session)
-	}
-	return errors.Join(finalizeErr, session.Close())
+	return errors.Join(work(session), session.Close())
 }
 
 // observeFinalized hands the ledger the escrow as finalize left it: finalize pays every open record, which a reading taken at drain never saw.
