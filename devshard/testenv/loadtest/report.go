@@ -146,7 +146,11 @@ func (r runReport) render(runName string) string {
 	}
 	fmt.Fprintf(&out, "# Load test report: %s, seed %d, %s\n\n", r.summary.Scenario, r.summary.Seed, runName)
 	if r.build != nil {
-		fmt.Fprintf(&out, "Build: %s, protocol %s, binary %s, devshardd sha256 %s.\n\n", r.build.Name, r.build.Protocol, r.build.BinaryVersion, r.build.DevsharddSHA256)
+		fmt.Fprintf(&out, "Build: %s, protocol %s, binary %s, devshardd sha256 %s", r.build.Name, r.build.Protocol, r.build.BinaryVersion, r.build.DevsharddSHA256)
+		for _, version := range r.build.Versions {
+			fmt.Fprintf(&out, "; also %s, sha256 %s", version.Name, r.build.VersionsSHA256[version.Name])
+		}
+		out.WriteString(".\n\n")
 	}
 	fmt.Fprintf(&out, "Verdict: %s. %s\n\n", verdict, strings.Join(countCells, " · "))
 	r.renderStalledShare(&out)

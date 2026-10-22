@@ -78,10 +78,8 @@ services:
       MOCK_DAPI_HOST_ADDRS: "{{ mockDapiHostAddrsEnv . }}"
       CHAIN_ID: "{{ .ChainID }}"
       MOCK_DAPI_BINARY_DIR: /testenv-binaries
-{{ if .MockDapi.AnnounceVersion }}      # The routing catalog and versiond reconcile must name the version the hosts run.
-      MOCK_DAPI_VERSION_NAME: "{{ .Versiond.VersionName }}"
-      MOCK_DAPI_VERSION_BINARY: "file://{{ .Versiond.OverridePath }}"
-      MOCK_DAPI_VERSION_SHA256: "0000000000000000000000000000000000000000000000000000000000000000"
+{{ if .MockDapi.AnnounceVersion }}      # The routing catalog and versiond reconcile must name the versions the hosts run.
+      MOCK_DAPI_VERSIONS_JSON: '{{ mockDapiVersionsJSON . }}'
 {{ end }}      DEVSHARD_OTEL_ENABLED: ${TESTENV_OTEL_ENABLED:-false}
       OTEL_ENDPOINT: ${TESTENV_OTEL_ENDPOINT:-}
       LOG_FORMAT: ${LOG_FORMAT:-json}
@@ -184,9 +182,10 @@ services:
       VERSIOND_BIN_DIR: /opt/versiond/bin
       VERSIOND_DATA_DIR: /opt/versiond/data
       VERSIOND_BINARY_NAME: devshardd
-      VERSIOND_FORCE: "{{ $.Versiond.VersionName }}"
+      VERSIOND_FORCE: "{{ forceVersions $ }}"
       VERSIOND_OVERRIDE_{{ versionEnvSuffix $.Versiond.VersionName }}: {{ $.Versiond.OverridePath }}
-      NODE_GRPC_URL: {{ $.MockChain.Host }}:{{ $.MockChain.GRPCPort }}
+{{ range $.Versiond.ExtraVersions }}      VERSIOND_OVERRIDE_{{ versionEnvSuffix .Name }}: {{ .OverridePath }}
+{{ end }}      NODE_GRPC_URL: {{ $.MockChain.Host }}:{{ $.MockChain.GRPCPort }}
       NODE_RPC_URL: http://{{ $.MockChain.Host }}:{{ $.MockChain.RPCPort }}
       NODE_HOST: {{ $.MockChain.Host }}
       NODE_MANAGER_ADDR: {{ $.MockDapi.Host }}:{{ $.MockDapi.GRPCPort }}
@@ -247,7 +246,8 @@ services:
 {{ end }}
     volumes:
       - {{ $.Versiond.HostBinaryMount }}:{{ $.Versiond.OverridePath }}:ro
-      - ./keyring:{{ $.Versiond.KeyringDir }}
+{{ range $.Versiond.ExtraVersions }}      - {{ .HostBinaryMount }}:{{ .OverridePath }}:ro
+{{ end }}      - ./keyring:{{ $.Versiond.KeyringDir }}
       - ./data/{{ .ID }}:/opt/versiond/data
     networks:
       testenv:
@@ -383,7 +383,8 @@ services:
       DEVSHARD_GATEWAY_HOST_PING_CONCURRENCY: "8"
       # Production default is 5m; keep 5s so WaitGatewaySessionSettled (90s) still passes.
       DEVSHARD_QUIET_SETTLE_DELAY: ${DEVSHARD_QUIET_SETTLE_DELAY:-5s}
-    volumes:
+{{ range gatewayEnv . }}      {{ .Key }}: {{ .Value }}
+{{ end }}    volumes:
       - ./data/devshardctl:/var/lib/devshardctl
     ports:
       - "{{ .Devshardctl.Port }}:{{ .Devshardctl.Port }}"
@@ -408,6 +409,11 @@ services:
 `
 
 func writeCompose(cfg *config.File, outPath string) error {
+	for key := range cfg.Devshardctl.Env {
+		if strings.Contains(composeTmpl, "\n      "+key+":") {
+			return fmt.Errorf("devshardctl env %s is already set by the compose template", key)
+		}
+	}
 	funcs := template.FuncMap{
 		"versionEnvSuffix":          versionEnvSuffix,
 		"versiondHosts":             versiondHosts,
@@ -429,6 +435,9 @@ func writeCompose(cfg *config.File, outPath string) error {
 		"primaryEscrowID":           primaryEscrowID,
 		"primaryModelID":            primaryModelID,
 		"devshardsJSON":             devshardsJSON,
+		"forceVersions":             forceVersions,
+		"gatewayEnv":                gatewayEnv,
+		"mockDapiVersionsJSON":      mockDapiVersionsJSON,
 		"mlNodeIDs":                 mlNodeIDs,
 		"mlNodeIPOffset":            config.MLNodeIPOffset,
 		"mlNodeHostPort":            mlNodeHostPort,
@@ -689,4 +698,39 @@ func devshardsJSON(cfg *config.File) (string, error) {
 	}
 	body, err := json.Marshal(runtimes)
 	return string(body), err
+}
+
+// forceVersions is VERSIOND_FORCE: the configured version, then each extra one.
+func forceVersions(cfg *config.File) string {
+	names := []string{cfg.Versiond.VersionName}
+	for _, extra := range cfg.Versiond.ExtraVersions {
+		names = append(names, extra.Name)
+	}
+	return strings.Join(names, ",")
+}
+
+// mockDapiVersionsJSON is the /versions catalog: every version the hosts run, each from its mounted binary.
+func mockDapiVersionsJSON(cfg *config.File) (string, error) {
+	type version struct {
+		Name   string `json:"name"`
+		Binary string `json:"binary"`
+		SHA256 string `json:"sha256"`
+	}
+	const noSHA = "0000000000000000000000000000000000000000000000000000000000000000"
+	versions := []version{{Name: cfg.Versiond.VersionName, Binary: "file://" + cfg.Versiond.OverridePath, SHA256: noSHA}}
+	for _, extra := range cfg.Versiond.ExtraVersions {
+		versions = append(versions, version{Name: extra.Name, Binary: "file://" + extra.OverridePath(), SHA256: noSHA})
+	}
+	body, err := json.Marshal(versions)
+	return string(body), err
+}
+
+// gatewayEnv is the gateway's extra env, sorted so the render is stable.
+func gatewayEnv(cfg *config.File) []envPair {
+	pairs := make([]envPair, 0, len(cfg.Devshardctl.Env))
+	for key, value := range cfg.Devshardctl.Env {
+		pairs = append(pairs, envPair{Key: key, Value: quoteEnvValue(value)})
+	}
+	sort.Slice(pairs, func(i, j int) bool { return pairs[i].Key < pairs[j].Key })
+	return pairs
 }

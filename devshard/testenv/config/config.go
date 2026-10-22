@@ -160,6 +160,19 @@ type VersiondCfg struct {
 	EnableContentionProfiles bool   `yaml:"enable_contention_profiles,omitempty"`
 	// Image runs this prebuilt image instead of building versiond from the checkout.
 	Image string `yaml:"image,omitempty"`
+	// ExtraVersions are further devshardd versions every host runs next to VersionName.
+	ExtraVersions []ExtraVersion `yaml:"extra_versions,omitempty"`
+}
+
+// ExtraVersion is one more devshardd version a host runs, from a host binary.
+type ExtraVersion struct {
+	Name            string `yaml:"name"`
+	HostBinaryMount string `yaml:"host_binary_mount"`
+}
+
+// OverridePath is where the host mounts this version's binary.
+func (v ExtraVersion) OverridePath() string {
+	return DefaultDevsharddOverride + "-" + v.Name
 }
 
 // VersiondRouterCfg is the sticky HAProxy router in front of versiond instances.
@@ -177,6 +190,8 @@ type DevshardctlCfg struct {
 	StatsPort int    `yaml:"stats_port"`
 	IP        string `yaml:"ip"`
 	Image     string `yaml:"image,omitempty"`
+	// Env adds gateway env keys the compose template does not set.
+	Env map[string]string `yaml:"env,omitempty"`
 }
 
 // PostgresCfg is optional shared storage for devshardd children.

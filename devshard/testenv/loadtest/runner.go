@@ -196,7 +196,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 
 	composePath := filepath.Join(workDir, "docker-compose.yml")
 	project := ""
-	composeEnv := loadTestComposeEnv()
+	composeEnv := loadTestComposeEnv(opts.Build)
 	defer func() {
 		if opts.KeepStack || project == "" {
 			return
@@ -224,7 +224,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	}
 	const maxStartAttempts = 3
 	log.Printf("loadtest: stage=stack_start scenario=%s", scenario.Scenario)
-	log.Printf("loadtest: peer_rpc_transport=h2 endpoint=versiond-router:8080 grpc=true")
+	log.Printf("loadtest: peer_rpc_transport=%s", peerRPCTransport(composeEnv))
 	for attempt := 1; attempt <= maxStartAttempts; attempt++ {
 		project = "loadtest-" + strconv.FormatInt(time.Now().UnixNano(), 36)
 		log.Printf("loadtest: starting isolated Docker stack (attempt %d/%d, project %s)", attempt, maxStartAttempts, project)
@@ -839,11 +839,32 @@ func dockerServerArch(ctx context.Context) (string, error) {
 // stack: HTTP/2 (the client default) on versiond-router:8080 with native
 // gRPC. The normal testenv Compose defaults remain unchanged for non-loadtest
 // testenv and citest runs.
-func loadTestComposeEnv() []string {
+func loadTestComposeEnv(build *Build) []string {
 	env := os.Environ()
 	env = removeEnvValue(env, "DEVSHARD_RPC_H2_UPGRADE")
 	env = setEnvValue(env, "DEVSHARD_RPC_GRPC", "true")
+	if build == nil {
+		return env
+	}
+	if build.PeerRPC.GRPC != nil && !*build.PeerRPC.GRPC {
+		env = removeEnvValue(env, "DEVSHARD_RPC_GRPC")
+	}
+	if build.PeerRPC.H2Upgrade != nil {
+		env = setEnvValue(env, "DEVSHARD_RPC_H2_UPGRADE", strconv.FormatBool(*build.PeerRPC.H2Upgrade))
+	}
 	return env
+}
+
+func peerRPCTransport(env []string) string {
+	values := map[string]string{"DEVSHARD_RPC_H2_UPGRADE": "default", "DEVSHARD_RPC_GRPC": "off"}
+	for _, item := range env {
+		if key, value, ok := strings.Cut(item, "="); ok {
+			if _, tracked := values[key]; tracked {
+				values[key] = value
+			}
+		}
+	}
+	return "h2_upgrade=" + values["DEVSHARD_RPC_H2_UPGRADE"] + " grpc=" + values["DEVSHARD_RPC_GRPC"]
 }
 
 func setEnvValue(env []string, key, value string) []string {

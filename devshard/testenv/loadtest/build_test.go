@@ -74,3 +74,37 @@ func TestRequireTestenvHooks(t *testing.T) {
 	}
 	require.ErrorContains(t, err, "event withhold, versiond-3 DEVSHARD_TESTENV_PAYLOAD_HTTP_STATUS needs devshardd built with -tags devshard_testenv")
 }
+
+// Test flow:
+// 1. Load a build whose hosts also run v4.2 next to v6 and whose gateway gets extra env.
+// 2. Check the extra version and the env reach the stack config.
+// 3. Check an extra version named like the protocol and an unknown key are refused.
+func TestLoadBuildVersionsAndEnv(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "build.yaml")
+	body := `name: coexist
+protocol: v6
+binary_version: lab-gonka-pr-1792-67230e4dcc0a
+devshardd: v6/devshardd
+images: {versiond: v, versiond_router: r, gateway: g}
+versions:
+  - {name: v4.2, devshardd: v42/devshardd}
+gateway: {env: {DEVSHARD_REQUIRE_HEIGHT_SEED: "true"}}
+`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
+	build, err := LoadBuild(path)
+	require.NoError(t, err)
+	cfg := &config.File{}
+	cfg.ApplyDefaults()
+	build.apply(cfg)
+	require.Equal(t, []config.ExtraVersion{{Name: "v4.2", HostBinaryMount: filepath.Join(dir, "v42", "devshardd")}}, cfg.Versiond.ExtraVersions)
+	require.Equal(t, map[string]string{"DEVSHARD_REQUIRE_HEIGHT_SEED": "true"}, cfg.Devshardctl.Env)
+
+	require.NoError(t, os.WriteFile(path, []byte(strings.Replace(body, "{name: v4.2,", "{name: v6,", 1)), 0o644))
+	_, err = LoadBuild(path)
+	require.ErrorContains(t, err, "versions[0] needs a name other than protocol")
+
+	require.NoError(t, os.WriteFile(path, []byte(body+"route_prefix: /devshard/v4.2\n"), 0o644))
+	_, err = LoadBuild(path)
+	require.ErrorContains(t, err, "field route_prefix not found")
+}
