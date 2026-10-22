@@ -89,5 +89,4 @@ const (
 	ParallelToolCallsStrip ParallelToolCallsPolicy = "strip"
 )
 
-// The byte a JSON string value starts with. See README.md, "The prompt text".
 var jsonStringStart = []byte(`"`)

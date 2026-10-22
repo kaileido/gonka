@@ -41,7 +41,7 @@ type Library struct {
 	httpClient *http.Client
 	now        func() time.Time
 	background func(task func())
-	parse      func(r io.Reader) (*Counter, error)
+	parse      func(io.Reader) (*Counter, error)
 
 	mu     sync.Mutex
 	models map[string]*pinnedTokenizer
@@ -133,7 +133,11 @@ func (l *Library) refresh(model string, epoch uint64, held revision) {
 	case errors.Is(err, errNoTokenizer), errors.Is(err, ErrUnsupported):
 		logging.Info("model has no tokenizer the gateway reads; its prompts are not checked against its context length", logkey.Model, model, logkey.Tokenizer, pinned.String(), logkey.Error, err)
 	default:
-		logging.Warn("prompt tokenizer could not be loaded; prompts are not checked until it is", logkey.Model, model, logkey.Error, err)
+		message := "prompt tokenizer could not be loaded; prompts are not checked until it is"
+		if !pinMoved {
+			message = "prompt tokenizer pin could not be read; a tokenizer already loaded keeps counting until it is"
+		}
+		logging.Warn(message, logkey.Model, model, logkey.Error, err)
 		l.update(model, func(entry *pinnedTokenizer) { entry.retryAfter(l.now().Add(retryInterval), pinMoved) })
 		return
 	}
