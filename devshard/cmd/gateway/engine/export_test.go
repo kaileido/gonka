@@ -26,8 +26,8 @@ func widestFinishedOutcome() AttemptOutcome {
 		Completed:    testEpoch.Add(9 * time.Second),
 
 		ContentChunks: 412, StreamChunks: 415, OutputBytes: 61_440,
-		UsageCompletionTokens: 512,
-		MaxChunkGap:           1200 * time.Millisecond, MaxChunkGapAt: 310,
+		UsageCompletionTokens: 512, HostTerminated: true,
+		MaxChunkGap: 1200 * time.Millisecond, MaxChunkGapAt: 310,
 		MeanChunkGap:   21 * time.Millisecond,
 		UpstreamStatus: 502, UpstreamBody: "upstream is down",
 	}

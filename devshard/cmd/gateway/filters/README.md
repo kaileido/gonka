@@ -328,7 +328,7 @@ The engine reads these rules through `IsCacheableUpstreamError` to stop escalati
 
 ### Finishing an answer
 
-The gateway appends its own `[DONE]` when a host sends none (`api/stream.go`, `terminateLocked`), so the terminator says nothing about whether the model finished: a host that streamed reasoning for twenty minutes and then dropped the connection is terminated by us and reads as a complete 200. The only signal left is a terminal reason on every choice the reply started, and storing a reply without one replays that unfinished body to every retry of the same request for as long as the entry lives.
+The gateway writes its own `[DONE]` (`api/stream.go`, `terminateLocked`), so the terminator a client reads says nothing about whether the model finished. The race fails an answer its host closed with neither `[DONE]` nor a finished nonce (`engine/failure.go`, `ErrAnswerTruncated`), but a host that finished its nonce without a terminator, or sent one before its choices ended, is still served as a 200. The only signal left is a terminal reason on every choice the reply started, and storing a reply without one replays that unfinished body to every retry of the same request for as long as the entry lives.
 
 - `finish_reason` and `stop_reason` both end a choice, the way `completionAsChunks` ends one; `null`, `""` and absent are all still running. Both stay raw through the decode, because a wrong type in one of them would otherwise fail the decode that also finds the error.
 - Any reason a host names is terminal, `"length"` and a reason no spec lists included: the question is whether generation ended, not why. A reply cut short by `max_tokens` ended.

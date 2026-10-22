@@ -71,6 +71,7 @@ type AttemptOutcome struct {
 
 	Terminal        Terminal
 	LogprobsDecoded bool
+	HostTerminated  bool
 	Confirmed       bool
 	ConfirmedAt     int64
 	NonceFinished   bool

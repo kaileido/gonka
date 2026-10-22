@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"devshard/cmd/gateway/config"
+	"devshard/cmd/gateway/engine"
 	"devshard/cmd/gateway/escrow"
 	"devshard/cmd/gateway/limits"
 	"devshard/cmd/gateway/registry"
@@ -329,6 +330,41 @@ func TestAStreamCarriesTheTerminatorOnEveryExit(t *testing.T) {
 				t.Fatalf("streamed body: got %q, want exactly one %q", body, testCase.wantOnce)
 			}
 		})
+	}
+}
+
+// Test flow:
+//  1. Make the engine write one content chunk and then fail with `engine.ErrAnswerTruncated`.
+//  2. POST the chat once buffered and once streaming.
+//  3. Assert the buffered reply is 502 with the error's message and none of the partial content.
+//  4. Assert the stream keeps the content, ends with the error event, and carries no [DONE].
+func TestAnAnswerCutShortReachesTheClientAsAnError(t *testing.T) {
+	const partial = "data: {\"choices\":[{\"delta\":{\"content\":\"half\"}}]}\n\n"
+
+	buffered := newHarness(t)
+	buffered.inference.reply = ""
+	buffered.inference.chunks = []string{partial}
+	buffered.inference.err = engine.ErrAnswerTruncated
+	recorder := buffered.request(t, http.MethodPost, "/v1/chat/completions", chatBody, nil)
+	if recorder.Code != http.StatusBadGateway {
+		t.Fatalf("buffered status = %d, want %d (%s)", recorder.Code, http.StatusBadGateway, recorder.Body)
+	}
+	if body := recorder.Body.String(); !strings.Contains(body, engine.ErrAnswerTruncated.Error()) || strings.Contains(body, "half") {
+		t.Fatalf("buffered body = %s, want the error and no partial content", body)
+	}
+
+	streamed := newHarness(t)
+	streamed.inference.reply = ""
+	streamed.inference.chunks = []string{partial}
+	streamed.inference.err = engine.ErrAnswerTruncated
+	recorder = streamed.request(t, http.MethodPost, "/v1/chat/completions", streamChatBody, nil)
+	body := recorder.Body.String()
+	wantTail := partial + "data: {\"error\":{\"message\":\"" + engine.ErrAnswerTruncated.Error() + "\"}}\n\n"
+	if !strings.HasSuffix(body, wantTail) {
+		t.Fatalf("streamed body = %q, want it to end with %q", body, wantTail)
+	}
+	if strings.Contains(body, "[DONE]") {
+		t.Fatalf("streamed body = %q, want no terminator on an answer cut short", body)
 	}
 }
 

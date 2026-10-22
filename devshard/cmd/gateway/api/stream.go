@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"cmp"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -165,6 +166,11 @@ func (c *clientStream) Fail(cause error) error {
 	tailErr := c.flushTailLocked()
 	if _, err := c.emitLocked(errorEvent(cause)); err != nil {
 		return err
+	}
+	// A [DONE] would tell a client that skips error events the answer was whole.
+	if errors.Is(cause, engine.ErrAnswerTruncated) {
+		c.flushLocked()
+		return tailErr
 	}
 	if err := c.terminateLocked(); err != nil {
 		return err

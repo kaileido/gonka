@@ -133,6 +133,7 @@ type attemptState struct {
 	logprobTokens         int64
 	tokensBurned          bool
 	logprobsDecoded       bool
+	hostTerminated        bool
 	finishReason          string
 	contentSource         string
 	capability            CapabilitySignal
@@ -227,6 +228,7 @@ func (w *attemptWriter) Write(chunk []byte) (int, error) {
 	w.state.streamChunks++
 	w.state.outputBytes += int64(len(chunk))
 	w.state.recordChunkGap(now, chunk)
+	w.state.hostTerminated = w.state.hostTerminated || filters.HasSSEDone(chunk)
 	if w.state.firstToken.IsZero() {
 		w.state.firstToken = now
 		w.spec.emit(w.progress(AttemptFirstToken, now))

@@ -10,6 +10,9 @@ func (o RaceOutcome) failure() error {
 		if hostErr := o.hostError(); hostErr != nil {
 			return hostErr
 		}
+		if o.winnerTruncated() {
+			return ErrAnswerTruncated
+		}
 		return ErrWinnerIncomplete
 	}
 	if hostErr := o.hostError(); hostErr != nil {
@@ -33,6 +36,15 @@ func endedByProofOfCompute(attempt AttemptOutcome) bool {
 
 func refusedAsUnavailable(attempt AttemptOutcome) bool {
 	return attempt.Terminal == TerminalUnavailable || attempt.Terminal == TerminalThrottled
+}
+
+func (o RaceOutcome) winnerTruncated() bool {
+	for _, attempt := range o.Attempts {
+		if o.IsWinner(attempt) && attempt.Terminal == TerminalStreamTruncated {
+			return true
+		}
+	}
+	return false
 }
 
 func (o RaceOutcome) winnerStreamed() bool {
