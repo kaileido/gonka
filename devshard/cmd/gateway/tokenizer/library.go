@@ -2,6 +2,7 @@
 package tokenizer
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -11,7 +12,6 @@ import (
 	"sync"
 	"time"
 
-	"devshard/cmd/gateway/filters"
 	"devshard/cmd/gateway/internal/logkey"
 	"devshard/logging"
 )
@@ -21,7 +21,6 @@ const (
 	maxTokenizerBytes = 64 << 20
 	loadTimeout       = 2 * time.Minute
 	retryInterval     = 10 * time.Minute
-	epochUnknown      = 0
 	unpinned          = ""
 )
 
@@ -35,7 +34,7 @@ type ModelSource interface {
 // Library holds the tokenizer the chain pins for each model it is asked about, loading each in the background on first use.
 type Library struct {
 	source     ModelSource
-	epoch      func() uint64
+	epoch      func() (epoch uint64, known bool)
 	httpClient *http.Client
 	now        func() time.Time
 	background func(task func())
@@ -72,8 +71,8 @@ func (p *pinnedTokenizer) retryAfter(at time.Time) {
 	p.loading, p.retryAt = false, at
 }
 
-// NewLibrary builds a library that reads each model's pin on chain for the epoch the epoch func returns, nothing while it returns 0, and the tokenizer from the Hugging Face hub.
-func NewLibrary(source ModelSource, epoch func() uint64) *Library {
+// NewLibrary builds a library that reads each model's pin on chain for the epoch the epoch func reports, nothing while it knows none, and the tokenizer from the Hugging Face hub.
+func NewLibrary(source ModelSource, epoch func() (epoch uint64, known bool)) *Library {
 	return &Library{
 		source:     source,
 		epoch:      epoch,
@@ -84,23 +83,10 @@ func NewLibrary(source ModelSource, epoch func() uint64) *Library {
 	}
 }
 
-// MinimumPromptTokens returns the fewest tokens a normalized chat body's messages hold; known is false while the model has no tokenizer loaded or the count fails.
-func (l *Library) MinimumPromptTokens(model string, body []byte) (tokens uint64, known bool) {
-	counter := l.counter(model)
-	if counter == nil {
-		return 0, false
-	}
-	prompt, err := filters.PromptText(body)
-	if err != nil {
-		return 0, false
-	}
-	tokens, err = counter.MinimumTokens(prompt)
-	return tokens, err == nil
-}
-
-func (l *Library) counter(model string) *Counter {
-	epoch := l.epoch()
-	if epoch == epochUnknown {
+// Counter returns the model's loaded tokenizer, nil while it has none, and starts reading the model's pin when the epoch moved on or a retry is due.
+func (l *Library) Counter(model string) *Counter {
+	epoch, known := l.epoch()
+	if !known {
 		return nil
 	}
 	l.mu.Lock()
@@ -180,9 +166,16 @@ func (l *Library) load(ctx context.Context, pinned revision) (*Counter, error) {
 	case response.ContentLength > maxTokenizerBytes:
 		return nil, fmt.Errorf("%w: %s is %d bytes", ErrUnsupported, address, response.ContentLength)
 	}
-	counter, err := Load(io.LimitReader(response.Body, maxTokenizerBytes))
+	raw, err := io.ReadAll(io.LimitReader(response.Body, maxTokenizerBytes+1))
+	switch {
+	case err != nil:
+		return nil, fmt.Errorf("read %s: %w", address, err)
+	case len(raw) > maxTokenizerBytes:
+		return nil, fmt.Errorf("%w: %s is over %d bytes", ErrUnsupported, address, maxTokenizerBytes)
+	}
+	counter, err := Load(bytes.NewReader(raw))
 	if err != nil {
-		return nil, fmt.Errorf("load %s: %w", address, err)
+		return nil, fmt.Errorf("%w: load %s: %w", ErrUnsupported, address, err)
 	}
 	return counter, nil
 }

@@ -29,7 +29,7 @@ const (
 type Counter struct {
 	nfc        bool
 	splits     []splitRule
-	byteSymbol [256]uint32
+	byteSymbol [byteValues]uint32
 	merges     map[uint64]merge
 	whole      map[string]struct{}
 }

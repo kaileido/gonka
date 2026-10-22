@@ -25,18 +25,29 @@ type promptCall struct {
 
 type promptField string
 
+const noPromptText promptField = ""
+
 func (f *promptField) UnmarshalJSON(data []byte) error {
-	if len(data) > 0 && data[0] == '"' {
-		var text string
-		if err := json.Unmarshal(data, &text); err != nil {
-			return err
-		}
+	if bytes.Equal(data, jsonNull) {
+		return nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return err
+	}
+	if text, isString := value.(string); isString {
 		*f = promptField(text)
 		return nil
 	}
-	if !bytes.Equal(data, jsonNull) {
-		*f = promptField(data)
+	var rendered bytes.Buffer
+	encoder := json.NewEncoder(&rendered)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(value); err != nil {
+		return err
 	}
+	*f = promptField(bytes.TrimSuffix(rendered.Bytes(), jsonLineEnd))
 	return nil
 }
 
@@ -48,7 +59,7 @@ func PromptText(body []byte) ([]string, error) {
 	}
 	parts := make([]string, 0, len(decoded.Messages)+1)
 	add := func(field promptField) {
-		if field != "" {
+		if field != noPromptText {
 			parts = append(parts, string(field))
 		}
 	}
@@ -59,11 +70,11 @@ func PromptText(body []byte) ([]string, error) {
 		add(call.Name)
 		add(call.Arguments)
 	}
-	for index := range decoded.Messages {
-		message := &decoded.Messages[index]
+	for messageIndex := range decoded.Messages {
+		message := &decoded.Messages[messageIndex]
 		add(message.Content)
-		for call := range message.ToolCalls {
-			addCall(&message.ToolCalls[call])
+		for callIndex := range message.ToolCalls {
+			addCall(&message.ToolCalls[callIndex])
 		}
 		if message.FunctionCall != nil {
 			addCall(message.FunctionCall)

@@ -7,17 +7,20 @@ Counts a chat prompt's tokens with the tokenizer the chain pins for the model, s
 - `bpe.go` — `Load` reads a Hugging Face `tokenizer.json` into a `Counter`; `Counter.Count` is its exact token count of a text, without the special tokens a chat template adds.
 - `merge.go` — the merge loop: lowest rank first, leftmost on a tie, as Hugging Face BPE applies merges.
 - `estimate.go` — `Counter.MinimumTokens`: the fewest tokens a prompt holds, exact up to a budget and a lower bound from samples beyond it.
-- `library.go` — `Library`: the counter for each model, keyed by the revision the chain pins, loaded in the background.
+- `library.go` — `Library.Counter`: the counter for each model, loaded in the background and fetched again when the revision the chain pins moves.
+- `vocabulary.go` — the `tokenizer.json` names `Load` reads and the hub address.
+
+The package does not read chat bodies: the composition root (`app/prompt_tokens.go`) turns a normalized body into its text with `filters.PromptText` and counts it with `Counter.MinimumTokens`.
 
 ## Where the tokenizer comes from
 
 The epoch's model snapshot pins every model to a Hugging Face repo and commit (`hf_repo`, `hf_commit`), the revision hosts serve and validators replay. `Library` reads that pin through `vocabulary.ChainModelSource`, the same chain query the stop-token vocabulary reads (`app/stop_token_vocabulary.go`), and fetches `tokenizer.json` at that commit. A model id never selects a tokenizer by name, so a new model is counted the epoch governance registers it, and a gateway is never counting with a different revision than the hosts it routes to.
 
-The files do not ship with the gateway. The three that ship today are 36 MB together and would be refreshed by a gateway release rather than by the governance vote that changes them.
+The files do not ship with the gateway: the three in use today are 36 MB together, and shipping them would tie a tokenizer change to a gateway release rather than to the governance vote that makes it.
 
 - **The first request for a model starts the load and is not checked**, nor is any request until the load lands: the request path never waits on the hub. A load takes about a second. Before the gateway knows the epoch, no pin is read.
 - **A pin is fetched once.** A new epoch reads the pin again, and fetches only when the commit moved; until the new tokenizer lands the previous one keeps counting.
-- **A pinned commit never changes**, so a revision without a `tokenizer.json` (Kimi-K2.6 ships a tiktoken model) or with one this package does not read (`ErrUnsupported`) is recorded and not fetched again. A failed fetch or pin read is retried after `retryInterval` (10 minutes), the stop-token vocabulary's cadence.
+- **A pinned commit never changes**, so a revision without a `tokenizer.json` (Kimi-K2.6 ships a tiktoken model) or with one this package does not read (`ErrUnsupported`) is recorded and not fetched again; so is a file that was read whole and does not load, or is larger than `maxTokenizerBytes`. A failed fetch or pin read is retried after `retryInterval` (10 minutes), the stop-token vocabulary's cadence.
 - **The library holds one tokenizer per model it was asked about**, and the boundary asks only for a model that routes, so the set is bounded by the served models.
 
 ## Counting exactly
@@ -44,3 +47,14 @@ The sampled estimate is what it costs to stay bounded, and it misses on a prompt
 - **Nothing outlives a call.** A pre-token of up to `maxRememberedPiece` (64) bytes seen twice in one call is merged once, since words repeat within a text and longer pre-tokens rarely do; the memo is dropped when the call returns, so no prompt's words are retained.
 - **A `Counter` is immutable once loaded** and is shared by every request.
 - **`maxTokenizerBytes`** (64 MiB) bounds one `tokenizer.json` read; the largest pinned today is about 20 MB.
+
+## Benchmarks
+
+`BenchmarkEstimate` and `BenchmarkLoad` here, and `BenchmarkChatContextCheck` in `api/`, run on real tokenizers and skip without them. `GATEWAY_TOKENIZER_DIR` names a directory of `tokenizer.json` files under any name ending in `.json`; each is one tokenizer. From `devshard/`:
+
+```sh
+GATEWAY_TOKENIZER_DIR=/path/to/tokenizers go test ./cmd/gateway/tokenizer/ -run '^$' -bench 'Load|Estimate' -benchtime 10x
+GATEWAY_TOKENIZER_DIR=/path/to/tokenizers go test ./cmd/gateway/api/ -run '^$' -bench ChatContextCheck -benchtime 20x
+```
+
+`BenchmarkEstimate` reports each estimate's error against the exact count of the same text as `%err`.

@@ -9,6 +9,7 @@ import (
 var (
 	jsonNull        = []byte("null")
 	jsonEmptyString = []byte(`""`)
+	jsonLineEnd     = []byte("\n")
 )
 
 // answerFinish records, per choice, whether a reply that started it also finished it. See README.md, "Finishing an answer".
