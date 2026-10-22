@@ -1204,6 +1204,34 @@ func TestABurnNamesTheRequestItsDrainWasServing(t *testing.T) {
 }
 
 // Test flow:
+//  1. Submit "request-head", which leaves while its serve takes the escrow hold and before the serve binds it, then "request-next", and start the dispatcher.
+//  2. Assert "request-next" is served in the same drain, on `hostB` at nonce 1, the nonce the head's serve gave back uncommitted.
+//  3. Assert "request-head" gets no reply, no nonce was burned, and only the served request holds a slot.
+func TestAWaiterThatLeavesBeforeItsServeBindsDoesNotStallTheQueue(t *testing.T) {
+	var leaveOnce sync.Once
+	var head *waiter
+	test := newHarness(t, harnessConfig{holdStart: true, escrowHold: func() (func(), bool) {
+		leaveOnce.Do(func() { head.abandon() })
+		return func() {}, true
+	}})
+	head = newWaiter(RequestProfile{RequestID: "request-head", Model: modelA}, test.clock.Now())
+	if outcome := test.dispatcher.submitWaiter(head); outcome != submitAccepted {
+		t.Fatalf("submitWaiter on a running dispatcher = %v, want submitAccepted", outcome)
+	}
+	next := test.submitAs(t, "request-next", test.clock.Now())
+
+	test.dispatcher.start()
+
+	wantAssignment(t, awaitReply(t, next), hostB, 1)
+	test.dispatcher.stop()
+	wantNoReply(t, head)
+	if burns := test.observer.burns(); len(burns) != 0 {
+		t.Fatalf("ghost burns = %v, want none for a serve that never bound its waiter", burns)
+	}
+	test.wantSlots(t, 1, 2)
+}
+
+// Test flow:
 //  1. Submit "request-lost", abandoned right after its nonce is decided, then submit and await "request-next".
 //  2. Assert "request-next" lands on `hostA` at nonce 2.
 //  3. Assert the burn was recorded during "request-lost", the request that left, not the one served next.

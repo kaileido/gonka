@@ -182,11 +182,19 @@ func (c *raceCoordinator) abandon() {
 	c.markReported()
 	if c.picking() {
 		c.pickCancel()
+		go c.releaseUnreadPick()
 	}
 	for _, attempt := range c.attempts {
 		if attempt.cancel != nil {
 			attempt.cancel()
 		}
+	}
+}
+
+func (c *raceCoordinator) releaseUnreadPick() {
+	if result := <-c.picked; result.err == nil {
+		result.assignment.ReleaseHostSlot()
+		result.assignment.ReleaseEscrow()
 	}
 }
 

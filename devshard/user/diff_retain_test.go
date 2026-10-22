@@ -528,24 +528,24 @@ func TestSession_TrimKeepsTheCurrentNonceAndTheQuorumStatus(t *testing.T) {
 func TestSession_TrimBoundsTheSignedSlotsView(t *testing.T) {
 	session := setupStoredSession(t, storage.NewMemory())
 	roots := composeEmptyDiffs(t, session, 6)
-	a, b, c := hostSlot(session, 0), hostSlot(session, 1), hostSlot(session, 2)
+	firstSlot, secondSlot, thirdSlot := hostSlot(session, 0), hostSlot(session, 1), hostSlot(session, 2)
 
 	session.mu.Lock()
-	session.recordSignatureLocked(1, a, signSessionHostRootForTest(t, session, 0, 1, roots[1]))
-	session.recordSignatureLocked(1, b, signSessionHostRootForTest(t, session, 1, 1, roots[1]))
-	session.recordSignatureLocked(2, b, signSessionHostRootForTest(t, session, 1, 2, roots[2]))
-	session.recordSignatureLocked(3, a, signSessionHostRootForTest(t, session, 0, 3, roots[3]))
-	session.recordSignatureLocked(6, c, signSessionHostRootForTest(t, session, 2, 6, roots[6]))
-	for i := range session.group {
-		session.hostSyncNonce[i] = 6
+	session.recordSignatureLocked(1, firstSlot, signSessionHostRootForTest(t, session, 0, 1, roots[1]))
+	session.recordSignatureLocked(1, secondSlot, signSessionHostRootForTest(t, session, 1, 1, roots[1]))
+	session.recordSignatureLocked(2, secondSlot, signSessionHostRootForTest(t, session, 1, 2, roots[2]))
+	session.recordSignatureLocked(3, firstSlot, signSessionHostRootForTest(t, session, 0, 3, roots[3]))
+	session.recordSignatureLocked(6, thirdSlot, signSessionHostRootForTest(t, session, 2, 6, roots[6]))
+	for index := range session.group {
+		session.hostSyncNonce[index] = 6
 	}
 	session.dropDiffPrefixLocked()
 	session.mu.Unlock()
 
 	signed := session.SignedSlots()
 	require.ElementsMatch(t, []uint64{2, 3, 6}, slices.Collect(maps.Keys(signed)))
-	require.Equal(t, []uint32{b}, signed[2].SetBits())
-	require.Equal(t, []uint32{c}, signed[6].SetBits())
+	require.Equal(t, []uint32{secondSlot}, signed[2].SetBits())
+	require.Equal(t, []uint32{thirdSlot}, signed[6].SetBits())
 }
 
 func TestSession_QuorumAtATrimmedNonceIsReadFromTheStore(t *testing.T) {

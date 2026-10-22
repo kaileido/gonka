@@ -17,8 +17,9 @@ import (
 func TestTheCIE2EJobBuildsEveryLocalImageTheStackStarts(t *testing.T) {
 	compose, err := os.ReadFile("../docker-compose.e2e.yml")
 	require.NoError(t, err)
-	var wanted []string
-	for _, match := range regexp.MustCompile(`DEVSHARD_E2E_[A-Z_]+_IMAGE:-([^}]+:local)\}`).FindAllSubmatch(compose, -1) {
+	matches := regexp.MustCompile(`DEVSHARD_E2E_[A-Z_]+_IMAGE:-([^}]+:local)\}`).FindAllSubmatch(compose, -1)
+	wanted := make([]string, 0, len(matches))
+	for _, match := range matches {
 		wanted = append(wanted, string(match[1]))
 	}
 	require.NotEmpty(t, wanted)

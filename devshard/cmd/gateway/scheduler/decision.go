@@ -26,14 +26,14 @@ func (burn) isDecision()    {}
 func (hold) isDecision()    {}
 func (decline) isDecision() {}
 
-// waiter is one request queued on an escrow's dispatcher; handoff orders deliver against abandon. See routing.md, "The per-escrow dispatcher".
+// waiter is one request queued on an escrow's dispatcher; handoff guards bound and orders deliver against abandon. See routing.md, "The per-escrow dispatcher".
 type waiter struct {
 	profile   RequestProfile
 	exclude   map[string]bool
 	enqueued  time.Time
 	replyCh   chan pickResult
 	abandoned atomic.Bool
-	bound     bool // guarded by handoff
+	bound     bool
 
 	handoff sync.Mutex
 }
@@ -69,7 +69,6 @@ func (w *waiter) deliver(result pickResult) (accepted bool) {
 	}
 }
 
-// bind claims the waiter for the nonce its serve is about to commit, and reports false if the caller already left.
 func (w *waiter) bind() bool {
 	w.handoff.Lock()
 	defer w.handoff.Unlock()
@@ -80,7 +79,6 @@ func (w *waiter) bind() bool {
 	return true
 }
 
-// abandon withdraws a waiter not yet bound; a bound one holds a committed nonce, so it waits for the dispatcher's answer. See routing.md, "The per-escrow dispatcher".
 func (w *waiter) abandon() (delivered pickResult, wasDelivered bool) {
 	w.handoff.Lock()
 	if w.bound {

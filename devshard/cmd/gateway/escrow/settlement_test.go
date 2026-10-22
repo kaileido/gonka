@@ -870,7 +870,7 @@ func TestSettlePendingDropsAnEscrowTheChainNoLongerHolds(t *testing.T) {
 }
 
 // Test flow:
-//  1. Seed the store with a parked record created in chain epoch 50, while the chain's effective epoch is still 50 or 51 or the record's epoch is unresolved.
+//  1. Seed the store with a parked record created in chain epoch 50, while the chain's effective epoch is still 50 or 51, is unknown during PoC with the latest at 52, or the record's epoch is unresolved.
 //  2. Answer the escrow lookup as absent, the way a node behind the create height does, and fail the settle broadcast.
 //  3. Settle it through the admin entry.
 //  4. Assert the answer is not taken as a prune: the settle was attempted, its error is not ErrEscrowPruned, and the row is kept for a retry.
@@ -878,11 +878,13 @@ func TestSettleKeepsAnEscrowTheChainCannotHavePrunedYet(t *testing.T) {
 	cases := []struct {
 		name       string
 		chainEpoch uint64
+		latest     uint64
 		effective  uint64
 	}{
-		{name: "in its own epoch", chainEpoch: 50, effective: 50},
-		{name: "in the epoch after", chainEpoch: 50, effective: 51},
-		{name: "with its epoch unresolved", chainEpoch: 0, effective: 90},
+		{name: "in its own epoch", chainEpoch: 50, latest: 51, effective: 50},
+		{name: "in the epoch after", chainEpoch: 50, latest: 52, effective: 51},
+		{name: "in the epoch after with the effective epoch unknown", chainEpoch: 50, latest: 52},
+		{name: "with its epoch unresolved", chainEpoch: 0, latest: 91, effective: 90},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -903,7 +905,7 @@ func TestSettleKeepsAnEscrowTheChainCannotHavePrunedYet(t *testing.T) {
 				store:            testStore,
 				signer:           &fakeSignerSource{signer: testSigner(t)},
 				settlementSource: &fakeSettlementSource{calls: &callLog{}},
-				snapshots:        &fakeSnapshotSource{snapshot: chain.PhaseSnapshot{EpochIndex: testCase.effective + 1, EffectiveEpochIndex: testCase.effective, BlockHeight: 1_000}},
+				snapshots:        &fakeSnapshotSource{snapshot: chain.PhaseSnapshot{EpochIndex: testCase.latest, EffectiveEpochIndex: testCase.effective, BlockHeight: 1_000}},
 				config:           holderWithSettlementEnabled(true),
 			}
 

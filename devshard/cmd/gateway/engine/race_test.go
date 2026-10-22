@@ -2086,13 +2086,8 @@ func TestACommittedPickIsSentOnceTheRaceNoLongerWantsIt(t *testing.T) {
 				Nonce:  fakePrepared{nonce: 451, hostIdx: 1},
 			}})
 
-			select {
-			case nonce := <-arrived:
-				if nonce != 451 {
-					t.Fatalf("sent nonce = %d, want 451", nonce)
-				}
-			case <-time.After(5 * time.Second):
-				t.Fatal("the committed nonce was never sent to its host")
+			if nonce := waitForValue(t, arrived, "the committed nonce reaching its host"); nonce != 451 {
+				t.Fatalf("sent nonce = %d, want 451", nonce)
 			}
 			awaitTracedAttemptDone(t, coordinator.events)
 			if picked := coordinator.attempts[len(coordinator.attempts)-1]; picked.nonce != 451 || picked.outcome != nil {
