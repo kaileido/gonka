@@ -127,6 +127,7 @@ Neither default is right everywhere. What matters is that each is decided rather
 - A failed chain poll republishes the previous snapshot with `LastError` set rather than an empty one.
 - `MaxNonce == 0` means "not fetched", not "no limit": the scheduler falls back to `fallbackNonceCeiling` (19 800) rather than disabling the cap, and reports no escrow exhausted against it, because the fallback is not the hosts' cap and a reported escrow is parked.
 - A nil preserved set means "not loaded yet", so everyone counts as preserved. Reading absent data as "nobody is preserved" would ghost every nonce the escrow owns.
+- A model without a tokenizer the gateway reads, or whose tokenizer is still loading, is not checked against its context length: the prompt goes to a host, which is how every prompt went before the check ([request.md](./request.md), "Step 6 in detail").
 - With no weights reported at all, escrow scoring falls back to availability-filtered membership share instead of zero, which would reject every request during the boot window. Because that fallback serves requests correctly and *silently*, it publishes a gauge derived from the same two predicates the branch reads, so the signal cannot drift from the behaviour it reports.
 
 ### 9. Bounded by construction

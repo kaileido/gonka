@@ -133,7 +133,8 @@ func statusForError(err error) int {
 		return status
 	}
 	var unsupported *UnsupportedModelError
-	if errors.As(err, &unsupported) {
+	var tooLong *ContextLengthError
+	if errors.As(err, &unsupported) || errors.As(err, &tooLong) {
 		return http.StatusBadRequest
 	}
 	if modelUnavailable(err) {
@@ -261,7 +262,15 @@ func (s *Server) writeErrorFor(w http.ResponseWriter, err error) {
 	case ours, shardHasNoRoom(err):
 		w.Header().Set("Retry-After", strconv.FormatInt(int64(noHostRetryAfter.Seconds()), 10))
 	}
-	writeError(w, statusForError(err), err.Error())
+	writeJSON(w, statusForError(err), errorEnvelope{Error: detailForError(err)})
+}
+
+func detailForError(err error) errorDetail {
+	var tooLong *ContextLengthError
+	if errors.As(err, &tooLong) {
+		return errorDetail{Message: err.Error(), Type: errorTypeInvalidRequest, Code: errorCodeContextLengthExceeded}
+	}
+	return errorDetail{Message: err.Error()}
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {

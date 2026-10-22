@@ -126,6 +126,7 @@ const (
 	Recorded        = "recorded"
 	Used            = "used"
 	OpenModels      = "open_models"
+	Tokenizer       = "tokenizer"
 	GatewayDisabled = "gateway_disabled"
 	InFlight        = "in_flight"
 	Attempts        = "attempts"

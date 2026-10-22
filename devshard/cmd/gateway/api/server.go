@@ -166,6 +166,11 @@ type LimitRejections interface {
 	Rejected(model, reason string)
 }
 
+// PromptTokens counts the fewest tokens a normalized chat body's messages hold with the model's pinned tokenizer; *tokenizer.Library satisfies it.
+type PromptTokens interface {
+	MinimumPromptTokens(model string, body []byte) (tokens uint64, known bool)
+}
+
 // RequestJournal is satisfied by *journal.Journal; each method returns without waiting on a log handler.
 type RequestJournal interface {
 	RequestFinished(line journal.RequestLine)
@@ -198,6 +203,7 @@ type Deps struct {
 	Now                 func() time.Time
 	RequestIDs          func() string
 	StopTokenVocabulary func(model string) int
+	PromptTokens        PromptTokens
 }
 
 type Server struct {
@@ -227,6 +233,7 @@ type Server struct {
 	capture      *requestCapture
 
 	stopTokenVocabulary func(model string) int
+	promptTokens        PromptTokens
 	settingsWrites      sync.Mutex
 
 	gates   atomic.Pointer[keyGates]
@@ -292,6 +299,7 @@ func New(deps Deps) (*Server, error) {
 		requestIDs:   deps.RequestIDs,
 
 		stopTokenVocabulary: deps.StopTokenVocabulary,
+		promptTokens:        deps.PromptTokens,
 	}
 	if server.requestIDs == nil {
 		server.requestIDs = randomRequestID
