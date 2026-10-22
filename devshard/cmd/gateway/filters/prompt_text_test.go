@@ -1,8 +1,11 @@
 package filters
 
 import (
+	"bytes"
 	"slices"
 	"testing"
+
+	gojson "github.com/goccy/go-json"
 )
 
 // Test flow:
@@ -55,5 +58,33 @@ func TestPromptTextReadsTextPartsAsTheirText(t *testing.T) {
 func TestPromptTextRefusesABodyItCannotDecode(t *testing.T) {
 	if _, err := PromptText([]byte("{")); err == nil {
 		t.Fatal("PromptText({) succeeded, want an error")
+	}
+}
+
+// Test flow:
+//  1. Write string contents with every JSON escape, HTML escapes, line separators, surrogate pairs and a lone surrogate, raw UTF-8 and an empty string, with whitespace around each.
+//  2. Read each body's prompt text, and decode each string the way a value that is not a string is decoded, through a stream decoder into any.
+//  3. Assert both give the same text.
+func TestPromptTextReadsAStringAsTheGenericDecodeDoes(t *testing.T) {
+	for _, literal := range []string{
+		`"plain"`, `""`, `"\" \\ \/ \b \f \n \r \t"`, `"é < & >"`, `"   raw  "`,
+		`"😀 😀"`, `"\ud800 lone"`, `"Шлюз 网关 é"`, `"\u0000 control"`,
+	} {
+		parts, err := PromptText([]byte("{\"messages\":[{\"role\":\"user\",\"content\": \n\t" + literal + " }]}"))
+		if err != nil {
+			t.Fatalf("PromptText(%s) = %v", literal, err)
+		}
+		var generic any
+		if err := gojson.NewDecoder(bytes.NewReader([]byte(literal))).Decode(&generic); err != nil {
+			t.Fatal(err)
+		}
+
+		var got string
+		if len(parts) > 0 {
+			got = parts[0]
+		}
+		if got != generic {
+			t.Fatalf("%s: prompt text %q, generic decode %q", literal, got, generic)
+		}
 	}
 }

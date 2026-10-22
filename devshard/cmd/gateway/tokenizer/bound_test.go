@@ -1,0 +1,79 @@
+package tokenizer
+
+import (
+	"math/rand/v2"
+	"strings"
+	"testing"
+	"unicode/utf8"
+
+	"golang.org/x/text/unicode/norm"
+)
+
+var boundFragments = []string{
+	"the ", "quick ", "Шлюз ", "网关", "😀", "é", "ą́", "क़", "שּׁ", "\U0001d160",
+	"각", "̈́", "<|im_start|>", "<｜User｜>", "\n\n", "   ", `{"id":1,"tags":["a"]}`, "0123456789",
+}
+
+func randomBoundText(size int, rng *rand.Rand) string {
+	var builder strings.Builder
+	for builder.Len() < size {
+		builder.WriteString(boundFragments[rng.IntN(len(boundFragments))])
+	}
+	text := builder.String()
+	return text[:runeStartAtOrBefore(text, size)]
+}
+
+func splitIntoParts(text string, parts int) []string {
+	prompt := make([]string, 0, parts)
+	for part := range parts {
+		start := runeStartAtOrBefore(text, len(text)*part/parts)
+		end := runeStartAtOrBefore(text, len(text)*(part+1)/parts)
+		prompt = append(prompt, text[start:end])
+	}
+	return prompt
+}
+
+// Test flow:
+//  1. Load every testdata tokenizer, NFC and not, and build prompts of random ASCII, Cyrillic, CJK, emoji, special-token spellings, decomposed accents and characters NFC expands, and one of only the character NFC expands most, from empty to past exactBudgetBytes, in one to three parts.
+//  2. Take MaximumTokens and MinimumTokens of each.
+//  3. Assert MinimumTokens never exceeds MaximumTokens.
+func TestMaximumTokensBoundsMinimumTokensOnEveryText(t *testing.T) {
+	rng := rand.New(rand.NewPCG(1, 2))
+	sizes := []int{0, 1, 200, 4 << 10, exactBudgetBytes, exactBudgetBytes + 1, 200 << 10}
+	var texts []string
+	for _, size := range sizes {
+		texts = append(texts, randomBoundText(size, rng), strings.Repeat("\U0001d160", size/len("\U0001d160")), norm.NFD.String(randomBoundText(size, rng)))
+	}
+	for _, name := range []string{"isolated", "ignore-merges", "removed-nfc", "sequence"} {
+		counter := loadTestdata(t, name)
+		for index, text := range texts {
+			prompt := splitIntoParts(text, 1+index%3)
+
+			minimum, err := counter.MinimumTokens(prompt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			maximum := counter.MaximumTokens(prompt)
+
+			if minimum > maximum {
+				t.Errorf("%s, text %d (%d bytes in %d parts): MinimumTokens = %d, past MaximumTokens = %d", name, index, len(text), len(prompt), minimum, maximum)
+			}
+		}
+	}
+}
+
+// Test flow:
+//  1. Take every Unicode scalar value.
+//  2. Normalize each to NFC.
+//  3. Assert its UTF-8 grows by at most nfcMaxExpansion.
+func TestNFCAtMostTriplesARunesBytes(t *testing.T) {
+	for value := rune(0); value <= utf8.MaxRune; value++ {
+		if !utf8.ValidRune(value) {
+			continue
+		}
+		text := string(value)
+		if normalized := norm.NFC.String(text); len(normalized) > nfcMaxExpansion*len(text) {
+			t.Fatalf("NFC of %U is %d bytes, past %d times its %d", value, len(normalized), nfcMaxExpansion, len(text))
+		}
+	}
+}

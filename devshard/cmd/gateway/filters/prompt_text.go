@@ -31,15 +31,19 @@ func (f *promptField) UnmarshalJSON(data []byte) error {
 	if bytes.Equal(data, jsonNull) {
 		return nil
 	}
+	if bytes.HasPrefix(data, jsonStringStart) {
+		var text string
+		if err := json.Unmarshal(data, &text); err != nil {
+			return err
+		}
+		*f = promptField(text)
+		return nil
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
 	var value any
 	if err := decoder.Decode(&value); err != nil {
 		return err
-	}
-	if text, isString := value.(string); isString {
-		*f = promptField(text)
-		return nil
 	}
 	var rendered bytes.Buffer
 	encoder := json.NewEncoder(&rendered)

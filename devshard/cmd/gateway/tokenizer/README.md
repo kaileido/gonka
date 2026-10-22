@@ -6,11 +6,11 @@ Counts a chat prompt's tokens with the tokenizer the chain pins for the model, s
 
 - `bpe.go` — `Load` reads a Hugging Face `tokenizer.json` into a `Counter`; `Counter.Count` is its exact token count of a text, without the special tokens a chat template adds.
 - `merge.go` — the merge loop: lowest rank first, leftmost on a tie, as Hugging Face BPE applies merges.
-- `estimate.go` — `Counter.MinimumTokens`: the fewest tokens a prompt holds, exact up to a budget and a lower bound from samples beyond it.
+- `estimate.go` — `Counter.MinimumTokens`: the fewest tokens a prompt holds, exact up to a budget and a lower bound from samples beyond it; `Counter.MaximumTokens`: a bound it never exceeds, read from the prompt's bytes without tokenizing.
 - `library.go` — `Library.Counter`: the counter for each model, loaded in the background and fetched again when the revision the chain pins moves.
 - `vocabulary.go` — the `tokenizer.json` names `Load` reads and the hub address.
 
-The package does not read chat bodies: the composition root (`app/prompt_tokens.go`) turns a normalized body into its text with `filters.PromptText` and counts it with `Counter.MinimumTokens`.
+The package does not read chat bodies: the composition root (`app/prompt_tokens.go`) turns a normalized body into its text with `filters.PromptText` and bounds it with `Counter.MaximumTokens` and `Counter.MinimumTokens`.
 
 ## Where the tokenizer comes from
 
@@ -40,6 +40,15 @@ Up to `exactBudgetBytes` (64 KiB) in all, `MinimumTokens` counts every part exac
 The sampled estimate is what it costs to stay bounded, and it misses on a prompt whose density changes in one place: a dense block the windows land in or miss moves the estimate by its share. On the comparison texts past 64 KiB (English, Russian, Chinese, Go, JSON, mixed and adversarial, up to 4 MB) the mean error was 1.0–1.3% per tokenizer; the worst were +6.9%, a book whose dense table of contents the first window lands in, and −8.7%, a JSON document whose dense stretch the windows miss.
 
 `MinimumTokens` answers the check that refuses a prompt, and an over-count refuses a request a host would serve, so past the budget it divides the estimate by 1 + `sampledOvercountPercent` (7%), the worst over-count measured rounded up. What it returns is then at most the prompt's real count on every comparison text; an under-count is left as it is, because it only leaves a request unchecked.
+
+## The byte bound
+
+`MaximumTokens` is what a prompt's tokens can be at most, from its length alone, so the context check tokenizes only a prompt that bound does not clear. A pre-token is a stretch of the text, pre-tokens do not overlap, and the merge loop starts from one symbol per byte and only joins symbols, so `Count` of a text is at most the UTF-8 length of what it tokenizes: the text itself, or its NFC form for a tokenizer that normalizes. A special token's spelling in a message is counted as ordinary text, so the bound holds for it too; the chat template's own tokens are not part of either count.
+
+- **Up to `exactBudgetBytes`** `MinimumTokens` is the sum of each part's `Count`, so the bound is the parts' bytes, after NFC for a tokenizer that normalizes.
+- **Past it** `MinimumTokens` scales the sampled windows' tokens per byte to the prompt's raw length, so the bound is the raw length times the most a window's text can grow before it is counted: 1, or `nfcMaxExpansion` (3, the most NFC grows UTF-8 by, UAX #15) for a tokenizer that normalizes a prompt that is not all ASCII. A window of nothing but U+1D160, which NFC turns from 4 bytes into 12, comes close to it.
+
+The bound is loose, since a token usually covers several bytes, and costs one pass over the text, so a prompt is tokenized only when `max_tokens` and the template leave it less room in the context than its bytes.
 
 ## Bounds
 

@@ -115,7 +115,7 @@ Both halves of `usage` latch together over an attempt, so a row can never pair o
 
 The journal's `winnerOutputTokens` is what the client actually received, which with `duration_ms` — measured on the handler goroutine, not the line's own timestamp, which trails the request's end by however long the journal's queue held it — is what a measured output rate is computed from.
 
-`estimatePromptTokens` is the limiter's and the perf buckets' input size, not a tokenizer call. The pinned tokenizer's count (`PromptTokens`, from the [`tokenizer`](../tokenizer/) package) gates only `fitsContext`: the windows, the ledger and the escalation deadlines stay denominated in the byte estimate, so a model with no tokenizer and one with a tokenizer are admitted and timed on the same scale.
+`estimatePromptTokens` is the limiter's and the perf buckets' input size, not a tokenizer call. The pinned tokenizer's bounds (`PromptTokens` and `PromptCount`, from the [`tokenizer`](../tokenizer/) package) gate only `fitsContext`, which tokenizes only a prompt whose byte bound the context does not clear: the windows, the ledger and the escalation deadlines stay denominated in the byte estimate, so a model with no tokenizer and one with a tokenizer are admitted and timed on the same scale.
 
 `RaceLedger` is how the engine's single recording point reaches the ledger; nothing else writes a row.
 

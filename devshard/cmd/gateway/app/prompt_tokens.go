@@ -13,16 +13,27 @@ type pinnedPromptTokens struct {
 	library *tokenizer.Library
 }
 
-func (p pinnedPromptTokens) MinimumPromptTokens(model string, body []byte) (uint64, bool) {
+type countedPrompt struct {
+	counter *tokenizer.Counter
+	parts   []string
+}
+
+func (p pinnedPromptTokens) Prompt(model string, body []byte) (api.PromptCount, bool) {
 	counter := p.library.Counter(model)
 	if counter == nil {
-		return 0, false
+		return nil, false
 	}
-	prompt, err := filters.PromptText(body)
+	parts, err := filters.PromptText(body)
 	if err != nil {
-		return 0, false
+		return nil, false
 	}
-	tokens, err := counter.MinimumTokens(prompt)
+	return countedPrompt{counter: counter, parts: parts}, true
+}
+
+func (c countedPrompt) MaximumTokens() uint64 { return c.counter.MaximumTokens(c.parts) }
+
+func (c countedPrompt) MinimumTokens() (uint64, bool) {
+	tokens, err := c.counter.MinimumTokens(c.parts)
 	return tokens, err == nil
 }
 

@@ -37,7 +37,11 @@ func (s *Server) fitsContext(configured config.Limits, normalized filters.Result
 	if contextLength == config.NoContextLength {
 		return nil
 	}
-	messageTokens, known := s.promptTokens.MinimumPromptTokens(normalized.Model, normalized.Body)
+	prompt, known := s.promptTokens.Prompt(normalized.Model, normalized.Body)
+	if !known || prompt.MaximumTokens()+chatTemplateMinimumTokens+normalized.MaxTokens <= contextLength {
+		return nil
+	}
+	messageTokens, known := prompt.MinimumTokens()
 	if !known {
 		return nil
 	}

@@ -3,25 +3,69 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"math"
+	"math/rand/v2"
 	"net/http"
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+
+	"golang.org/x/text/unicode/norm"
 
 	"devshard/cmd/gateway/chain"
 	"devshard/cmd/gateway/config"
 	"devshard/cmd/gateway/filters"
+	"devshard/cmd/gateway/tokenizer"
 )
 
 type fakePromptTokens struct {
-	tokens uint64
-	known  bool
-	model  string
-	body   string
+	tokens     uint64
+	slack      uint64
+	known      bool
+	model      string
+	body       string
+	tokenizing int
 }
 
-func (f *fakePromptTokens) MinimumPromptTokens(model string, body []byte) (uint64, bool) {
+func (f *fakePromptTokens) Prompt(model string, body []byte) (PromptCount, bool) {
 	f.model, f.body = model, string(body)
-	return f.tokens, f.known
+	return f, f.known
+}
+
+func (f *fakePromptTokens) MaximumTokens() uint64 { return f.tokens + f.slack }
+
+func (f *fakePromptTokens) MinimumTokens() (uint64, bool) {
+	f.tokenizing++
+	return f.tokens, true
+}
+
+type tokenizedOnly struct{ PromptCount }
+
+func (tokenizedOnly) MaximumTokens() uint64 { return math.MaxUint32 }
+
+func loadTestTokenizer(t *testing.T, name string) *tokenizer.Counter {
+	t.Helper()
+	file, err := os.Open(filepath.Join("..", "tokenizer", "testdata", name+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = file.Close() }()
+	counter, err := tokenizer.Load(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return counter
+}
+
+func randomPromptText(size int, rng *rand.Rand) string {
+	fragments := []string{"the ", "Шлюз ", "网关", "😀", "é", "क़", "שּׁ", "\U0001d160", "<|im_start|>", "\n\n", `{"id":1}`}
+	var builder strings.Builder
+	for builder.Len() < size {
+		builder.WriteString(fragments[rng.IntN(len(fragments))])
+	}
+	return builder.String()
 }
 
 func pinContextLength(length int64) func(*config.Config) {
@@ -179,4 +223,81 @@ func TestTheCheckReadsTheGovernedContextLengthBeforeThePin(t *testing.T) {
 			t.Fatalf("prompt %d: status = %d (%s), want %d", step.tokens, recorder.Code, recorder.Body.String(), step.status)
 		}
 	}
+}
+
+// Test flow:
+//  1. Pin qwen's context length at 20 000 tokens and define prompts whose byte bound fits it, whose bound is past it while their count fits, and whose count is past it too.
+//  2. Send a chat request with each.
+//  3. Assert the first is served without tokenizing, the second is served after tokenizing once, and the third is refused after tokenizing once.
+func TestThePromptIsTokenizedOnlyWhenItsByteBoundIsPastTheContext(t *testing.T) {
+	fits := uint64(20_000) - filters.DefaultRequestMaxTokens - chatTemplateMinimumTokens
+	for _, step := range []struct {
+		name       string
+		count      *fakePromptTokens
+		status     int
+		tokenizing int
+	}{
+		{name: "bound fits", count: &fakePromptTokens{tokens: fits, known: true}, status: http.StatusOK},
+		{name: "bound over, count fits", count: &fakePromptTokens{tokens: fits, slack: 1, known: true}, status: http.StatusOK, tokenizing: 1},
+		{name: "count over", count: &fakePromptTokens{tokens: fits + 1, known: true}, status: http.StatusBadRequest, tokenizing: 1},
+	} {
+		t.Run(step.name, func(t *testing.T) {
+			live := newHarness(t, pinContextLength(20_000))
+			live.server.promptTokens = step.count
+
+			recorder := live.request(t, http.MethodPost, "/v1/chat/completions", chatBody, nil)
+
+			if recorder.Code != step.status || step.count.tokenizing != step.tokenizing {
+				t.Fatalf("status = %d, tokenized %d times, want %d after %d", recorder.Code, step.count.tokenizing, step.status, step.tokenizing)
+			}
+		})
+	}
+}
+
+// Test flow:
+//  1. Load the NFC and a plain testdata tokenizer, and build chat bodies of random ASCII, Cyrillic, CJK, emoji, special-token spellings, decomposed and NFC-expanding text, as written and decomposed, from empty to past 64 KiB.
+//  2. For each, take context lengths around the prompt's count and its byte bound, and judge the request with the byte bound and with the tokenizer alone.
+//  3. Assert both judgements are the same for every request, refusals included.
+func TestTheByteBoundNeverChangesTheJudgement(t *testing.T) {
+	live := newHarness(t)
+	rng := rand.New(rand.NewPCG(3, 4))
+	for _, name := range []string{"removed-nfc", "sequence"} {
+		counter := counterPromptTokens{counter: loadTestTokenizer(t, name)}
+		for _, size := range []int{0, 1, 200, 4 << 10, 70 << 10} {
+			for _, text := range []string{randomPromptText(size, rng), norm.NFD.String(randomPromptText(size, rng))} {
+				content, err := json.Marshal(text)
+				if err != nil {
+					t.Fatal(err)
+				}
+				body := []byte(`{"model":"qwen","messages":[{"role":"user","content":` + string(content) + `}]}`)
+				prompt, _ := counter.Prompt("qwen", body)
+				count, _ := prompt.MinimumTokens()
+				for _, maxTokens := range []uint64{1, filters.DefaultRequestMaxTokens} {
+					for _, edge := range []uint64{count, prompt.MaximumTokens()} {
+						for _, length := range []uint64{edge + chatTemplateMinimumTokens + maxTokens - 1, edge + chatTemplateMinimumTokens + maxTokens, edge + chatTemplateMinimumTokens + maxTokens + 1} {
+							pinned := int64(length)
+							limits := config.Limits{ModelLimits: map[string]config.ModelLimits{"qwen": {MaxModelLen: &pinned}}}
+							normalized := filters.Result{Model: "qwen", Body: body, MaxTokens: maxTokens}
+
+							live.server.promptTokens = counter
+							withBound := live.server.fitsContext(limits, normalized)
+							live.server.promptTokens = tokenizedOnlyPrompts{counter}
+							tokenized := live.server.fitsContext(limits, normalized)
+
+							if !reflect.DeepEqual(withBound, tokenized) {
+								t.Fatalf("%s, %d bytes, max_tokens %d, context %d: with the bound %v, tokenized alone %v", name, len(text), maxTokens, length, withBound, tokenized)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+type tokenizedOnlyPrompts struct{ PromptTokens }
+
+func (t tokenizedOnlyPrompts) Prompt(model string, body []byte) (PromptCount, bool) {
+	prompt, known := t.PromptTokens.Prompt(model, body)
+	return tokenizedOnly{prompt}, known
 }
