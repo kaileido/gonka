@@ -265,7 +265,6 @@ func (s *Server) writeErrorFor(w http.ResponseWriter, err error) {
 	writeJSON(w, statusForError(err), errorEnvelope{Error: detailForError(err)})
 }
 
-// detailForError names the OpenAI error type and code a client branches on, where the gateway has an equivalent.
 func detailForError(err error) errorDetail {
 	var tooLong *ContextLengthError
 	if errors.As(err, &tooLong) {

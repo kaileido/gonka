@@ -1,6 +1,10 @@
 package tokenizer
 
-// mergeScratch is one count's working memory, reused across its pre-tokens.
+const (
+	noSymbol        = -1
+	binaryHeapArity = 2
+)
+
 type mergeScratch struct {
 	symbols    []symbol
 	candidates []candidate
@@ -13,34 +17,32 @@ type symbol struct {
 	merged     bool
 }
 
-// candidate is a pair that could merge; it is stale once its left symbol's version moved on.
 type candidate struct {
 	rank    uint32
 	left    int32
 	version uint32
 }
 
-// merge applies piece's merges lowest rank first, leftmost on a tie, as Hugging Face BPE does, and returns the symbols left.
 func (s *mergeScratch) merge(c *Counter, piece string) int {
 	s.symbols = s.symbols[:0]
 	for index := range len(piece) {
 		s.symbols = append(s.symbols, symbol{token: c.byteSymbol[piece[index]], prev: int32(index - 1), next: int32(index + 1)})
 	}
-	s.symbols[len(s.symbols)-1].next = -1
+	s.symbols[len(s.symbols)-1].next = noSymbol
 	s.candidates = s.candidates[:0]
 	for left := range int32(len(s.symbols) - 1) {
 		if found, ok := c.merges[pairKey(s.symbols[left].token, s.symbols[left+1].token)]; ok {
 			s.candidates = append(s.candidates, candidate{rank: found.rank, left: left})
 		}
 	}
-	for parent := len(s.candidates)/2 - 1; parent >= 0; parent-- {
+	for parent := len(s.candidates)/binaryHeapArity - 1; parent >= 0; parent-- {
 		s.siftDown(parent)
 	}
 	remaining := len(s.symbols)
 	for len(s.candidates) > 0 {
 		next := s.pop()
 		left := &s.symbols[next.left]
-		if left.merged || left.version != next.version || left.next < 0 {
+		if left.merged || left.version != next.version || left.next == noSymbol {
 			continue
 		}
 		right := &s.symbols[left.next]
@@ -52,11 +54,11 @@ func (s *mergeScratch) merge(c *Counter, piece string) int {
 		left.version++
 		right.merged = true
 		left.next = right.next
-		if right.next >= 0 {
+		if right.next != noSymbol {
 			s.symbols[right.next].prev = next.left
 		}
 		remaining--
-		if left.prev >= 0 {
+		if left.prev != noSymbol {
 			s.symbols[left.prev].version++
 			s.offer(c, left.prev)
 		}
@@ -67,7 +69,7 @@ func (s *mergeScratch) merge(c *Counter, piece string) int {
 
 func (s *mergeScratch) offer(c *Counter, left int32) {
 	current := s.symbols[left]
-	if current.next < 0 {
+	if current.next == noSymbol {
 		return
 	}
 	found, ok := c.merges[pairKey(current.token, s.symbols[current.next].token)]
@@ -88,7 +90,7 @@ func (s *mergeScratch) push(entry candidate) {
 	s.candidates = append(s.candidates, entry)
 	child := len(s.candidates) - 1
 	for child > 0 {
-		parent := (child - 1) / 2
+		parent := (child - 1) / binaryHeapArity
 		if !s.candidates[child].before(s.candidates[parent]) {
 			break
 		}
@@ -109,7 +111,7 @@ func (s *mergeScratch) pop() candidate {
 func (s *mergeScratch) siftDown(parent int) {
 	size := len(s.candidates)
 	for {
-		smallest, left, right := parent, 2*parent+1, 2*parent+2
+		smallest, left, right := parent, binaryHeapArity*parent+1, binaryHeapArity*parent+binaryHeapArity
 		if left < size && s.candidates[left].before(s.candidates[smallest]) {
 			smallest = left
 		}

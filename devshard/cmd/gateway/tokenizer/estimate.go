@@ -7,6 +7,7 @@ const (
 	exactBudgetBytes        = 64 << 10
 	sampleWindows           = 8
 	windowBytes             = exactBudgetBytes / sampleWindows
+	windowPhaseStep         = windowBytes / 2
 	sampledOvercountPercent = 7
 	wholePercent            = 100
 )
@@ -32,7 +33,7 @@ func (c *Counter) estimate(prompt []string) (tokens uint64, sampled bool, err er
 	span := total / sampleWindows
 	var sampledTokens, sampledBytes uint64
 	for window := range sampleWindows {
-		start := window*span + (window*windowBytes/2)%(span-windowBytes+1)
+		start := window*span + (window*windowPhaseStep)%(span-windowBytes+1)
 		windowTokens, windowBytesCounted, err := c.countRange(prompt, start, start+windowBytes)
 		if err != nil {
 			return 0, true, err
@@ -43,8 +44,7 @@ func (c *Counter) estimate(prompt []string) (tokens uint64, sampled bool, err er
 	return (sampledTokens*uint64(total) + sampledBytes/2) / max(sampledBytes, 1), true, nil
 }
 
-// countRange counts the bytes [start, end) of prompt's concatenation, each part's share on its own, cut at rune boundaries.
-func (c *Counter) countRange(prompt []string, start, end int) (tokens, sampled uint64, err error) {
+func (c *Counter) countRange(prompt []string, start, end int) (tokens, bytesCounted uint64, err error) {
 	offset := 0
 	for _, part := range prompt {
 		partStart, partEnd := max(start-offset, 0), min(end-offset, len(part))
@@ -54,14 +54,14 @@ func (c *Counter) countRange(prompt []string, start, end int) (tokens, sampled u
 			continue
 		}
 		segment := part[partStart:partEnd]
-		counted, err := c.Count(segment)
+		segmentTokens, err := c.Count(segment)
 		if err != nil {
 			return 0, 0, err
 		}
-		tokens += uint64(counted)
-		sampled += uint64(len(segment))
+		tokens += uint64(segmentTokens)
+		bytesCounted += uint64(len(segment))
 	}
-	return tokens, sampled, nil
+	return tokens, bytesCounted, nil
 }
 
 func runeStartAtOrAfter(text string, index int) int {

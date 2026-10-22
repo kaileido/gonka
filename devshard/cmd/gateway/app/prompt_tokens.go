@@ -7,7 +7,6 @@ import (
 	"devshard/cmd/gateway/tokenizer"
 )
 
-// promptTokens is nil without a chain: no pinned tokenizer can be named, so no prompt is checked against a context length.
 func promptTokens(modelSnapshots vocabulary.EpochGroupDataQuery, snapshots phaseSnapshots) api.PromptTokens {
 	if modelSnapshots == nil {
 		return nil

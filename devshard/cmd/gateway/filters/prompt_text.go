@@ -1,6 +1,8 @@
 package filters
 
 import (
+	"bytes"
+
 	json "github.com/goccy/go-json"
 )
 
@@ -21,7 +23,6 @@ type promptCall struct {
 	Arguments promptField `json:"arguments"`
 }
 
-// promptField is a value a chat template renders as text: a string as itself, anything else as its JSON.
 type promptField string
 
 func (f *promptField) UnmarshalJSON(data []byte) error {
@@ -33,7 +34,7 @@ func (f *promptField) UnmarshalJSON(data []byte) error {
 		*f = promptField(text)
 		return nil
 	}
-	if string(data) != "null" {
+	if !bytes.Equal(data, jsonNull) {
 		*f = promptField(data)
 	}
 	return nil

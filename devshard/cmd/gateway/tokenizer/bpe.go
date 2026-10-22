@@ -7,14 +7,23 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	json "github.com/goccy/go-json"
-
 	"github.com/dlclark/regexp2"
+	json "github.com/goccy/go-json"
 	"golang.org/x/text/unicode/norm"
 )
 
 // ErrUnsupported marks a tokenizer.json this package does not count exactly, so its model is not checked.
 var ErrUnsupported = errors.New("tokenizer not supported")
+
+// See README.md, "Counting exactly".
+const (
+	byteValues         = 256
+	pairKeyShift       = 32
+	maxRememberedPiece = 64
+	noPattern          = ""
+	noAffix            = ""
+	noDropout          = 0
+)
 
 // Counter is one model's byte-level BPE tokenizer, kept only to count tokens. It is immutable once loaded.
 type Counter struct {
@@ -71,13 +80,12 @@ type patternSpec struct {
 	String string `json:"String"`
 }
 
-// mergeSpec reads both merge spellings: ["left", "right"] and "left right".
 type mergeSpec [2]string
 
 func (m *mergeSpec) UnmarshalJSON(data []byte) error {
 	var pair []string
 	if err := json.Unmarshal(data, &pair); err == nil {
-		if len(pair) != 2 {
+		if len(pair) != len(mergeSpec{}) {
 			return fmt.Errorf("merge %s is not a pair", data)
 		}
 		*m = mergeSpec{pair[0], pair[1]}
@@ -103,9 +111,9 @@ func Load(r io.Reader) (*Counter, error) {
 	}
 	model := file.Model
 	switch {
-	case model.Type != "BPE":
+	case model.Type != modelTypeBPE:
 		return nil, fmt.Errorf("%w: model type %q", ErrUnsupported, model.Type)
-	case model.ByteFallback, model.Dropout != nil && *model.Dropout != 0, model.ContinuingSubwordPrefix != "", model.EndOfWordSuffix != "":
+	case model.ByteFallback, model.Dropout != nil && *model.Dropout != noDropout, model.ContinuingSubwordPrefix != noAffix, model.EndOfWordSuffix != noAffix:
 		return nil, fmt.Errorf("%w: BPE options beyond byte-level merges", ErrUnsupported)
 	}
 	counter := &Counter{merges: make(map[uint64]merge, len(model.Merges))}
@@ -147,9 +155,9 @@ func normalizes(spec *normalizerSpec) (nfc bool, err error) {
 		return false, nil
 	}
 	switch spec.Type {
-	case "NFC":
+	case normalizerNFC:
 		return true, nil
-	case "Sequence":
+	case stepSequence:
 		for index := range spec.Normalizers {
 			inner, err := normalizes(&spec.Normalizers[index])
 			if err != nil {
@@ -162,22 +170,21 @@ func normalizes(spec *normalizerSpec) (nfc bool, err error) {
 	return false, fmt.Errorf("%w: normalizer %q", ErrUnsupported, spec.Type)
 }
 
-// splitRules compiles the Split steps; the ByteLevel step must be present and must not split on its own.
 func splitRules(spec preTokenizerSpec) ([]splitRule, error) {
 	steps := []preTokenizerSpec{spec}
-	if spec.Type == "Sequence" {
+	if spec.Type == stepSequence {
 		steps = spec.PreTokenizers
 	}
 	var rules []splitRule
 	byteLevel := false
 	for _, step := range steps {
 		switch step.Type {
-		case "ByteLevel":
+		case preTokenizerByteLevel:
 			if step.UseRegex || step.AddPrefixSpace {
 				return nil, fmt.Errorf("%w: ByteLevel with use_regex or add_prefix_space", ErrUnsupported)
 			}
 			byteLevel = true
-		case "Split":
+		case preTokenizerSplit:
 			rule, err := compileSplit(step)
 			if err != nil {
 				return nil, err
@@ -195,37 +202,35 @@ func splitRules(spec preTokenizerSpec) ([]splitRule, error) {
 
 func compileSplit(step preTokenizerSpec) (splitRule, error) {
 	expression := step.Pattern.Regex
-	if expression == "" {
+	if expression == noPattern {
 		expression = regexp2.Escape(step.Pattern.String)
 	}
-	if expression == "" {
+	if expression == noPattern {
 		return splitRule{}, fmt.Errorf("%w: Split without a pattern", ErrUnsupported)
 	}
 	pattern, err := regexp2.Compile(expression, regexp2.None)
 	if err != nil {
 		return splitRule{}, fmt.Errorf("compile split pattern: %w", err)
 	}
-	// Inverting a split swaps which side is the delimiter: Isolated keeps both sides either way.
 	switch {
-	case step.Behavior == "Isolated":
+	case step.Behavior == splitIsolated:
 		return splitRule{pattern: pattern, keepMatches: true, keepGaps: true}, nil
-	case step.Behavior == "Removed" && step.Invert:
+	case step.Behavior == splitRemoved && step.Invert:
 		return splitRule{pattern: pattern, keepMatches: true}, nil
-	case step.Behavior == "Removed":
+	case step.Behavior == splitRemoved:
 		return splitRule{pattern: pattern, keepGaps: true}, nil
 	}
 	return splitRule{}, fmt.Errorf("%w: split behavior %q", ErrUnsupported, step.Behavior)
 }
 
-// wholeTokens is the vocabulary as raw bytes, for ignore_merges: a pre-token the vocabulary holds whole is one token.
-func wholeTokens(vocab map[string]uint32, symbols [256]string) map[string]struct{} {
+func wholeTokens(vocab map[string]uint32, symbols [byteValues]string) map[string]struct{} {
 	byteOf := make(map[rune]byte, len(symbols))
 	for value, symbol := range symbols {
 		symbolRune, _ := utf8.DecodeRuneInString(symbol)
 		byteOf[symbolRune] = byte(value)
 	}
 	whole := make(map[string]struct{}, len(vocab))
-	raw := make([]byte, 0, 64)
+	var raw []byte
 	for token := range vocab {
 		raw = raw[:0]
 		decoded := true
@@ -244,29 +249,25 @@ func wholeTokens(vocab map[string]uint32, symbols [256]string) map[string]struct
 	return whole
 }
 
-// byteSymbols is GPT-2's printable stand-in for every byte, the alphabet byte-level vocabularies are written in.
-func byteSymbols() [256]string {
-	var symbols [256]string
+func byteSymbols() [byteValues]string {
+	var symbols [byteValues]string
 	shifted := 0
-	for value := range 256 {
+	for value := range byteValues {
 		switch {
-		case value >= '!' && value <= '~', value >= 0xA1 && value <= 0xAC, value >= 0xAE:
+		case value >= '!' && value <= '~', value >= '¡' && value <= '¬', value >= '®':
 			symbols[value] = string(rune(value))
 		default:
-			symbols[value] = string(rune(256 + shifted))
+			symbols[value] = string(rune(byteValues + shifted))
 			shifted++
 		}
 	}
 	return symbols
 }
 
-func pairKey(left, right uint32) uint64 { return uint64(left)<<32 | uint64(right) }
+func pairKey(left, right uint32) uint64 { return uint64(left)<<pairKeyShift | uint64(right) }
 
 // Count returns text's exact token count, without the special tokens a chat template adds.
 func (c *Counter) Count(text string) (int, error) {
-	if text == "" {
-		return 0, nil
-	}
 	if c.nfc {
 		text = norm.NFC.String(text)
 	}
@@ -284,7 +285,6 @@ func (c *Counter) Count(text string) (int, error) {
 		pieces = next
 	}
 	var scratch mergeScratch
-	// Words repeat within one text, so a pre-token is merged once per call; nothing outlives the call.
 	counted := make(map[string]int)
 	tokens := 0
 	for _, piece := range pieces {
@@ -302,10 +302,6 @@ func (c *Counter) Count(text string) (int, error) {
 	return tokens, nil
 }
 
-// maxRememberedPiece is the longest pre-token Count remembers; longer ones rarely repeat.
-const maxRememberedPiece = 64
-
-// split appends piece's parts to into; runes is scratch the caller hands back on the next call.
 func (r splitRule) split(into []string, piece string, runes []rune) ([]string, []rune, error) {
 	runes = runes[:0]
 	for _, value := range piece {
