@@ -8,6 +8,7 @@ import (
 	"math/bits"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/dlclark/regexp2"
@@ -29,6 +30,7 @@ const (
 	minMemoSlots       = 64
 	maxMemoSlots       = 1 << 16
 	memoPiecesPerSlot  = 2
+	splitMatchTimeout  = 500 * time.Millisecond
 )
 
 var memoSeed = maphash.MakeSeed()
@@ -227,6 +229,7 @@ func compileSplit(step preTokenizerSpec) (splitRule, error) {
 	if err != nil {
 		return splitRule{}, fmt.Errorf("compile split pattern: %w", err)
 	}
+	pattern.MatchTimeout = splitMatchTimeout
 	scan := scanners[canonicalPattern(expression)]
 	if scan != nil {
 		fillBasicPlaneClasses()
