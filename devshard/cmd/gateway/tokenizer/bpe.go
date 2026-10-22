@@ -3,8 +3,11 @@ package tokenizer
 import (
 	"errors"
 	"fmt"
+	"hash/maphash"
 	"io"
+	"math/bits"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/dlclark/regexp2"
@@ -23,14 +26,19 @@ const (
 	noPattern          = ""
 	noAffix            = ""
 	noDropout          = 0
+	minMemoSlots       = 64
+	maxMemoSlots       = 1 << 16
+	memoPiecesPerSlot  = 2
 )
+
+var memoSeed = maphash.MakeSeed()
 
 // Counter is one model's byte-level BPE tokenizer, kept only to count tokens. It is immutable once loaded.
 type Counter struct {
 	nfc        bool
 	splits     []splitRule
 	byteSymbol [byteValues]uint32
-	merges     map[uint64]merge
+	pairs      *pairTable
 	whole      map[string]struct{}
 }
 
@@ -41,6 +49,7 @@ type merge struct {
 
 type splitRule struct {
 	pattern     *regexp2.Regexp
+	scan        matchFunc
 	keepMatches bool
 	keepGaps    bool
 }
@@ -116,7 +125,7 @@ func Load(r io.Reader) (*Counter, error) {
 	case model.ByteFallback, model.Dropout != nil && *model.Dropout != noDropout, model.ContinuingSubwordPrefix != noAffix, model.EndOfWordSuffix != noAffix:
 		return nil, fmt.Errorf("%w: BPE options beyond byte-level merges", ErrUnsupported)
 	}
-	counter := &Counter{merges: make(map[uint64]merge, len(model.Merges))}
+	counter := &Counter{pairs: newPairTable(len(model.Merges))}
 	var err error
 	if counter.nfc, err = normalizes(file.Normalizer); err != nil {
 		return nil, err
@@ -140,8 +149,8 @@ func Load(r io.Reader) (*Counter, error) {
 			return nil, fmt.Errorf("merge %d (%q %q) names a token the vocabulary lacks", rank, pair[0], pair[1])
 		}
 		key := pairKey(left, right)
-		if _, seen := counter.merges[key]; !seen {
-			counter.merges[key] = merge{rank: uint32(rank), result: result}
+		if _, seen := counter.pairs.lookup(left, right); !seen {
+			counter.pairs.add(key, merge{rank: uint32(rank), result: result})
 		}
 	}
 	if model.IgnoreMerges {
@@ -212,13 +221,17 @@ func compileSplit(step preTokenizerSpec) (splitRule, error) {
 	if err != nil {
 		return splitRule{}, fmt.Errorf("compile split pattern: %w", err)
 	}
+	scan := scanners[canonicalPattern(expression)]
+	if scan != nil {
+		fillBasicPlaneClasses()
+	}
 	switch {
 	case step.Behavior == splitIsolated:
-		return splitRule{pattern: pattern, keepMatches: true, keepGaps: true}, nil
+		return splitRule{pattern: pattern, scan: scan, keepMatches: true, keepGaps: true}, nil
 	case step.Behavior == splitRemoved && step.Invert:
-		return splitRule{pattern: pattern, keepMatches: true}, nil
+		return splitRule{pattern: pattern, scan: scan, keepMatches: true}, nil
 	case step.Behavior == splitRemoved:
-		return splitRule{pattern: pattern, keepGaps: true}, nil
+		return splitRule{pattern: pattern, scan: scan, keepGaps: true}, nil
 	}
 	return splitRule{}, fmt.Errorf("%w: split behavior %q", ErrUnsupported, step.Behavior)
 }
@@ -268,6 +281,62 @@ func pairKey(left, right uint32) uint64 { return uint64(left)<<pairKeyShift | ui
 
 // Count returns text's exact token count, without the special tokens a chat template adds.
 func (c *Counter) Count(text string) (int, error) {
+	pieces, err := c.preTokens(text)
+	if err != nil {
+		return 0, err
+	}
+	return c.countPieces(pieces), nil
+}
+
+func (c *Counter) countPieces(pieces []string) int {
+	var scratch mergeScratch
+	memo := takeMemo(memoSlots(len(pieces)))
+	defer giveMemo(memo)
+	tokens := 0
+	for _, piece := range pieces {
+		if len(piece) > maxRememberedPiece {
+			tokens += c.countPiece(piece, &scratch)
+			continue
+		}
+		slot := &memo.slots[maphash.String(memoSeed, piece)&uint64(len(memo.slots)-1)]
+		if slot.piece != piece {
+			slot.piece, slot.tokens = piece, c.countPiece(piece, &scratch)
+		}
+		tokens += slot.tokens
+	}
+	return tokens
+}
+
+// memoTables holds cleared memo tables between calls, so a call does not allocate and zero one anew.
+var memoTables sync.Pool
+
+type memoTable struct{ slots []memoSlot }
+
+func takeMemo(slots int) *memoTable {
+	if pooled, ok := memoTables.Get().(*memoTable); ok && cap(pooled.slots) >= slots {
+		pooled.slots = pooled.slots[:slots]
+		return pooled
+	}
+	return &memoTable{slots: make([]memoSlot, slots)}
+}
+
+func giveMemo(table *memoTable) {
+	clear(table.slots)
+	memoTables.Put(table)
+}
+
+// memoSlot remembers the last piece that hashed to it; an empty slot holds the empty piece, which is zero tokens.
+type memoSlot struct {
+	piece  string
+	tokens int
+}
+
+func memoSlots(pieces int) int {
+	return min(maxMemoSlots, max(minMemoSlots, 1<<bits.Len(uint(pieces/memoPiecesPerSlot))))
+}
+
+// preTokens is the text, normalized, cut by every split rule in turn.
+func (c *Counter) preTokens(text string) ([]string, error) {
 	if c.nfc {
 		text = norm.NFC.String(text)
 	}
@@ -279,30 +348,18 @@ func (c *Counter) Count(text string) (int, error) {
 			var err error
 			next, runes, err = rule.split(next, piece, runes)
 			if err != nil {
-				return 0, err
+				return nil, err
 			}
 		}
 		pieces = next
 	}
-	var scratch mergeScratch
-	counted := make(map[string]int)
-	tokens := 0
-	for _, piece := range pieces {
-		if len(piece) > maxRememberedPiece {
-			tokens += c.countPiece(piece, &scratch)
-			continue
-		}
-		pieceTokens, seen := counted[piece]
-		if !seen {
-			pieceTokens = c.countPiece(piece, &scratch)
-			counted[piece] = pieceTokens
-		}
-		tokens += pieceTokens
-	}
-	return tokens, nil
+	return pieces, nil
 }
 
 func (r splitRule) split(into []string, piece string, runes []rune) ([]string, []rune, error) {
+	if r.scan != nil {
+		return r.scanSplit(into, piece), runes, nil
+	}
 	runes = runes[:0]
 	for _, value := range piece {
 		runes = append(runes, value)

@@ -5,7 +5,9 @@ Counts a chat prompt's tokens with the tokenizer the chain pins for the model, s
 ## What it owns
 
 - `bpe.go` — `Load` reads a Hugging Face `tokenizer.json` into a `Counter`; `Counter.Count` is its exact token count of a text, without the special tokens a chat template adds.
-- `merge.go` — the merge loop: lowest rank first, leftmost on a tie, as Hugging Face BPE applies merges.
+- `merge.go` — the merge loop: lowest rank first, leftmost on a tie, as Hugging Face BPE applies merges. A piece of up to `scanMergeBytes` (24) bytes is merged by scanning its few symbols, a longer one with a heap of candidate pairs.
+- `pairs.go` — `pairTable`: the merge of a pair of tokens, in an open-addressed table with a bit filter in front of it.
+- `pretokenize.go` — hand-written scanners for the split patterns the pinned tokenizers use, found by the pattern's `canonicalPattern` spelling (raw CR and LF as `\r` and `\n`, `\"` as `"`), so DeepSeek-V4's raw line breaks select the same scanner as the escaped form. A rule with a scanner keeps its compiled regexp2 pattern too, as the fallback and the tests' reference.
 - `estimate.go` — `Counter.MinimumTokens`: the fewest tokens a prompt holds, exact up to a budget and a lower bound from samples beyond it; `Counter.MaximumTokens`: a bound it never exceeds, read from the prompt's bytes without tokenizing.
 - `library.go` — `Library.Counter`: the counter for each model, loaded in the background and fetched again when the revision the chain pins moves.
 - `vocabulary.go` — the `tokenizer.json` names `Load` reads and the hub address.
@@ -25,7 +27,7 @@ The files do not ship with the gateway: the three in use today are 36 MB togethe
 
 ## Counting exactly
 
-`Load` accepts only the byte-level BPE shape it reproduces exactly, and refuses everything else as `ErrUnsupported` rather than count approximately: a `BPE` model without byte fallback, dropout or affixes; an `NFC` normalizer or none; a pre-tokenizer of `Split` steps (`Isolated`, or `Removed`, inverted or not) and a `ByteLevel` step that does not split. `ignore_merges` is honoured: a pre-token the vocabulary holds whole is one token, as GLM's tokenizer requires. The split patterns use lookahead, which RE2 does not have, so they run on `github.com/dlclark/regexp2`. The type and behaviour names `Load` reads are in `vocabulary.go`.
+`Load` accepts only the byte-level BPE shape it reproduces exactly, and refuses everything else as `ErrUnsupported` rather than count approximately: a `BPE` model without byte fallback, dropout or affixes; an `NFC` normalizer or none; a pre-tokenizer of `Split` steps (`Isolated`, or `Removed`, inverted or not) and a `ByteLevel` step that does not split. `ignore_merges` is honoured: a pre-token the vocabulary holds whole is one token, as GLM's tokenizer requires. The split patterns use lookahead, which RE2 does not have, so a pattern without a scanner runs on `github.com/dlclark/regexp2`; every testdata and pinned pattern has one. The type and behaviour names `Load` reads are in `vocabulary.go`.
 
 - **Bytes.** A byte-level vocabulary is written in GPT-2's printable stand-in for every byte (`byteSymbols`): the printable ASCII and Latin-1 bytes stand for themselves, every other byte for a code point from 256 up. Every byte must have a token, or the file is unsupported.
 - **Merges** are read in both spellings tokenizer.json uses, `["left", "right"]` and `"left right"`, and applied lowest rank first, leftmost on a tie.
@@ -52,8 +54,8 @@ The bound is loose, since a token usually covers several bytes, and costs one pa
 
 ## Bounds
 
-- **Work per call is bounded by the budget**, whatever the prompt's length: at most 64 KiB reach the pre-tokenizer and the merge loop. The worst case measured is a 64 KiB run the pre-tokenizer cannot split (64 KiB of spaces, one pre-token), about 0.12 s on an Apple M4; prose and code of the same size take 10–50 ms.
-- **Nothing outlives a call.** A pre-token of up to `maxRememberedPiece` (64) bytes seen twice in one call is merged once, since words repeat within a text and longer pre-tokens rarely do; the memo is dropped when the call returns, so no prompt's words are retained.
+- **Work per call is bounded by the budget**, whatever the prompt's length: at most 64 KiB reach the pre-tokenizer and the merge loop. The worst case measured is a 64 KiB run the pre-tokenizer cannot split (64 KiB of spaces, one pre-token), 30–75 ms on a loaded Apple M4; mixed prose, code and CJK of the same size take 2–5 ms.
+- **Nothing outlives a call.** A pre-token of up to `maxRememberedPiece` (64) bytes is remembered in a direct-mapped table of at most `maxMemoSlots` (65,536) slots, so a word that repeats within a text is usually merged once, and one that collides with another forgets it and is merged again; longer pre-tokens rarely repeat and are not remembered. The table is cleared when the call returns and pooled for the next call, so no prompt's words are retained.
 - **A `Counter` is immutable once loaded** and is shared by every request.
 - **`maxTokenizerBytes`** (64 MiB) bounds one `tokenizer.json` read; the largest pinned today is about 20 MB.
 
@@ -67,3 +69,5 @@ GATEWAY_TOKENIZER_DIR=/path/to/tokenizers go test ./cmd/gateway/api/ -run '^$' -
 ```
 
 `BenchmarkEstimate` reports each estimate's error against the exact count of the same text as `%err`.
+
+`BenchmarkCount` times `Count` on Qwen2.5 (`qwen.json` in `GATEWAY_TOKENIZER_DIR`) from 200 B to 1 MiB. `TestIDsMatchTheOriginal` and `FuzzIDsMatchTheOriginal` compare the pre-tokens and full token IDs with the original implementation frozen in `reference_test.go` (regexp2 split, heap merge) on every testdata tokenizer and every one in `GATEWAY_TOKENIZER_DIR`, plus windows of the `.txt` files in `GATEWAY_BENCH_CORPUS_DIR`. `GATEWAY_TOKENIZER_SWEEP=1` adds the sweep over every Unicode scalar value, which takes minutes.
