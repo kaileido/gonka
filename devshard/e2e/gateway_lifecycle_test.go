@@ -3,6 +3,7 @@ package e2e
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,7 +18,7 @@ func gatewayPost(t *testing.T, client *http.Client, url string) testutil.RawResp
 // Test flow:
 //  1. Start the default three-host gateway environment.
 //  2. Deactivate the escrow and assert a request is no longer served.
-//  3. Activate it again.
+//  3. Activate it again, waiting out the drain while it answers "still draining".
 //  4. Poll until the escrow is back in service.
 func TestE2E_GatewayDeactivatesAnEscrowAndBringsItBack(t *testing.T) {
 	env, client := startGatewayEnv(t, e2eEnvOptions{})
@@ -33,10 +34,26 @@ func TestE2E_GatewayDeactivatesAnEscrowAndBringsItBack(t *testing.T) {
 		t.Errorf("a deactivated escrow still served a request: %s", drained.Body)
 	}
 
-	if activated := gatewayPost(t, client, admin+"/activate"); activated.StatusCode != http.StatusOK {
-		t.Fatalf("activate = %d %s", activated.StatusCode, activated.Body)
-	}
+	awaitActivated(t, client, admin, 10*time.Second)
 	awaitServed(t, client, env.clientURL, 30*time.Second)
+}
+
+func awaitActivated(t *testing.T, client *http.Client, admin string, within time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(within)
+	for {
+		activated := gatewayPost(t, client, admin+"/activate")
+		if activated.StatusCode == http.StatusOK {
+			return
+		}
+		if activated.StatusCode != http.StatusConflict || !strings.Contains(activated.Body, "still draining") {
+			t.Fatalf("activate = %d %s", activated.StatusCode, activated.Body)
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatalf("the escrow was still draining after %s: activate = %d %s", within, activated.StatusCode, activated.Body)
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
 }
 
 func awaitServed(t *testing.T, client *http.Client, clientURL string, within time.Duration) {

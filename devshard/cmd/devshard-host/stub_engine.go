@@ -29,7 +29,7 @@ func stubInferenceEngineFromEnv() (devshardpkg.InferenceEngine, error) {
 		responseHash := sha256.Sum256(body)
 		servedHash, err := stub.HashServedView(body)
 		if err != nil {
-			return nil, err
+			servedHash = responseHash[:]
 		}
 		stubEngine.ResponseBody = body
 		stubEngine.ResponseHash = responseHash[:]

@@ -12,6 +12,11 @@ import (
 	"devshard/e2e/testutil"
 )
 
+const (
+	cutOffBurnWindow   = 60 * time.Second
+	cutOffPollInterval = time.Second
+)
+
 func gatewayParticipants(t *testing.T, client *http.Client, clientURL string) []string {
 	t.Helper()
 	status, body := gatewayGet(t, client, clientURL+"/v1/admin/devshards/"+defaultEscrowID+"/participants", testutil.AdminAPIKey)
@@ -76,8 +81,9 @@ func TestE2E_GatewayKeepsServingWhenTheAllowlistIsPutBack(t *testing.T) {
 // Test flow:
 //  1. Start the three-host environment with one host unreachable.
 //  2. Set a cutoff that trips on the first transport fault.
-//  3. Send traffic while the cutoff holds.
-//  4. Assert the cut-off host's nonces are burned as throttled rather than offered again.
+//  3. Keep sending one completion per poll until a nonce is burned as cut off, since the dead host's
+//     first send fails only once the gateway's connect wait runs out.
+//  4. Assert the cut-off host's nonces are burned as cut off rather than offered again.
 func TestE2E_GatewayBurnsTheNoncesOfACutOffHost(t *testing.T) {
 	env, client := startGatewayEnv(t, e2eEnvOptions{})
 
@@ -91,12 +97,16 @@ func TestE2E_GatewayBurnsTheNoncesOfACutOffHost(t *testing.T) {
 	t.Cleanup(cancel)
 	env.stopHost(ctx, t, 1)
 
-	for request := range 9 {
+	deadline := time.Now().Add(cutOffBurnWindow)
+	var burned uint64
+	for request := 0; burned == 0 && time.Now().Before(deadline); request++ {
 		testutil.SendCompletionRaw(t, client, env.clientURL,
 			fmt.Sprintf("cutting off %d", request), testutil.AdminAPIKey)
+		burned = gatewayGhostBurns(t, client, env.statsURL, "participant_cut_off_no_send")
+		time.Sleep(cutOffPollInterval)
 	}
 
-	if burned := awaitGhostBurns(t, client, env.statsURL, "participant_throttled_no_send", 60*time.Second); burned == 0 {
+	if burned == 0 {
 		t.Errorf("an unreachable host was still being offered work; the burns that did land were %v",
 			gatewayGhostReasons(t, client, env.statsURL))
 	}
@@ -135,7 +145,8 @@ func TestE2E_GatewayCutsOffAHostRefusingWhileIdle(t *testing.T) {
 
 // Test flow:
 //  1. Start the three-host environment with one host answering HTTP 500.
-//  2. Set a half-second cutoff that trips after three failures, leaving the longer ejection behind it.
+//  2. Set a half-second cutoff that trips after three failures, leaving the longer ejection behind it,
+//     and let the ejection take a host of three by dropping the available-host floor.
 //  3. Send ten completions to eject the host, then wait past the cutoff and send six more.
 //  4. Assert the ejection is what blocks it now, burning its nonces under participant_ejected_no_send.
 func TestE2E_GatewayBurnsTheNoncesOfAnEjectedHostOnceItsCutoffLapses(t *testing.T) {
@@ -147,6 +158,7 @@ func TestE2E_GatewayBurnsTheNoncesOfAnEjectedHostOnceItsCutoffLapses(t *testing.
 		"host_cutoff_after_failures": 3,
 		"host_cutoff_ms":             500,
 		"host_cutoff_max_ms":         500,
+		"perf_min_available_hosts":   0,
 	})
 
 	for request := range 10 {

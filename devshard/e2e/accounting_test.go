@@ -676,8 +676,8 @@ func TestE2E_AccountingReportsCostPerParticipantAndModel(t *testing.T) {
 // Test flow:
 //  1. Start the default three-host gateway environment.
 //  2. Send two sequential completions so a host reports its usage.
-//  3. Poll accounting until a row reports output tokens.
-//  4. Assert the tokens are the chain's counts, attributed to a named participant and model.
+//  3. Poll accounting until a row reports both output tokens and the chain's input tokens.
+//  4. Assert that row names its participant and model.
 func TestE2E_AccountingReportsTokensPerParticipantAndModel(t *testing.T) {
 	env, client := startGatewayEnv(t, e2eEnvOptions{})
 
@@ -687,7 +687,7 @@ func TestE2E_AccountingReportsTokensPerParticipantAndModel(t *testing.T) {
 	ledger := testutil.WaitAccountingParticipants(t, client, env.statsURL, "",
 		func(response testutil.AccountingParticipantsResponse) bool {
 			for _, participant := range response.Participants {
-				if participant.OutputTokens > 0 {
+				if participant.OutputTokens > 0 && participant.InputTokens > 0 {
 					return true
 				}
 			}
@@ -695,18 +695,14 @@ func TestE2E_AccountingReportsTokensPerParticipantAndModel(t *testing.T) {
 		})
 
 	for _, participant := range ledger.Participants {
-		if participant.OutputTokens == 0 {
+		if participant.OutputTokens == 0 || participant.InputTokens == 0 {
 			continue
 		}
 		if participant.Participant == "" || participant.Model == "" {
-			t.Errorf("a row carrying %d output tokens names participant %q and model %q",
-				participant.OutputTokens, participant.Participant, participant.Model)
-		}
-		if participant.InputTokens == 0 {
-			t.Errorf("%s reports %d output tokens and no input tokens",
-				participant.Participant, participant.OutputTokens)
+			t.Errorf("a row carrying %d input and %d output tokens names participant %q and model %q",
+				participant.InputTokens, participant.OutputTokens, participant.Participant, participant.Model)
 		}
 		return
 	}
-	t.Fatalf("no participant row carried output tokens: %+v", ledger.Participants)
+	t.Fatalf("no participant row carried both input and output tokens: %+v", ledger.Participants)
 }

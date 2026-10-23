@@ -396,6 +396,7 @@ type DevshardRow struct {
 	EscrowID          string `json:"id"`
 	Active            bool   `json:"active"`
 	SettlementPending bool   `json:"settlement_pending"`
+	GoneFromChain     bool   `json:"gone_from_chain"`
 }
 
 // ListedDevshard reads one escrow's row from GET /v1/admin/devshards.

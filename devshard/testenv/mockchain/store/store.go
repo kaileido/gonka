@@ -48,6 +48,7 @@ type Store struct {
 	// lets citest simulate an unavailable request-time escrow fetch path so the
 	// devshardd escrow long-poll warm cache is exercised.
 	escrowQueryFault      bool
+	escrowQueryAbsent     bool
 	participantQueryFault bool
 	// participantModes overrides the Participant query per address; a missing
 	// entry means ParticipantModeOK.
@@ -292,6 +293,20 @@ func (s *Store) SetEscrowQueryFault(faulted bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.escrowQueryFault = faulted
+}
+
+// SetEscrowQueryAbsent toggles DevshardEscrow answering found=false (citest fault injection).
+func (s *Store) SetEscrowQueryAbsent(absent bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.escrowQueryAbsent = absent
+}
+
+// EscrowQueryAbsent reports whether DevshardEscrow should answer found=false.
+func (s *Store) EscrowQueryAbsent() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.escrowQueryAbsent
 }
 
 // EscrowQueryFaulted reports whether DevshardEscrow queries should fail.
