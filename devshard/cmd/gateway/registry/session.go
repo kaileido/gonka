@@ -135,7 +135,6 @@ func (l finalizeLock) Unlock() {
 	select {
 	case <-l:
 	default:
-		panic("registry: unlock of an unlocked finalize lock")
 	}
 }
 

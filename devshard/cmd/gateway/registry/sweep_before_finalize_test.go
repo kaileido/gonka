@@ -133,3 +133,15 @@ func TestFinalizeGivesUpWaitingForTheEscrowWhenItsContextEnds(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 	require.Equal(t, types.PhaseActive, escrow.machine.Phase())
 }
+
+// Test flow:
+//  1. Unlock a finalize lock nobody holds.
+//  2. Assert it did not panic and the lock can still be taken once and only once.
+func TestUnlockingAFreeFinalizeLockLeavesItUsable(t *testing.T) {
+	lock := newFinalizeLock()
+
+	require.NotPanics(t, lock.Unlock)
+
+	require.True(t, lock.TryLock())
+	require.False(t, lock.TryLock())
+}
