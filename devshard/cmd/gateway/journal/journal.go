@@ -207,6 +207,8 @@ func raceStepKind(kind engine.RaceStepKind) Kind {
 		return KindAttemptFinished
 	case engine.RaceStepNonceStranded:
 		return KindNonceStranded
+	case engine.RaceStepWinnerFinishLanded:
+		return KindWinnerFinishLanded
 	default:
 		return KindHostDiverged
 	}
@@ -332,7 +334,7 @@ func (j *Journal) deliver(entry *queuedEvent) {
 			}
 		}
 	case KindNonceCommitted, KindEscalationUnfilled, KindAttemptCrowned, KindAttemptFinished,
-		KindNonceStranded, KindHostDiverged:
+		KindNonceStranded, KindHostDiverged, KindWinnerFinishLanded:
 		renderRaceStep(j.lines, entry.raceStep)
 	case KindRequestFinished:
 		renderRequestFinished(j.lines, entry.request)

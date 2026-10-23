@@ -390,6 +390,7 @@ func TestRaceStepKindMapsEveryStepToItsLane(t *testing.T) {
 		{name: "escalation unfilled stays on the progress lane", step: engine.RaceStepEscalationUnfilled, wantKind: KindEscalationUnfilled, money: false},
 		{name: "attempt crowned stays on the progress lane", step: engine.RaceStepAttemptCrowned, wantKind: KindAttemptCrowned, money: false},
 		{name: "attempt finished stays on the progress lane", step: engine.RaceStepAttemptFinished, wantKind: KindAttemptFinished, money: false},
+		{name: "a served winner's late finish stays on the progress lane", step: engine.RaceStepWinnerFinishLanded, wantKind: KindWinnerFinishLanded, money: false},
 		{name: "nonce stranded rides the money lane", step: engine.RaceStepNonceStranded, wantKind: KindNonceStranded, money: true},
 		{name: "host blocked rides the money lane", step: engine.RaceStepHostBlocked, wantKind: KindHostDiverged, money: true},
 		{name: "host rewound rides the money lane", step: engine.RaceStepHostRewound, wantKind: KindHostDiverged, money: true},

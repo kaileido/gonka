@@ -46,6 +46,11 @@ func (o RaceOutcome) responsive(a AttemptOutcome) bool {
 	return a.Confirmed && a.NonceFinished && !a.emptyStream()
 }
 
+// FinishAwaited reports the served winner whose perf sample and metric labels wait for its nonce's finish. See race.md, "A served winner's sample waits for its finish".
+func (o RaceOutcome) FinishAwaited(a AttemptOutcome) bool {
+	return a.Terminal == TerminalWon && a.Confirmed && !a.NonceFinished && o.sampleExemption(a) == SampleRecorded
+}
+
 func (o RaceOutcome) served(a AttemptOutcome) bool {
 	return a.wonOrLost() && o.responsive(a)
 }

@@ -10,7 +10,7 @@ import (
 )
 
 // Test flow:
-//  1. For each table case, drive one of the exported `engine.Trace*` helpers (a committed nonce, an unfilled escalation, a crowned attempt, a finished attempt with every delivery field, a finished attempt with no outcome, a host that diverged twice, a stranded nonce) against a real `journal.Journal` with log capture installed.
+//  1. For each table case, drive one of the exported `engine.Trace*` helpers (a committed nonce, an unfilled escalation, a crowned attempt, a finished attempt with every delivery field, a finished attempt with no outcome, a host that diverged twice, a stranded nonce, a held winner's finish landing) against a real `journal.Journal` with log capture installed.
 //  2. Flush the journal.
 //  3. Assert every expected log line was recorded with its exact level, message and typed fields.
 func TestEveryRaceTraceLineKeepsItsLevelMessageAndTypedFields(t *testing.T) {
@@ -85,6 +85,14 @@ func TestEveryRaceTraceLineKeepsItsLevelMessageAndTypedFields(t *testing.T) {
 			want: []logcapture.Entry{{Level: "warn", Msg: "nonce stranded", Fields: []any{
 				"request", "request-1", "escrow", "escrow-1", "nonce", uint64(91),
 				"host", "host-6", "role", "speculative",
+			}}},
+		},
+		{
+			name:  "a held winner's finish landing",
+			drive: func(t *testing.T, events *journal.Journal) { engine.TraceWinnerFinishLanded(t, events) },
+			want: []logcapture.Entry{{Level: "info", Msg: "served winner finish landed", Fields: []any{
+				"request", "request-1", "escrow", "escrow-1", "nonce", uint64(10),
+				"host", "host-7", "finish_lag_ms", int64(1500),
 			}}},
 		},
 	}

@@ -119,6 +119,7 @@ type hostScript struct {
 	deaf        <-chan struct{}
 	confirmed   bool
 	finished    bool
+	finishLater bool
 	err         error
 	catchUpHeld bool
 	catchUp     *catchUpScript
@@ -254,8 +255,21 @@ func (t *scriptedTarget) RewindHostCatchUp(hostIdx int, _ string) bool {
 }
 
 func (t *scriptedTarget) NonceFinished(nonce uint64) bool {
-	script := t.script(nonce)
-	return script != nil && script.finished
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	script := t.scripts[nonce]
+	if script == nil {
+		return false
+	}
+	finished := script.finished
+	script.finished = finished || script.finishLater
+	return finished
+}
+
+func (t *scriptedTarget) finish(nonce uint64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.scripts[nonce].finished = true
 }
 
 func (t *scriptedTarget) Target(string) (DispatchTarget, bool) { return t, true }

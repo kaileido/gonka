@@ -72,6 +72,7 @@ The `journal` step sits between `escrow sessions` and `nonce accounting` (`app/l
 | `KindEscalationUnfilled` | `raceCoordinator.reportUnfilledPick` through `RecordStep` (`engine/pick.go`) | none | `escalation unfilled`, Info (`render_race.go`) |
 | `KindAttemptCrowned` | `raceCoordinator.crownWinner` through `RecordStep` (`engine/crown.go`) | none | `attempt crowned`, Info (`render_race.go`) |
 | `KindAttemptFinished` | `raceCoordinator.complete` through `RecordStep` (`engine/report.go`) | none | `attempt finished`, or `attempt finished with no outcome` when the attempt reported nothing, Info (`render_race.go`) |
+| `KindWinnerFinishLanded` | `Engine.decideWinner` through `RecordStep` (`engine/winner_sample.go`) | none | `served winner finish landed`, Info (`render_race.go`), with `finish_lag_ms` from the attempt's end until the gateway saw the finish |
 | `KindReplyNotCached` | `Server.chat` through `ReplyNotCached` (`api/routes.go`) | none | `a host stopped mid-answer: reply served, not cached`, Warn (`render_request.go`) |
 | `KindRequestFinished` | `Server.finishRequest` (`api/finish.go`) and the cache hit in `Server.chat` (`api/routes.go`), through `RequestFinished` | none | `request finished` (`render_request.go`): Info when the request went out clean, Warn with a race or delivery error; a cache hit writes the short shape with `outcome` `cache_hit` |
 | `KindRequestThrottled` | `Server.chat` through `RequestThrottled` (`api/routes.go`) | none | `gateway limiter turned a request away`, Warn (`render_request.go`) |

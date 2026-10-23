@@ -29,6 +29,7 @@ type routingDeps struct {
 	Dispatches   *metrics.DispatchRecorder
 	Steps        *metrics.StepRecorder
 	Served       *metrics.ServedBindingRecorder
+	Finishes     *finishNotice
 	PeerRPC      *transport.PeerRPCAdoption
 	Ledger       *nonces.Recorder
 	Journal      *journal.Journal
@@ -40,6 +41,9 @@ func newRouting(deps routingDeps) (*registry.Registry, *scheduler.Scheduler, *wa
 	if deps.Journal == nil {
 		return nil, nil, nil, errors.New("routing: Journal is required")
 	}
+	if deps.Finishes == nil {
+		return nil, nil, nil, errors.New("routing: Finishes is required")
+	}
 	registryDeps := registry.Deps{
 		ServingSessions:  deps.Sessions,
 		ReadOnlySessions: deps.ReadOnly,
@@ -47,7 +51,7 @@ func newRouting(deps routingDeps) (*registry.Registry, *scheduler.Scheduler, *wa
 		Exhaustion:       deps.Depletion,
 		Narrator:         deps.Journal,
 		Retiring:         deps.Ledger.EscrowRetiring,
-		ServedBindings:   servedBindingStrikes(deps.Hosts, deps.Journal, deps.Served),
+		ServedBindings:   servedBindingStrikes(deps.Hosts, deps.Journal, deps.Served, deps.Finishes),
 		PeerRPC:          deps.PeerRPC,
 		Now:              deps.Now,
 	}

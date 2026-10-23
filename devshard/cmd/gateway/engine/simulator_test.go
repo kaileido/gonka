@@ -202,6 +202,8 @@ func newSimMetrics() *simMetrics {
 
 func (m *simMetrics) RecordRace(outcome RaceOutcome) { m.races <- outcome }
 
+func (m *simMetrics) RecordAwaitedFinish(RaceOutcome, AttemptOutcome) {}
+
 func (m *simMetrics) RecordTimeout(event TimeoutEvent) { m.timeouts <- event }
 
 func (m *simMetrics) RecordClassifyOverflow(participant, _ string) {

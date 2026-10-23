@@ -42,6 +42,7 @@ type hostWindows interface {
 
 type raceMetrics interface {
 	RecordRace(outcome RaceOutcome)
+	RecordAwaitedFinish(outcome RaceOutcome, attempt AttemptOutcome)
 	RecordTimeout(event TimeoutEvent)
 	RecordClassifyOverflow(participant, model string)
 }
@@ -109,6 +110,7 @@ type Engine struct {
 	crown          *crownStrikes
 	lookups        *lookupRefusals
 	settles        *settleQueue
+	heldWinners    *heldWinners
 	stopping       context.Context
 	cancelStopping context.CancelFunc
 
@@ -146,6 +148,7 @@ func NewEngine(deps Deps) (*Engine, error) {
 		crown:          newCrownStrikes(deps.Journal),
 		lookups:        newLookupRefusals(),
 		settles:        newSettleQueue(clock),
+		heldWinners:    newHeldWinners(),
 		stopping:       stopping,
 		cancelStopping: cancelStopping,
 	}, nil
@@ -208,6 +211,7 @@ type raceRegistration struct {
 
 	mu         sync.Mutex
 	escrowHold func()
+	target     DispatchTarget
 }
 
 // holdEscrow keeps the first hold for as long as the vote is owed; a later one counts the same escrow and goes back.
@@ -223,6 +227,22 @@ func (r *raceRegistration) holdEscrow(release func()) {
 	if release != nil {
 		release()
 	}
+}
+
+func (r *raceRegistration) holdTarget(target DispatchTarget, release func()) {
+	r.mu.Lock()
+	if r.target == nil {
+		r.target = target
+	}
+	r.mu.Unlock()
+	r.holdEscrow(release)
+}
+
+func (r *raceRegistration) nonceFinished(nonce uint64) bool {
+	r.mu.Lock()
+	target := r.target
+	r.mu.Unlock()
+	return target != nil && target.NonceFinished(nonce)
 }
 
 func (r *raceRegistration) release() {
@@ -250,7 +270,7 @@ func (h heldTargets) Target(escrowID string) (DispatchTarget, bool) {
 	if !ok {
 		return nil, false
 	}
-	h.registration.holdEscrow(release)
+	h.registration.holdTarget(target, release)
 	return target, true
 }
 
@@ -315,9 +335,7 @@ func (e *Engine) record(outcome RaceOutcome, params any, registration *raceRegis
 		outcome.Attempts[index] = e.lookups.judge(attempt, outcome.Model)
 	}
 	for _, attempt := range outcome.Attempts {
-		if sample, exemption := outcome.Sample(attempt); exemption == SampleRecorded {
-			e.deps.Perf.RecordSample(sample)
-		}
+		e.recordSample(outcome, attempt, registration)
 		if verdict, moves := outcome.Verdict(attempt); moves {
 			e.deps.Windows.OnResult(limits.Result{
 				Participant: attempt.Participant,
@@ -362,6 +380,7 @@ func (e *Engine) settle(outcome RaceOutcome, params any, registration *raceRegis
 			deadline: func() time.Time { return earliestDue(group.steps, poster) },
 			post: func() {
 				retries := settleSteps(settleContext(outcome.RequestID), poster, group.steps, outcome.Lifecycle.EscrowMissing, e.reportTimeout)
+				e.decideHeldWinners(outcome.EscrowID, group.steps, registration)
 				markPosted()
 				e.retryRefusedVotes(outcome, poster, retries, markSettled, 0)
 			},
