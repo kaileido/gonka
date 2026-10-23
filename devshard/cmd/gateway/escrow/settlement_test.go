@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -555,7 +556,7 @@ func TestSettlePendingStillSettlesAfterAnUnrelatedUpsert(t *testing.T) {
 // Test flow:
 //  1. Seed the store with one parked devshard record.
 //  2. Configure the fake settlement source to report busy.
-//  3. Call `settlePending` and assert it returns `ErrDevshardBusy`.
+//  3. Call `settlePending` and assert it returns nil: busy defers the settle, it is no tick failure.
 //  4. Assert the record stays parked for the next sweep.
 func TestSettlePendingBusyEscrowStaysParkedForTheNextTick(t *testing.T) {
 	testStore := newFakeStore()
@@ -570,10 +571,103 @@ func TestSettlePendingBusyEscrowStaysParkedForTheNextTick(t *testing.T) {
 		config:           holderWithSettlementEnabled(true),
 	}
 
-	if err := m.settlePending(context.Background(), chain.PhaseSnapshot{}, []store.DevshardRecord{record}); !errors.Is(err, ErrDevshardBusy) {
-		t.Fatalf("settlePending() = %v, want ErrDevshardBusy", err)
+	if err := m.settlePending(context.Background(), chain.PhaseSnapshot{}, []store.DevshardRecord{record}); err != nil {
+		t.Fatalf("settlePending() = %v, want nil", err)
 	}
 	assertParked(t, testStore, record.EscrowID)
+}
+
+type settleTxReadFailingStore struct {
+	*fakeStore
+	err error
+}
+
+func (s settleTxReadFailingStore) DevshardSettleTxHash(context.Context, string) (string, time.Time, error) {
+	return "", time.Time{}, s.err
+}
+
+// Test flow:
+//  1. Seed the store with one parked devshard record.
+//  2. Configure the fake settlement source to fail Finalize.
+//  3. Call `settlePending` and assert it returns the Finalize error.
+//  4. Assert the record stays parked for the next sweep.
+func TestSettlePendingRealFailureOfParkedEscrowIsReported(t *testing.T) {
+	testStore := newFakeStore()
+	record := parkedRecord("10")
+	testStore.devshards[record.EscrowID] = record
+	finalizeErr := errors.New("finalize rejected")
+
+	m := &Manager{
+		tx:               settlingTxClient(),
+		store:            testStore,
+		signer:           &fakeSignerSource{signer: testSigner(t)},
+		settlementSource: &fakeSettlementSource{finalizeErr: finalizeErr},
+		config:           holderWithSettlementEnabled(true),
+	}
+
+	err := m.settlePending(context.Background(), chain.PhaseSnapshot{}, []store.DevshardRecord{record})
+	if !errors.Is(err, finalizeErr) {
+		t.Fatalf("settlePending() = %v, want the Finalize error", err)
+	}
+	assertParked(t, testStore, record.EscrowID)
+}
+
+// Test flow:
+//  1. Seed the store with one parked devshard record and make reading its settle tx fail.
+//  2. Call `settlePending` and assert it returns the store error, naming escrow 10.
+func TestSettlePendingFailureReadingTheSettleTxNamesTheEscrow(t *testing.T) {
+	testStore := newFakeStore()
+	record := parkedRecord("10")
+	testStore.devshards[record.EscrowID] = record
+	readErr := errors.New("settle tx read failed")
+
+	m := &Manager{
+		tx:               settlingTxClient(),
+		store:            settleTxReadFailingStore{fakeStore: testStore, err: readErr},
+		signer:           &fakeSignerSource{signer: testSigner(t)},
+		settlementSource: &fakeSettlementSource{},
+		config:           holderWithSettlementEnabled(true),
+	}
+
+	err := m.settlePending(context.Background(), chain.PhaseSnapshot{}, []store.DevshardRecord{record})
+	if !errors.Is(err, readErr) {
+		t.Fatalf("settlePending() = %v, want the store error", err)
+	}
+	if !strings.Contains(err.Error(), "escrow 10") {
+		t.Fatalf("settlePending() = %q, want it to name escrow 10", err)
+	}
+}
+
+// Test flow:
+//  1. Seed the store with one parked devshard record whose settle tx was broadcast just now and is not yet found on chain.
+//  2. Call `settlePending` and assert it returns nil: a settle still in flight is deferred, not a tick failure.
+//  3. Assert the record stays parked and its in-flight hash is kept.
+func TestSettlePendingSettleInFlightIsDeferred(t *testing.T) {
+	testStore := newFakeStore()
+	record := parkedRecord("10")
+	testStore.devshards[record.EscrowID] = record
+	if err := testStore.SetDevshardSettleTxHash(context.Background(), record.EscrowID, "IN-FLIGHT"); err != nil {
+		t.Fatalf("SetDevshardSettleTxHash(): %v", err)
+	}
+	txClient := settlingTxClient()
+	txClient.txCommittedFn = func(string) (bool, error) { return false, chain.ErrTxNotFound }
+
+	m := &Manager{
+		tx:               txClient,
+		store:            testStore,
+		signer:           &fakeSignerSource{signer: testSigner(t)},
+		settlementSource: &fakeSettlementSource{},
+		config:           holderWithSettlementEnabled(true),
+		now:              time.Now,
+	}
+
+	if err := m.settlePending(context.Background(), chain.PhaseSnapshot{}, []store.DevshardRecord{record}); err != nil {
+		t.Fatalf("settlePending() = %v, want nil", err)
+	}
+	assertParked(t, testStore, record.EscrowID)
+	if got := testStore.devshards[record.EscrowID].SettleTxHash; got != "IN-FLIGHT" {
+		t.Fatalf("recorded hash = %q, want the transaction still in flight kept", got)
+	}
 }
 
 // Test flow:

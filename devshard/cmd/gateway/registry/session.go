@@ -7,8 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"common/completionapi"
-
 	"devshard/cmd/gateway/scheduler"
 	"devshard/heightsync"
 	"devshard/state"
@@ -16,7 +14,7 @@ import (
 	"devshard/user"
 )
 
-const ghostMaxTokens = uint64(completionapi.MinTokensFloor)
+const ghostMaxTokens = uint64(state.MinReservationTokens)
 
 // See README.md, "Nonces and ghost burns".
 var (

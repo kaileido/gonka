@@ -150,15 +150,14 @@ func (t *Tracker) narrateEjectionTransition(key hostKey, host *hostState, now, e
 		if t.narrator == nil {
 			return
 		}
-		rate, volume := host.perf.failureRate(now)
 		t.narrator.HostWithheld(Withholding{
 			Participant:         key.participant,
 			Model:               key.model,
-			Reason:              ejectionReason(&host.perf, rate),
+			Reason:              host.ejection.trigger.reason,
 			EjectionCount:       host.ejection.ejectionCount,
-			ConsecutiveFailures: host.perf.consecutiveFail,
-			FailureRate:         rate,
-			FailureVolume:       volume,
+			ConsecutiveFailures: host.ejection.trigger.consecutiveFailures,
+			FailureRate:         host.ejection.trigger.failureRate,
+			FailureVolume:       host.ejection.trigger.failureVolume,
 			WithheldFor:         host.ejection.ejectedUntil.Sub(now),
 		})
 	case !withheldNow && host.ejection.wasWithheld:
@@ -167,14 +166,6 @@ func (t *Tracker) narrateEjectionTransition(key hostKey, host *hostState, now, e
 			t.narrator.HostReturned(key.participant, key.model, host.ejection.ejectionCount)
 		}
 	}
-}
-
-// ejectionReason names which of the two triggers fired: they call for different answers.
-func ejectionReason(host *hostPerf, rate float64) string {
-	if host.consecutiveFail > 0 && rate == 0 {
-		return ejectionReasonConsecutiveFailures
-	}
-	return ejectionReasonFailureRate
 }
 
 // rebuildEjectedViewLocked republishes both verdicts as one map: every live ejection is degraded, and the per-model cap decides which of them routing actually withholds.

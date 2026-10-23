@@ -7,8 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"common/completionapi"
-
 	"devshard/cmd/gateway/scheduler"
 	"devshard/internal/testutil"
 	"devshard/signing"
@@ -242,7 +240,7 @@ func TestSessionHandleReportsThePhaseOfItsOwnStateMachine(t *testing.T) {
 // Test flow:
 //  1. Parse the ghost prompt's JSON body.
 //  2. Assert its max_tokens field matches the ghostMaxTokens reservation.
-//  3. Assert ghostMaxTokens is at or above the chain's minimum tokens floor.
+//  3. Assert ghostMaxTokens is at or above `state.MinReservationTokens`, the floor the state machine refuses below.
 func TestGhostPromptAgreesWithItsReservation(t *testing.T) {
 	var body struct {
 		MaxTokens uint64 `json:"max_tokens"`
@@ -253,8 +251,8 @@ func TestGhostPromptAgreesWithItsReservation(t *testing.T) {
 	if body.MaxTokens != ghostMaxTokens {
 		t.Errorf("ghostPrompt max_tokens = %d, reservation = %d", body.MaxTokens, ghostMaxTokens)
 	}
-	if ghostMaxTokens < completionapi.MinTokensFloor {
-		t.Errorf("ghostMaxTokens = %d, below the floor %d the chain refuses", ghostMaxTokens, completionapi.MinTokensFloor)
+	if ghostMaxTokens < state.MinReservationTokens {
+		t.Errorf("ghostMaxTokens = %d, below the floor %d the state machine refuses", ghostMaxTokens, state.MinReservationTokens)
 	}
 }
 

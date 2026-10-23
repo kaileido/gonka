@@ -2448,26 +2448,31 @@ func (c *invariantContext) processChangedIn(target string, span timeSpan) bool {
 	return false
 }
 
+// attemptFailuresIncreased sums the counter's increases into the span; a drop is a gateway restart and
+// counts its new value, and a sample without the participant's series is skipped.
 func (c *invariantContext) attemptFailuresIncreased(participant string, span timeSpan) bool {
-	before, after := 0.0, 0.0
+	previous, increase := 0.0, 0.0
 	for _, s := range sortedMetrics(c.in.Metrics) {
-		if s.Target != "gateway" {
+		if s.Target != "gateway" || s.At.After(span.To) {
 			continue
 		}
-		total := 0.0
+		total, found := 0.0, false
 		for key, value := range s.Domain {
 			name, labels := parseDomainKey(key)
 			if name == "devshard_gateway_attempt_failures_total" && labels["participant_key"] == participant {
 				total += value
+				found = true
 			}
 		}
-		if s.At.Before(span.From) {
-			before = total
-		} else if span.contains(s.At) {
-			after = max(after, total)
+		if !found {
+			continue
 		}
+		if span.contains(s.At) {
+			increase += counterIncrease(previous, total)
+		}
+		previous = total
 	}
-	return after > before
+	return increase > 0
 }
 
 // ---- no-skipped-validation-leases: no owed validation skipped (Postgres lease table; sqlite hosts excluded) ----

@@ -143,6 +143,7 @@ func (s *attemptState) outcome(spec AttemptSpec) *AttemptOutcome {
 		LogprobTokens:         s.logprobTokens,
 		OutputBytes:           s.outputBytes,
 		LogprobsDecoded:       s.logprobsDecoded,
+		HostTerminated:        s.hostTerminated,
 		MaxChunkGap:           s.maxChunkGap,
 		MaxChunkGapAt:         s.maxGapChunk,
 		MeanChunkGap:          s.meanChunkGap(),
