@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"devshard/cmd/gateway/filters"
 	"devshard/cmd/gateway/limits"
@@ -80,6 +81,80 @@ func TestATruncatedAnswerFailsTheRace(t *testing.T) {
 			if len(plan) != 1 || plan[0].Nonce != winner.Nonce || !plan[0].Post {
 				t.Errorf("timeout plan = %+v, want one posted vote for nonce %d", plan, winner.Nonce)
 			}
+		})
+	}
+}
+
+// Test flow:
+//  1. For each loser script (content with or without [DONE], on a finished or unfinished nonce), start a two-host race whose first host is held before its receipt.
+//  2. Move the clock past the receipt timeout so the race dispatches the loser, which sends its receipt and first chunk and waits.
+//  3. Release the first host to answer with [DONE] on a finished nonce, assert the race returns it, then let the loser finish its script.
+//  4. Assert the race succeeded with the first host's attempt as TerminalWon.
+//  5. Assert the loser's terminal and the verdict the limiter reads from it.
+func TestALoserTheHostCutShortCountsAsATransportFault(t *testing.T) {
+	sseDone := string(filters.SSEDoneEvent)
+	policy := EscalationPolicy{
+		ReceiptTimeout:        time.Second,
+		FirstTokenFloor:       time.Hour,
+		InterChunkStall:       time.Hour,
+		LoserGrace:            10 * time.Minute,
+		MaxAttemptsPerRequest: 2,
+	}
+	testCases := []struct {
+		name          string
+		loserChunks   []string
+		loserFinished bool
+		wantTerminal  Terminal
+		wantVerdict   limits.Verdict
+	}{
+		{name: "a loser closed without [DONE] on an unfinished nonce", loserChunks: []string{roleEvent, contentEvent("half")}, wantTerminal: TerminalStreamTruncated, wantVerdict: limits.TransportFault},
+		{name: "a loser closed after [DONE] on an unfinished nonce", loserChunks: []string{roleEvent, contentEvent("whole"), sseDone}, wantTerminal: TerminalLost, wantVerdict: limits.ModelOutcome},
+		{name: "a loser closed without [DONE] on a finished nonce", loserChunks: []string{roleEvent, contentEvent("whole")}, loserFinished: true, wantTerminal: TerminalLost, wantVerdict: limits.Success},
+		{name: "a loser closed after [DONE] on a finished nonce", loserChunks: []string{roleEvent, contentEvent("whole"), sseDone}, loserFinished: true, wantTerminal: TerminalLost, wantVerdict: limits.Success},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			sim := newSimulator(t, policy, 2, qwenModel)
+			arrive, streaming := make(chan uint64, 1), make(chan uint64, 1)
+			winnerRelease, loserResume := make(chan struct{}), make(chan struct{})
+			sim.host(10, 0, "winner-host", &hostScript{
+				arrive: arrive, release: winnerRelease,
+				receipt: true, chunks: []string{roleEvent, contentEvent("whole"), sseDone},
+				confirmed: true, finished: true,
+			})
+			sim.host(11, 1, "loser-host", &hostScript{
+				streaming: streaming, resume: loserResume,
+				receipt: true, chunks: testCase.loserChunks,
+				confirmed: true, finished: testCase.loserFinished,
+			})
+
+			outcomes := runInBackground(t, sim)
+			waitForValue(t, arrive, "the first host's dispatch")
+			sim.clock.waitArmed(t, policy.ReceiptTimeout)
+			sim.clock.advance(policy.ReceiptTimeout)
+			waitForValue(t, streaming, "the loser's first chunk")
+			close(winnerRelease)
+			if served := waitForValue(t, outcomes, "the race's answer"); served.WinnerNonce != 10 {
+				t.Fatalf("served winner = %d, want 10", served.WinnerNonce)
+			}
+			close(loserResume)
+			reported := sim.reported(t)
+			sim.settleAll()
+
+			if !reported.Succeeded || reported.WinnerNonce != 10 {
+				t.Fatalf("winner = %d succeeded %t, want 10/true", reported.WinnerNonce, reported.Succeeded)
+			}
+			if winner := attemptFor(t, reported, 10); winner.Terminal != TerminalWon {
+				t.Errorf("winner terminal = %v, want %v", winner.Terminal, TerminalWon)
+			}
+			loser := attemptFor(t, reported, 11)
+			if loser.Terminal != testCase.wantTerminal {
+				t.Errorf("loser terminal = %v, want %v", loser.Terminal, testCase.wantTerminal)
+			}
+			if verdict, _ := reported.Verdict(loser); verdict != testCase.wantVerdict {
+				t.Errorf("loser verdict = %v, want %v", verdict, testCase.wantVerdict)
+			}
+			sim.assertOneOutcome(t)
 		})
 	}
 }
