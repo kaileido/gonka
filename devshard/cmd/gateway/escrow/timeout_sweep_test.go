@@ -28,6 +28,7 @@ type recordingSweeper struct {
 	settleBudget int
 	settleSwept  [3]int
 	settleErr    error
+	onSettle     func()
 }
 
 func (s *recordingSweeper) SweepBeforeFinalize(_ context.Context, escrowID string, budget int) (int, int, int, error) {
@@ -37,6 +38,9 @@ func (s *recordingSweeper) SweepBeforeFinalize(_ context.Context, escrowID strin
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.settleEscrow, s.settleBudget = escrowID, budget
+	if s.onSettle != nil {
+		s.onSettle()
+	}
 	return s.settleSwept[0], s.settleSwept[1], s.settleSwept[2], s.settleErr
 }
 
@@ -197,9 +201,9 @@ func TestSettleVotesDueTimeoutsBeforeFinalizing(t *testing.T) {
 }
 
 // Test flow:
-//  1. Table-driven: with a sweep budget of 3, a settle-time sweep that found the whole budget due with every vote applied, with one vote failed, with every vote failed, and one that found less than the budget.
+//  1. Table-driven: with a sweep budget of 3, a settle-time sweep that found the whole budget due with every vote applied, with one vote failed, with every vote failed, one that found less than the budget, and one that found less with a vote failed.
 //  2. Settle the escrow without force on one manager and with force on another.
-//  3. Assert the unforced settle defers as busy without finalizing only while a full budget was due and a vote landed, and the forced one always finalizes.
+//  3. Assert the unforced settle defers as busy without finalizing while a full budget was due and a vote landed or while any vote failed, and the forced one always finalizes.
 func TestAnUnforcedSettleWaitsWhileTheSweepSpentItsWholeBudget(t *testing.T) {
 	testCases := []struct {
 		name       string
@@ -208,8 +212,9 @@ func TestAnUnforcedSettleWaitsWhileTheSweepSpentItsWholeBudget(t *testing.T) {
 	}{
 		{name: "full budget applied", swept: [3]int{3, 3, 0}, wantDefers: true},
 		{name: "full budget with a failed vote", swept: [3]int{3, 2, 1}, wantDefers: true},
-		{name: "full budget all failed", swept: [3]int{3, 0, 3}, wantDefers: false},
+		{name: "full budget all failed", swept: [3]int{3, 0, 3}, wantDefers: true},
 		{name: "less than the budget due", swept: [3]int{2, 2, 0}, wantDefers: false},
+		{name: "less than the budget with a failed vote", swept: [3]int{2, 1, 1}, wantDefers: true},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -230,6 +235,45 @@ func TestAnUnforcedSettleWaitsWhileTheSweepSpentItsWholeBudget(t *testing.T) {
 			require.Contains(t, forcedLog.snapshot(), "Finalize")
 		})
 	}
+}
+
+// Test flow:
+//  1. Configure a sweep budget of 3, a settle-time sweep whose only due vote fails every time, and a clock the test moves.
+//  2. Settle the escrow without force once a tick for three ticks, all within failedSweepRetryWindow of the first failure; assert each defers as busy without finalizing.
+//  3. Move the clock to the end of that window and settle again; assert it finalizes and settles.
+func TestAnUnforcedSettleRetriesAFailedVoteForABoundedTime(t *testing.T) {
+	manager, _, log, record := settlingManager(t, &recordingSweeper{settleSwept: [3]int{1, 0, 1}}, 3)
+	firstFailure := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
+	clock := &testClock{now: firstFailure}
+	manager.now = clock.read
+
+	for range 3 {
+		_, err := manager.settle(context.Background(), record, false)
+		require.ErrorIs(t, err, ErrDevshardBusy)
+		clock.now = clock.now.Add(TickInterval)
+	}
+	require.NotContains(t, log.snapshot(), "Finalize")
+	clock.now = firstFailure.Add(failedSweepRetryWindow)
+	_, err := manager.settle(context.Background(), record, false)
+
+	require.NoError(t, err)
+	require.Contains(t, log.snapshot(), "Finalize")
+}
+
+// Test flow:
+//  1. Configure a sweep budget of 3 and a settle-time sweep that finds one vote due and is cancelled before it lands one, as shutdown does.
+//  2. Settle the escrow with force on that context.
+//  3. Assert the settle returns the context's error and never finalizes.
+func TestASettleWhoseSweepWasCancelledDoesNotFinalize(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sweeper := &recordingSweeper{settleSwept: [3]int{1, 0, 0}, onSettle: cancel}
+	manager, _, log, record := settlingManager(t, sweeper, 3)
+
+	_, err := manager.settle(ctx, record, true)
+
+	require.ErrorIs(t, err, context.Canceled)
+	require.NotContains(t, log.snapshot(), "Finalize")
 }
 
 // Test flow:

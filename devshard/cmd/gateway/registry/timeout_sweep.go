@@ -47,12 +47,12 @@ func (r *Registry) SweepExecutionTimeouts(ctx context.Context, grace time.Durati
 	return due, applied, failed
 }
 
-// SweepBeforeFinalize votes the execution timeouts left due on an escrow about to finalize, with no race grace; a non-resident escrow is rehydrated with a serving session.
+// SweepBeforeFinalize votes the execution timeouts left due on an escrow about to finalize, with no race grace, after any sweep holding it ends; a non-resident escrow is rehydrated with a serving session.
 func (r *Registry) SweepBeforeFinalize(ctx context.Context, escrowID string, budget int) (due, applied, failed int, err error) {
 	var swept user.SweepReport
-	err = r.withServingSession(ctx, escrowID, func(session EscrowSession) error {
-		swept = session.SweepExecutionTimeouts(ctx, noRaceGrace, budget)
-		return nil
+	err = r.withServingSession(ctx, escrowID, func(session EscrowSession) (sweepErr error) {
+		swept, sweepErr = session.SweepBeforeFinalize(ctx, budget)
+		return sweepErr
 	})
 	return swept.Due, swept.Applied, swept.Failed, err
 }

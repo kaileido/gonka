@@ -77,6 +77,8 @@ type nonceRecord struct {
 	acknowledged bool
 	isCounted    bool
 	outputAdded  bool
+	raced        bool
+	sealed       bool
 	usage        Usage
 	ghostReason  string
 
@@ -323,8 +325,12 @@ func (b *Book) RecordRace(escrowID string, attempts []Attempt) error {
 			record.clockDrifted = attempt.ClockDrifted
 			record.slowDecode = attempt.SlowDecode
 			record.logprobsDecoded = attempt.LogprobsDecoded
+			record.raced = true
 			escrow.addProduced(attempt.Nonce, record, attempt.OutputTokens)
 			escrow.reclassify(attempt.Nonce, record)
+			if record.sealed {
+				escrow.forgetSealed(attempt.Nonce)
+			}
 		}
 		return nil
 	})
@@ -414,9 +420,15 @@ func (e *escrowLedger) foldSealed(inferences map[uint64]*types.InferenceRecord) 
 }
 
 func (e *escrowLedger) forgetSealed(nonce uint64) {
-	if record, known := e.nonces[nonce]; known && !revisable(record) {
-		delete(e.nonces, nonce)
+	record, known := e.nonces[nonce]
+	if !known || revisable(record) {
+		return
 	}
+	if !record.raced && record.countedAs.Disposition == DispositionFinishedUsageUnknown {
+		record.sealed = true
+		return
+	}
+	delete(e.nonces, nonce)
 }
 
 func sealedMoney(folded map[uint32]SlotMoney) map[uint32]SlotMoney {

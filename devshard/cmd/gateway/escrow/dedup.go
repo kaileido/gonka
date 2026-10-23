@@ -3,6 +3,7 @@ package escrow
 import (
 	"math"
 	"sync"
+	"time"
 
 	"devshard/cmd/gateway/scheduler"
 )
@@ -85,6 +86,31 @@ func (s *markSet) drain() map[string]bool {
 	marks := s.keys
 	s.keys = nil
 	return marks
+}
+
+type retryWindows struct {
+	mu     sync.Mutex
+	opened map[string]time.Time
+}
+
+func (w *retryWindows) retrying(key string, now time.Time) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	opened, seen := w.opened[key]
+	if !seen {
+		if w.opened == nil {
+			w.opened = make(map[string]time.Time)
+		}
+		opened = now
+		w.opened[key] = opened
+	}
+	return now.Sub(opened) < failedSweepRetryWindow
+}
+
+func (w *retryWindows) forget(key string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	delete(w.opened, key)
 }
 
 // depletionMarks is markSet with the reason kept, so the tick can tell a nonce cap from a balance floor.

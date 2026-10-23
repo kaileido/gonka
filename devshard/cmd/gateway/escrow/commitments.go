@@ -62,6 +62,7 @@ type Manager struct {
 
 	timeoutSweeper TimeoutSweeper
 	sweepRecorder  SweepRecorder
+	sweepRetries   retryWindows
 	narrator       lifecycleNarrator
 	sweeping       atomic.Bool
 	offTickWork    sync.WaitGroup

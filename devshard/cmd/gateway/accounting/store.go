@@ -241,6 +241,7 @@ func (b *Book) Restore(snapshot Snapshot) error {
 		}
 		for _, stored := range stored.Nonces {
 			record := &nonceRecord{
+				raced:           true,
 				sent:            stored.Sent,
 				acknowledged:    stored.Acknowledged,
 				usage:           stored.Usage,

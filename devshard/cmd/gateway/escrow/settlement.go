@@ -31,8 +31,9 @@ type parkNarration bool
 
 // See escrows.md, "Settlement and retirement".
 const (
-	pendingSettleBudget = 4
-	urgentSettleBudget  = 8
+	pendingSettleBudget    = 4
+	urgentSettleBudget     = 8
+	failedSweepRetryWindow = 4 * TickInterval
 
 	narratePark       parkNarration = true
 	skipParkNarration parkNarration = false
@@ -213,6 +214,9 @@ func (m *Manager) settleEntered(ctx context.Context, record store.DevshardRecord
 	if err := m.sweepBeforeFinalize(ctx, record.EscrowID, force); err != nil {
 		return chain.SettleEscrowResult{}, err
 	}
+	if err := ctx.Err(); err != nil {
+		return chain.SettleEscrowResult{}, fmt.Errorf("settling escrow %s: %w", record.EscrowID, err)
+	}
 	if err := m.settlementSource.Finalize(ctx, record.EscrowID); err != nil {
 		return chain.SettleEscrowResult{}, fmt.Errorf("finalizing escrow %s: %w", record.EscrowID, err)
 	}
@@ -255,6 +259,10 @@ func (m *Manager) sweepBeforeFinalize(ctx context.Context, escrowID string, forc
 	if !force && due >= budget && applied > 0 {
 		return fmt.Errorf("%w: escrow %s spent its timeout sweep budget with votes still landing", ErrDevshardBusy, escrowID)
 	}
+	if !force && failed > 0 && ctx.Err() == nil && m.sweepRetries.retrying(escrowID, m.now()) {
+		return fmt.Errorf("%w: escrow %s failed %d timeout votes; finalize waits to retry them", ErrDevshardBusy, escrowID, failed)
+	}
+	m.sweepRetries.forget(escrowID)
 	return nil
 }
 
@@ -360,6 +368,7 @@ func (m *Manager) deleteSettled(ctx context.Context, escrowID string) error {
 	if err := m.store.WithRetry(ctx, func() error { return m.store.DeleteDevshard(ctx, escrowID) }); err != nil {
 		return fmt.Errorf("deleting settled escrow %s: %w", escrowID, err)
 	}
+	m.sweepRetries.forget(escrowID)
 	if m.narrator != nil {
 		m.narrator.SettledRecordDropped(escrowID)
 	}

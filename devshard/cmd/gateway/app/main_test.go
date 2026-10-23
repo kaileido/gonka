@@ -1269,6 +1269,10 @@ func (s weightlessSession) SweepExecutionTimeouts(context.Context, time.Duration
 	return user.SweepReport{}
 }
 
+func (s weightlessSession) SweepBeforeFinalize(context.Context, int) (user.SweepReport, error) {
+	return user.SweepReport{}, nil
+}
+
 func (s weightlessSession) ProtocolVersion() string { return "" }
 
 func (s weightlessSession) Inference(uint64) (types.InferenceRecord, bool) {

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -465,5 +466,58 @@ func TestABatchAcceptsTheLargestBatchSize(t *testing.T) {
 	}
 	if answer := decodeBatchSettle(t, response.Body.Bytes()); answer.Settled != 1 {
 		t.Fatalf("settled: got %d, want 1", answer.Settled)
+	}
+}
+
+// Test flow:
+//  1. Register devshard 7 and POST its admin settle on a request context its client has already cancelled.
+//  2. Assert the settle answered 200 and ran on a context that was not cancelled and carried a deadline.
+func TestAnAdminSettleRunsOnAContextItsClientCannotCancel(t *testing.T) {
+	live := newHarness(t)
+	live.control.devshards = registeredDevshardRows("7")
+	var settleErr error
+	var bounded bool
+	live.operations.onSettle = func(string) {
+		live.operations.mu.Lock()
+		defer live.operations.mu.Unlock()
+		settleErr = live.operations.settleCtx.Err()
+		_, bounded = live.operations.settleCtx.Deadline()
+	}
+	clientGone, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	response := live.requestWithContext(t, clientGone, http.MethodPost, "/v1/admin/devshards/7/settle", "", adminHeaders())
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status: got %d (%s), want 200", response.Code, response.Body.String())
+	}
+	if settleErr != nil {
+		t.Fatalf("the settle ran on a context its client cancelled: %v", settleErr)
+	}
+	if !bounded {
+		t.Fatal("the settle ran on a context with no deadline of its own")
+	}
+}
+
+// Test flow:
+//  1. Register devshards 1 and 2 and wire the settle of escrow 1 to cancel the request context, as a client that disconnects does.
+//  2. POST a batch settle for both with `batch_size` 1.
+//  3. Assert escrow 1 settled and escrow 2 was never started.
+func TestABatchStartsNoSettleOnceItsClientIsGone(t *testing.T) {
+	live := newHarness(t)
+	live.control.devshards = registeredDevshardRows("1", "2")
+	clientGone, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var started []string
+	live.operations.onSettle = func(escrowID string) {
+		started = append(started, escrowID)
+		cancel()
+	}
+
+	response := live.requestWithContext(t, clientGone, http.MethodPost, "/v1/admin/devshards/settle", `{"escrow_ids":["1","2"],"batch_size":1}`, adminHeaders())
+
+	answer := decodeBatchSettle(t, response.Body.Bytes())
+	if !slices.Equal(started, []string{"1"}) || answer.Settled != 1 || answer.Failed != 1 {
+		t.Fatalf("a batch whose client left: started %v, answer %+v; want escrow 1 settled and escrow 2 never started", started, answer)
 	}
 }

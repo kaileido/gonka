@@ -194,6 +194,7 @@ type fakeOperations struct {
 	create      chain.CreateEscrowResult
 	settle      chain.SettleEscrowResult
 	onSettle    func(escrowID string)
+	settleCtx   context.Context
 	created     []CreateEscrowRequest
 	added       []AddDevshardRequest
 	imported    []ImportDevshardRequest
@@ -251,8 +252,9 @@ func (f *fakeOperations) Deactivate(_ context.Context, escrowID string) error {
 	return f.record("deactivate")
 }
 
-func (f *fakeOperations) Settle(_ context.Context, escrowID string, _ bool) (chain.SettleEscrowResult, error) {
+func (f *fakeOperations) Settle(ctx context.Context, escrowID string, _ bool) (chain.SettleEscrowResult, error) {
 	f.mu.Lock()
+	f.settleCtx = ctx
 	hold := f.onSettle
 	f.mu.Unlock()
 	if hold != nil {
@@ -473,11 +475,23 @@ func (h *harness) request(t *testing.T, method, target, body string, headers map
 
 func (h *harness) requestInto(t *testing.T, w http.ResponseWriter, method, target, body string, headers map[string]string) {
 	t.Helper()
+	h.requestIntoWithContext(t, context.Background(), w, method, target, body, headers)
+}
+
+func (h *harness) requestWithContext(t *testing.T, ctx context.Context, method, target, body string, headers map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	h.requestIntoWithContext(t, ctx, recorder, method, target, body, headers)
+	return recorder
+}
+
+func (h *harness) requestIntoWithContext(t *testing.T, ctx context.Context, w http.ResponseWriter, method, target, body string, headers map[string]string) {
+	t.Helper()
 	var reader io.Reader
 	if body != "" {
 		reader = strings.NewReader(body)
 	}
-	request := httptest.NewRequest(method, target, reader)
+	request := httptest.NewRequestWithContext(ctx, method, target, reader)
 	for name, value := range headers {
 		request.Header.Set(name, value)
 	}

@@ -72,13 +72,13 @@ func awaitServed(t *testing.T, client *http.Client, clientURL string, within tim
 
 // Test flow:
 //  1. Start the default three-host gateway environment.
-//  2. Settle the escrow.
+//  2. Settle the escrow, retrying while it answers 409 "devshard busy" because the startup warm-up still holds it.
 //  3. Activate it again and assert 404: serving it would spend nonces the settlement missed.
 func TestE2E_GatewayCannotActivateAnEscrowItHasSettled(t *testing.T) {
 	env, client := startGatewayEnv(t, e2eEnvOptions{})
 
 	admin := env.clientURL + "/v1/admin/devshards/" + defaultEscrowID
-	if settled := gatewayPost(t, client, admin+"/settle"); settled.StatusCode != http.StatusOK {
+	if settled := settleRetryingBusy(t, client, admin+"/settle"); settled.StatusCode != http.StatusOK {
 		t.Fatalf("settle = %d %s", settled.StatusCode, settled.Body)
 	}
 	reactivated := gatewayPost(t, client, admin+"/activate")

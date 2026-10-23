@@ -185,6 +185,10 @@ func (f *fakeSession) SweepExecutionTimeouts(_ context.Context, grace time.Durat
 	return f.sweepReport
 }
 
+func (f *fakeSession) SweepBeforeFinalize(ctx context.Context, budget int) (user.SweepReport, error) {
+	return f.SweepExecutionTimeouts(ctx, noRaceGrace, budget), nil
+}
+
 func (f *fakeSession) HostDials() []HostDial { return f.dials }
 
 func (f *fakeSession) ChatBudgets() map[string]ChatBudget { return f.budgets }

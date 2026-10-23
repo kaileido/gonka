@@ -2137,8 +2137,12 @@ func (s *Session) SendFinalizeRound(ctx context.Context) error {
 }
 
 // sendDiffRound composes a diff, sends it to the next host, processes the response.
-// Returns non-nil only on compose or processResponse errors; dead hosts are silently skipped.
+// Returns non-nil only on compose or processResponse errors or a context cancelled before the compose; dead hosts are silently skipped.
 func (s *Session) sendDiffRound(ctx context.Context, extraTxs []*types.DevshardTx, finalizeRound bool) error {
+	// A cancelled caller is not a dead host: skipping it would commit rounds no host sees.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	s.composingFinalizeRound = finalizeRound
 	diff, hostIdx, err := s.composeDiffLocked(ctx, extraTxs)
@@ -2451,16 +2455,25 @@ func (s *Session) SyncHosts(ctx context.Context) error {
 // Phase B (N iterations): Pure propagation + signature collection. No new
 // diffs created. Sends catch-up diffs so every host reaches the final
 // nonce and signs the same state.
+//
+// A finalize cut short, by a cancelled context or a restart, sends its remaining rounds first; one already settled only collects signatures.
 func (s *Session) Finalize(ctx context.Context) error {
 	if !s.finalizeInFlight.CompareAndSwap(false, true) {
 		return fmt.Errorf("finalize already in progress")
 	}
 	defer s.finalizeInFlight.Store(false)
 
-	// Guard: if already settled, try to collect missing signatures instead
-	// of running the full finalize protocol again.
 	phase := s.sm.Phase()
 	threshold := s.sm.QuorumThreshold()
+	for phase == types.PhaseFinalizing {
+		nonce := s.Nonce()
+		if err := s.SendFinalizeRound(ctx); err != nil && s.Nonce() == nonce {
+			return fmt.Errorf("resuming the finalize cut short at nonce %d: %w", nonce, err)
+		}
+		phase = s.sm.Phase()
+	}
+	// Guard: if already settled, try to collect missing signatures instead
+	// of running the full finalize protocol again.
 	if phase == types.PhaseSettlement {
 		if s.hasQuorum(s.nonce, threshold) {
 			logging.Info("finalize: already settled with quorum", "subsystem", "finalize", "escrow", s.escrowID,
@@ -2475,10 +2488,6 @@ func (s *Session) Finalize(ctx context.Context) error {
 		}
 		return nil
 	}
-	if phase == types.PhaseFinalizing {
-		return fmt.Errorf("finalize already in progress (phase=finalizing, nonce=%d)", s.nonce)
-	}
-
 	n := len(s.group)
 
 	logging.Info("finalize started", "subsystem", "finalize", "escrow", s.escrowID,

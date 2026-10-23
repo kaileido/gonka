@@ -1,7 +1,6 @@
 package registry
 
 import (
-	"sync"
 	"testing"
 
 	"devshard/internal/testutil"
@@ -47,7 +46,7 @@ func benchmarkHandle(b *testing.B) sessionHandle {
 	if err := machine.RestoreState(&escrowState); err != nil {
 		b.Fatalf("RestoreState() = %v, want nil", err)
 	}
-	return sessionHandle{machine: machine, finalizing: &sync.Mutex{}}
+	return sessionHandle{machine: machine, finalizing: newFinalizeLock()}
 }
 
 // BenchmarkLiveInferencesOfOneEscrowWithTenThousandUnsealedRecords benchmarks today's read: every unsealed record copied, then filtered to the open ones.
