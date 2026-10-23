@@ -240,11 +240,8 @@ func TestE2E_GatewayIsNotStalledByAHostThatReceiptsThenGoesSilent(t *testing.T) 
 func TestE2E_GatewayAccountsAStalledNonceEvenWhenTheGroupCallsItARefusal(t *testing.T) {
 	requireSlowE2E(t)
 	env, client := startGatewayEnv(t, e2eEnvOptions{
-		gatewayEnvOverrides: map[string]string{
-			"DEVSHARD_E2E":                          "1",
-			e2econfig.StreamingHardTimeoutMillisEnv: "5000",
-		},
-		mockChainParams: map[string]any{"refusal_timeout": 5, "execution_timeout": 10},
+		gatewayEnvOverrides: shortDeadlineGateway(),
+		mockChainParams:     shortDeadlineChain(),
 		hostEnvOverrides: map[int]map[string]string{
 			0: shortDeadlines(nil),
 			1: shortDeadlines(map[string]string{e2econfig.StubInferenceDelayMillisEnv: "600000"}),
