@@ -3,18 +3,22 @@ package chain
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"common/httpguard"
 
 	"devshard/cmd/gateway/internal/leakcheck"
 )
+
+const capableNodeReply = `{"mlnodes":[{"node_id":"node-1","poc_validation_inference":true}]}`
 
 // fakeClock is a mutex-guarded injectable clock so TTL/staleness tests never
 // depend on the real wall clock.
@@ -59,7 +63,7 @@ func newVersionsStub(t *testing.T, status int, body string) *httptest.Server {
 //  3. Poll the cache.
 //  4. Assert the node reads as validation-capable within the TTL.
 func TestVersionsCache_PollSucceeds_NodeCapableWithinTTL(t *testing.T) {
-	server := newVersionsStub(t, http.StatusOK, `{"mlnodes":[{"node_id":"node-1","poc_validation_inference":true}]}`)
+	server := newVersionsStub(t, http.StatusOK, capableNodeReply)
 	clock := newFakeClock(time.Unix(0, 0))
 	cache := NewVersionsCache(server.Client(), time.Minute, clock.Now)
 	cache.SetCandidates(map[string]string{"miner-1": server.URL})
@@ -126,7 +130,7 @@ func TestVersionsCache_NodeExplicitlyIncapable_ReturnsFalse(t *testing.T) {
 //  4. Advance the clock past the TTL.
 //  5. Assert the node now reads as not validation-capable (fails closed).
 func TestVersionsCache_EntryOlderThanTTL_FailsClosed(t *testing.T) {
-	server := newVersionsStub(t, http.StatusOK, `{"mlnodes":[{"node_id":"node-1","poc_validation_inference":true}]}`)
+	server := newVersionsStub(t, http.StatusOK, capableNodeReply)
 	clock := newFakeClock(time.Unix(0, 0))
 	cache := NewVersionsCache(server.Client(), time.Minute, clock.Now)
 	cache.SetCandidates(map[string]string{"miner-1": server.URL})
@@ -148,7 +152,7 @@ func TestVersionsCache_EntryOlderThanTTL_FailsClosed(t *testing.T) {
 //  3. Call SetCandidates again without that miner.
 //  4. Assert the node now reads as not validation-capable even though its cached entry is still fresh.
 func TestVersionsCache_SetCandidates_DropsRemovedMiner(t *testing.T) {
-	server := newVersionsStub(t, http.StatusOK, `{"mlnodes":[{"node_id":"node-1","poc_validation_inference":true}]}`)
+	server := newVersionsStub(t, http.StatusOK, capableNodeReply)
 	clock := newFakeClock(time.Unix(0, 0))
 	cache := NewVersionsCache(server.Client(), time.Minute, clock.Now)
 	cache.SetCandidates(map[string]string{"miner-1": server.URL})
@@ -173,7 +177,7 @@ func TestVersionsCache_Run_ExitsOnContextCancel(t *testing.T) {
 	defer leakcheck.VerifyNone(t)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"mlnodes":[{"node_id":"node-1","poc_validation_inference":true}]}`))
+		w.Write([]byte(capableNodeReply))
 	}))
 	defer server.Close()
 
@@ -293,4 +297,204 @@ func TestVersionsCache_AnOversizedOrMalformedReply_FailsClosed(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Test flow:
+//  1. Build a VersionsCache over in-memory hosts with a fake clock, a 45-second TTL and one candidate miner.
+//  2. Poll while the host answers 200 with a capable node and assert the node is capable.
+//  3. Make the host answer 503, advance the clock 30 seconds, poll again, and assert the node is still capable.
+//  4. Advance the clock past the TTL of the last successful fetch and assert the node reads as not capable.
+func TestVersionsCache_AFailedFetchKeepsTheLastGoodAnswerUntilTTL(t *testing.T) {
+	hosts := newVersionsHosts()
+	clock := newFakeClock(time.Unix(0, 0))
+	cache := NewVersionsCache(&http.Client{Transport: hosts}, 45*time.Second, clock.Now)
+	cache.SetCandidates(map[string]string{"miner-1": "http://miner-1.invalid"})
+	cache.Poll(t.Context())
+	if !cache.IsNodeValidationCapable("miner-1", "node-1") {
+		t.Fatal("IsNodeValidationCapable(miner-1, node-1) after a successful fetch = false, want true")
+	}
+
+	hosts.answer("miner-1.invalid", http.StatusServiceUnavailable)
+	clock.Advance(30 * time.Second)
+	cache.Poll(t.Context())
+	if !cache.IsNodeValidationCapable("miner-1", "node-1") {
+		t.Fatal("IsNodeValidationCapable(miner-1, node-1) after a failed fetch within ttl = false, want true")
+	}
+
+	clock.Advance(16 * time.Second)
+	if cache.IsNodeValidationCapable("miner-1", "node-1") {
+		t.Fatal("IsNodeValidationCapable(miner-1, node-1) past the ttl of the last good answer = true, want false")
+	}
+}
+
+// versionsHosts answers /v1/versions in memory per host, counts requests, and holds a host's reply while its gate is open.
+type versionsHosts struct {
+	mu       sync.Mutex
+	statuses map[string]int
+	hits     map[string]int
+	gates    map[string]chan struct{}
+}
+
+func newVersionsHosts() *versionsHosts {
+	return &versionsHosts{statuses: map[string]int{}, hits: map[string]int{}, gates: map[string]chan struct{}{}}
+}
+
+func (h *versionsHosts) RoundTrip(request *http.Request) (*http.Response, error) {
+	h.mu.Lock()
+	host := request.URL.Host
+	h.hits[host]++
+	status, hasStatus := h.statuses[host]
+	gate := h.gates[host]
+	h.mu.Unlock()
+	if !hasStatus {
+		status = http.StatusOK
+	}
+	if gate != nil {
+		select {
+		case <-gate:
+		case <-request.Context().Done():
+			return nil, request.Context().Err()
+		}
+	}
+	return &http.Response{StatusCode: status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(capableNodeReply)), Request: request}, nil
+}
+
+func (h *versionsHosts) hitsOf(host string) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.hits[host]
+}
+
+func (h *versionsHosts) answer(host string, status int) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.statuses[host] = status
+}
+
+func (h *versionsHosts) hold(host string) chan struct{} {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	gate := make(chan struct{})
+	h.gates[host] = gate
+	return gate
+}
+
+// runVersionsCache runs cache.Run until the test ends.
+func runVersionsCache(t *testing.T, cache *VersionsCache, interval time.Duration) {
+	ctx, cancel := context.WithCancel(t.Context())
+	runDone := make(chan struct{})
+	go func() {
+		defer close(runDone)
+		cache.Run(ctx, interval)
+	}()
+	t.Cleanup(func() { cancel(); <-runDone })
+}
+
+// Test flow:
+//  1. In a synctest bubble, build a VersionsCache over in-memory hosts and set one candidate miner before Run starts.
+//  2. Run it with an hour-long interval and wait until it is idle.
+//  3. Assert the miner was fetched once and its node reads as capable, long before the first tick.
+func TestVersionsCache_Run_PollsTheCandidatesSetBeforeItStartsWithoutWaitingForATick(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		hosts := newVersionsHosts()
+		cache := NewVersionsCache(&http.Client{Transport: hosts}, time.Hour, time.Now)
+		cache.SetCandidates(map[string]string{"miner-1": "http://miner-1.invalid"})
+
+		runVersionsCache(t, cache, time.Hour)
+		synctest.Wait()
+
+		if got := hosts.hitsOf("miner-1.invalid"); got != 1 {
+			t.Errorf("hits(miner-1) = %d, want 1", got)
+		}
+		if !cache.IsNodeValidationCapable("miner-1", "node-1") {
+			t.Error("IsNodeValidationCapable(miner-1, node-1) = false, want true")
+		}
+	})
+}
+
+// Test flow:
+//  1. In a synctest bubble, Run a VersionsCache over in-memory hosts with an hour-long interval and one candidate miner, and wait for its start poll.
+//  2. Call SetCandidates with that miner and a new one, twice, and wait until Run is idle.
+//  3. Assert the new miner was fetched exactly once and reads as capable, and the first miner was not fetched again.
+func TestVersionsCache_SetCandidates_PollsOnlyANewMinerAndOnlyOnce(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		hosts := newVersionsHosts()
+		cache := NewVersionsCache(&http.Client{Transport: hosts}, time.Hour, time.Now)
+		cache.SetCandidates(map[string]string{"miner-1": "http://miner-1.invalid"})
+		runVersionsCache(t, cache, time.Hour)
+		synctest.Wait()
+
+		both := map[string]string{"miner-1": "http://miner-1.invalid", "miner-2": "http://miner-2.invalid"}
+		cache.SetCandidates(both)
+		cache.SetCandidates(both)
+		synctest.Wait()
+
+		if got := hosts.hitsOf("miner-2.invalid"); got != 1 {
+			t.Errorf("hits(miner-2) = %d, want 1", got)
+		}
+		if !cache.IsNodeValidationCapable("miner-2", "node-1") {
+			t.Error("IsNodeValidationCapable(miner-2, node-1) = false, want true")
+		}
+		if got := hosts.hitsOf("miner-1.invalid"); got != 1 {
+			t.Errorf("hits(miner-1) = %d, want 1", got)
+		}
+	})
+}
+
+// Test flow:
+//  1. In a synctest bubble, Run a VersionsCache over in-memory hosts with an hour-long interval and one capable miner, and wait for its first poll.
+//  2. Make the miner's new host answer 503, move the miner to it with SetCandidates, and wait until Run is idle.
+//  3. Assert the new host was fetched once, the old one not again, and the miner reads as not capable: the old host's answer went with its URL.
+func TestVersionsCache_AMinerMovedToANewURLIsPolledThereRightAwayAndForgetsItsOldAnswer(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		hosts := newVersionsHosts()
+		cache := NewVersionsCache(&http.Client{Transport: hosts}, time.Hour, time.Now)
+		cache.SetCandidates(map[string]string{"miner-1": "http://old-host.invalid"})
+		runVersionsCache(t, cache, time.Hour)
+		synctest.Wait()
+
+		hosts.answer("new-host.invalid", http.StatusServiceUnavailable)
+		cache.SetCandidates(map[string]string{"miner-1": "http://new-host.invalid"})
+		synctest.Wait()
+
+		if got := hosts.hitsOf("new-host.invalid"); got != 1 {
+			t.Errorf("hits(new-host) = %d, want 1", got)
+		}
+		if got := hosts.hitsOf("old-host.invalid"); got != 1 {
+			t.Errorf("hits(old-host) = %d, want 1", got)
+		}
+		if cache.IsNodeValidationCapable("miner-1", "node-1") {
+			t.Error("IsNodeValidationCapable(miner-1, node-1) = true, want false")
+		}
+	})
+}
+
+// Test flow:
+//  1. In a synctest bubble, build a VersionsCache over in-memory hosts with one candidate miner whose reply is held.
+//  2. Start Poll, wait until the fetch is in flight, and remove the miner with SetCandidates.
+//  3. Release the reply, wait for Poll to return, and add the miner back.
+//  4. Assert the miner reads as not capable: the answer fetched before its removal was not stored.
+func TestVersionsCache_AFetchInFlightWhenItsMinerIsRemovedStoresNothing(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		hosts := newVersionsHosts()
+		gate := hosts.hold("miner-1.invalid")
+		cache := NewVersionsCache(&http.Client{Transport: hosts}, time.Hour, time.Now)
+		candidates := map[string]string{"miner-1": "http://miner-1.invalid"}
+		cache.SetCandidates(candidates)
+
+		polled := make(chan struct{})
+		go func() {
+			defer close(polled)
+			cache.Poll(t.Context())
+		}()
+		synctest.Wait()
+		cache.SetCandidates(map[string]string{})
+		close(gate)
+		<-polled
+		cache.SetCandidates(candidates)
+
+		if cache.IsNodeValidationCapable("miner-1", "node-1") {
+			t.Error("IsNodeValidationCapable(miner-1, node-1) = true, want false")
+		}
+	})
 }

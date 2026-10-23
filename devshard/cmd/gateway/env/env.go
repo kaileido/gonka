@@ -106,7 +106,8 @@ type Values struct {
 	HostPingTimeoutMS   *int64
 	HostPingConcurrency *int64
 
-	ChainSnapshotMaxAgeSeconds *int64
+	ChainSnapshotMaxAgeSeconds       *int64
+	ChainVersionsPollIntervalSeconds *int64
 
 	EngineReceiptTimeoutMS    *int64
 	EngineFirstTokenFloorMS   *int64
@@ -375,6 +376,7 @@ func Load() (Values, error) {
 	readStrictInt("GATEWAY_PERF_HOST_STALENESS_SECONDS", &values.PerfHostStalenessSeconds)
 
 	readStrictInt("GATEWAY_CHAIN_SNAPSHOT_MAX_AGE_SECONDS", &values.ChainSnapshotMaxAgeSeconds)
+	readStrictInt("GATEWAY_CHAIN_VERSIONS_POLL_INTERVAL_SECONDS", &values.ChainVersionsPollIntervalSeconds)
 
 	readStrictInt("GATEWAY_ENGINE_RECEIPT_TIMEOUT_MS", &values.EngineReceiptTimeoutMS)
 	readStrictInt("GATEWAY_ENGINE_FIRST_TOKEN_FLOOR_MS", &values.EngineFirstTokenFloorMS)

@@ -189,6 +189,7 @@ Signing keys are addressed **by the name of the variable that holds them**, neve
 | `DEVSHARD_ESCROW_ROTATION_MODELS_JSON` | empty | the models rotation keeps escrows for, each with `model_id`, `temp_count`, `amount` and `private_key_env`; optional are `target_count` (1), `reserve_count` (1, `0` turns reserves off), `max_unsettled` (the target, temp and reserve counts plus 4), `full_context_slots` (2) and the model's own `settlement_enabled` and `previous_epoch_settlement_enabled`; empty rotates no model |
 | `GATEWAY_WARM_NEW_ESCROWS` | true | whether a new escrow is taught to its group before serving |
 | `GATEWAY_CHAIN_SNAPSHOT_MAX_AGE_SECONDS` | 60 | how stale the chain snapshot may be before requests are refused 503; `0` disables the gate |
+| `GATEWAY_CHAIN_VERSIONS_POLL_INTERVAL_SECONDS` | 15 | how often each candidate host's `/v1/versions` is polled for PoC-validation capability; 1 to 86 400; a host's last good answer lives three intervals |
 | `GATEWAY_ENGINE_RECEIPT_TIMEOUT_MS` | 5 000 | receipt deadline; doubled above 100 000 input tokens |
 | `GATEWAY_ENGINE_FIRST_TOKEN_FLOOR_MS` | 6 000 | lower bound on the first-token curve |
 | `GATEWAY_ENGINE_FIRST_TOKEN_CEILING_MS` | 30 000 | upper bound, whatever the host's own p75 asks for |

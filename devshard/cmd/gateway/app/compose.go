@@ -137,6 +137,7 @@ type gateway struct {
 	manager      *escrow.Manager
 	router       *scheduler.Scheduler
 	races        *engine.Engine
+	finishes     *finishNotice
 	limiter      *limits.GatewayLimiter
 	participants *limits.ParticipantLimiter
 	telemetry    *metrics.Metrics
@@ -185,10 +186,11 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 		publicAPI = sources.PublicAPI
 	}
 	observer, err := chain.NewPhaseObserver(chain.ObserverConfig{
-		PublicAPIBaseURL: configuration.Chain.PublicAPIBaseURL,
-		Chain:            sources.Reader,
-		HTTPClient:       publicAPI,
-		Now:              clock,
+		PublicAPIBaseURL:     configuration.Chain.PublicAPIBaseURL,
+		Chain:                sources.Reader,
+		VersionsPollInterval: time.Duration(configuration.Chain.VersionsPollIntervalSeconds) * time.Second,
+		HTTPClient:           publicAPI,
+		Now:                  clock,
 	})
 	if err != nil {
 		return nil, err
@@ -429,6 +431,7 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 		manager:      manager,
 		router:       router,
 		races:        races,
+		finishes:     finishes,
 		limiter:      gatewayLimiter,
 		participants: participants,
 		telemetry:    telemetry,

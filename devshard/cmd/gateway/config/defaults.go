@@ -16,9 +16,10 @@ func Defaults() Config {
 			SessionRetentionEpochs:     2,
 		},
 		Chain: Chain{
-			GRPCEndpoint:          "localhost:9090",
-			PublicAPIBaseURL:      "http://localhost:9000",
-			SnapshotMaxAgeSeconds: 60,
+			GRPCEndpoint:                "localhost:9090",
+			PublicAPIBaseURL:            "http://localhost:9000",
+			SnapshotMaxAgeSeconds:       60,
+			VersionsPollIntervalSeconds: int64(chain.DefaultVersionsPollInterval.Seconds()),
 		},
 		Tx: Tx{
 			FeeDenom:       chain.DefaultFeeDenom,

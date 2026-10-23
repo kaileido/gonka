@@ -23,11 +23,12 @@ type Server struct {
 
 // Chain addresses the network; a moved RPC port must be named, not derived. See README.md, "What each group holds".
 type Chain struct {
-	PublicAPIBaseURL      string
-	GRPCEndpoint          string
-	RPCEndpoint           string
-	ChainID               string
-	SnapshotMaxAgeSeconds int64
+	PublicAPIBaseURL            string
+	GRPCEndpoint                string
+	RPCEndpoint                 string
+	ChainID                     string
+	SnapshotMaxAgeSeconds       int64
+	VersionsPollIntervalSeconds int64
 }
 
 type Tx struct {
