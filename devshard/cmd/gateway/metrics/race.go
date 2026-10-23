@@ -193,15 +193,8 @@ func (r *RaceRecorder) RecordRace(outcome engine.RaceOutcome) {
 		if !attempt.SendTime.IsZero() {
 			r.attemptsStarted.WithLabelValues(participant, model, role, metricLabel(attempt.StartReason, role)).Inc()
 		}
-		r.attemptsTerminal.WithLabelValues(participant, model, role, labels.Outcome, labels.Visibility).Inc()
-
-		if labels.Outcome == engine.AttemptOutcomeFailed {
-			reason := metricLabel(labels.Reason, labelUnknown)
-			r.attemptFailures.WithLabelValues(participant, model, role, reason, labels.Visibility).Inc()
-			if status, upstream := transportStatus(attempt); upstream {
-				r.transportErrors.WithLabelValues(participant, model, status).Inc()
-			}
-			if firstFailure == "" {
+		if !outcome.FinishAwaited(attempt) {
+			if reason, failed := r.countTerminal(participant, model, role, labels, attempt); failed && firstFailure == "" {
 				firstFailure = reason
 			}
 		}
@@ -209,6 +202,40 @@ func (r *RaceRecorder) RecordRace(outcome engine.RaceOutcome) {
 		r.observeAttemptLatency(participant, model, outcome.InputTokens, attempt)
 	}
 	r.recordRequest(model, outcome, firstFailure)
+}
+
+// RecordAwaitedFinish counts the terminal RecordRace left to the winner's finish; the request's hidden failure is its own only when no other attempt failed.
+func (r *RaceRecorder) RecordAwaitedFinish(outcome engine.RaceOutcome, attempt engine.AttemptOutcome) {
+	model := metricLabel(outcome.Model, labelUnknown)
+	labels := outcome.Labels(attempt)
+	participant := metricLabel(labels.Participant, labelUnknown)
+	r.markSeen(participant, model)
+	reason, failed := r.countTerminal(participant, model, metricLabel(labels.Role, labelUnknown), labels, attempt)
+	if failed && outcome.Succeeded && !otherAttemptFailed(outcome) {
+		r.hiddenFailures.WithLabelValues(model, reason).Inc()
+	}
+}
+
+func (r *RaceRecorder) countTerminal(participant, model, role string, labels engine.AttemptLabels, attempt engine.AttemptOutcome) (string, bool) {
+	r.attemptsTerminal.WithLabelValues(participant, model, role, labels.Outcome, labels.Visibility).Inc()
+	if labels.Outcome != engine.AttemptOutcomeFailed {
+		return "", false
+	}
+	reason := metricLabel(labels.Reason, labelUnknown)
+	r.attemptFailures.WithLabelValues(participant, model, role, reason, labels.Visibility).Inc()
+	if status, upstream := transportStatus(attempt); upstream {
+		r.transportErrors.WithLabelValues(participant, model, status).Inc()
+	}
+	return reason, true
+}
+
+func otherAttemptFailed(outcome engine.RaceOutcome) bool {
+	for _, attempt := range outcome.Attempts {
+		if !outcome.FinishAwaited(attempt) && outcome.Labels(attempt).Outcome == engine.AttemptOutcomeFailed {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *RaceRecorder) recordRequest(model string, outcome engine.RaceOutcome, firstFailure string) {

@@ -93,6 +93,7 @@ const (
 	FirstTokenMS      = "first_token_ms"
 	FirstContentMS    = "first_content_ms"
 	AttemptMS         = "attempt_ms"
+	FinishLagMS       = "finish_lag_ms"
 )
 
 // What the client asked for and what it got.

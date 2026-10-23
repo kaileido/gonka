@@ -260,6 +260,7 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 
 	devshardWork := make(chan struct{}, 1)
 	depletion := &depletionNotice{}
+	finishes := &finishNotice{}
 	escrows, router, prober, err := newRouting(routingDeps{
 		Sessions:     sources.Serving,
 		ReadOnly:     sources.ReadOnly,
@@ -272,6 +273,7 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 		Dispatches:   metrics.NewDispatchRecorder(telemetry),
 		Steps:        steps,
 		Served:       metrics.NewServedBindingRecorder(telemetry),
+		Finishes:     finishes,
 		PeerRPC:      adoption,
 		Ledger:       recorder,
 		Journal:      events,
@@ -349,6 +351,7 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 	if err != nil {
 		return nil, err
 	}
+	finishes.attach(races)
 	// One wrapper for both readers, so the gauge reports the scale admission actually applies.
 	modelCapacities := modelCapacity{capacity: capacity, snapshots: observer, config: configHolder, participants: participants}
 	telemetry.Register(

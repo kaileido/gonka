@@ -1323,6 +1323,7 @@ func TestPublishingAnEscrowGivesItWeightAndMakesItPickable(t *testing.T) {
 		Snapshots:    observer,
 		Config:       configHolder,
 		Depletion:    &depletionNotice{},
+		Finishes:     &finishNotice{},
 		Journal:      newTestJournal(t),
 		Now:          time.Now,
 	})
@@ -1464,6 +1465,7 @@ func composedRoutingOver(t *testing.T, capacity *limits.Capacity, session regist
 		Snapshots:    observer,
 		Config:       configHolder,
 		Depletion:    &depletionNotice{},
+		Finishes:     &finishNotice{},
 		Journal:      newTestJournal(t),
 		Now:          time.Now,
 	})
@@ -1486,6 +1488,17 @@ func TestRoutingIsRefusedWithoutAJournal(t *testing.T) {
 
 	if err == nil || !strings.Contains(err.Error(), "Journal is required") {
 		t.Fatalf("newRouting() without a journal = %v, want the missing journal named", err)
+	}
+}
+
+// Test flow:
+//  1. Call newRouting with a journal and no finish notice.
+//  2. Assert it returns an error naming the finish notice as required.
+func TestRoutingIsRefusedWithoutAFinishNotice(t *testing.T) {
+	_, _, _, err := newRouting(routingDeps{Journal: newTestJournal(t)})
+
+	if err == nil || !strings.Contains(err.Error(), "Finishes is required") {
+		t.Fatalf("newRouting() without a finish notice = %v, want the missing notice named", err)
 	}
 }
 

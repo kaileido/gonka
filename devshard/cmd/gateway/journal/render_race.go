@@ -39,6 +39,11 @@ func renderRaceStep(lines logSink, step *engine.RaceStep) {
 			logkey.Request, step.RequestID, logkey.Escrow, step.EscrowID,
 			logkey.Nonce, step.Nonce, logkey.Host, logkey.ShortHost(step.Participant),
 			logkey.Rewound, step.Rewound)
+	case engine.RaceStepWinnerFinishLanded:
+		lines.Info("served winner finish landed",
+			logkey.Request, step.RequestID, logkey.Escrow, step.EscrowID,
+			logkey.Nonce, step.Nonce, logkey.Host, logkey.ShortHost(step.Participant),
+			logkey.FinishLagMS, step.FinishLag.Milliseconds())
 	}
 }
 

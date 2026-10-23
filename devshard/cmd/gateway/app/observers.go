@@ -117,6 +117,11 @@ func (r nonceAccountedRaces) RecordRace(outcome engine.RaceOutcome) {
 	r.events.RecordRace(outcome)
 }
 
+// RecordAwaitedFinish passes straight through: the ledger took the attempt with its race.
+func (r nonceAccountedRaces) RecordAwaitedFinish(outcome engine.RaceOutcome, attempt engine.AttemptOutcome) {
+	r.recorder.RecordAwaitedFinish(outcome, attempt)
+}
+
 func (r nonceAccountedRaces) RecordTimeout(event engine.TimeoutEvent) {
 	r.recorder.RecordTimeout(event)
 	r.events.RecordTimeout(event)

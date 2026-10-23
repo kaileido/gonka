@@ -323,9 +323,10 @@ Always on, with no level knob — a trace that ships off by default is not there
 | --- | --- |
 | `nonce committed` (emitted by `engine/pick.go`, written by `journal/render_race.go`) | request, escrow, nonce, participant, slot, role, and why this attempt started |
 | `attempt finished` (emitted by `engine/report.go`, written by `journal/render_race.go`) | the same identity, the terminal verdict, whether the nonce was finished, whether the host diverged on state, and each deadline its host was narrowed for (`missed_receipt_deadline`, `missed_first_token_deadline`) |
+| `served winner finish landed` (emitted by `engine/winner_sample.go`, written by `journal/render_race.go`) | request, escrow, nonce and participant of a winner whose nonce was still open when its stream ended, once its Finish is seen, with `finish_lag_ms` from the attempt's end ([race.md](./race.md), "A served winner's sample waits for its finish") |
 | `nonce stranded` (emitted by `engine/race.go`, written by `journal/render_race.go`) | **Warn** — a committed nonce nobody will answer for; the shape every recurring settlement defect takes |
 
-The journal's consumer writes these lines, so under load, or while the nonce ledger copies itself for a snapshot, it can drop `nonce committed` and `attempt finished` — counted in `devshard_gateway_journal_progress_dropped_total` and announced by `journal skipped progress lines` — while `nonce stranded` is refused only past the money ceiling.
+The journal's consumer writes these lines, so under load, or while the nonce ledger copies itself for a snapshot, it can drop `nonce committed`, `attempt finished` and `served winner finish landed` — counted in `devshard_gateway_journal_progress_dropped_total` and announced by `journal skipped progress lines` — while `nonce stranded` is refused only past the money ceiling.
 
 A line the journal writes is stamped when the journal's consumer writes it, not when the event happened, so it can trail — for example, while the consumer waits for the nonce ledger's lock as `Book.Snapshot` copies the ledger. Journal lines keep their order among themselves. Lines written directly — the shared `devshard/user` session lines and the gateway's process, admin and store lines — are stamped when they happen, so the two can interleave out of order. `duration_ms` and the other `*_ms` fields are measured at the event, and are the timings to trust.
 
@@ -419,6 +420,8 @@ Admin lines carry the action and its subject, **never the request body** — an 
 | where does a request wait inside the gateway | `devshard_gateway_escrow_queue_wait_seconds`, `devshard_gateway_session_step_seconds{step}` (below) |
 
 A race the client left counts as `devshard_gateway_requests_total{reason="client_cancelled"}` unless the escrow itself failed first, which outranks a departure as `reason="escrow_missing"` or `reason="balance_exhausted"`; the faults of its hosts stay on `devshard_gateway_attempt_failures_total{reason}` instead.
+
+A served winner whose nonce is still open when its race ends is counted on `devshard_gateway_attempts_terminal_total` and `devshard_gateway_attempt_failures_total` only when its perf sample is decided ([race.md](./race.md), "A served winner's sample waits for its finish"): as a winner's success when its Finish lands first, and as `failed_not_finished` with reason `not_finished` when its nonce is still open at its vote. Its request is counted on `devshard_gateway_requests_total` at race end; the request's hidden failure is counted at race end when another attempt failed, and otherwise at that decision, once either way.
 
 `devshard_gateway_chain_snapshot_healthy` is the one to alert on first: with a stale snapshot every score, weight and preserved-set decision below it is being made on old data.
 

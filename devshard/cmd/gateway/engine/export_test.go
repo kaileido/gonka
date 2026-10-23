@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"devshard/cmd/gateway/perf"
 	"devshard/cmd/gateway/scheduler"
 )
 
@@ -113,4 +114,47 @@ func TraceNonceStranded(t *testing.T, events raceJournal) {
 		Host:   "host-6",
 		Nonce:  fakePrepared{nonce: 91, hostIdx: 2},
 	}, RoleSpeculative)
+}
+
+func TraceWinnerFinishLanded(t *testing.T, events raceJournal) {
+	t.Helper()
+	sim := newSimulator(t, settledPolicy(), 1, qwenModel)
+	sim.engine.deps.Journal = events
+	winner := widestFinishedOutcome()
+	winner.Nonce, winner.Participant, winner.Completed = lateFinishNonce, "host-7", sim.clock.Now()
+	sim.engine.heldWinners.hold(heldWinnerKey{escrowID: "escrow-1", nonce: lateFinishNonce}, heldWinner{
+		outcome: RaceOutcome{RequestID: "request-1", EscrowID: "escrow-1"},
+		attempt: winner,
+	})
+	sim.clock.advance(1500 * time.Millisecond)
+	sim.engine.OnFinishApplied("escrow-1", lateFinishNonce)
+}
+
+func RunServedWinnerFinishedBeforeItsVote(t *testing.T, recorder raceMetrics, atRaceEnd func(samples []perf.Sample)) []perf.Sample {
+	t.Helper()
+	sim := newSimulator(t, settledPolicy(), 1, qwenModel)
+	sim.recordInto(recorder)
+	releaseVotes := sim.parkVotes(t)
+	runServedWinnerWithOpenNonce(t, sim)
+	awaitVoteEntered(t, sim)
+	atRaceEnd(sim.perf.recorded())
+	sim.target.finish(lateFinishNonce)
+	releaseVotes()
+	sim.settleAll()
+	return sim.perf.recorded()
+}
+
+func RunServedWinnerUnfinishedAtItsVote(t *testing.T, recorder raceMetrics, atRaceEnd func(samples []perf.Sample)) []perf.Sample {
+	t.Helper()
+	sim := newSimulator(t, settledPolicy(), 1, qwenModel)
+	sim.recordInto(recorder)
+	harness := newQueueHarness()
+	sim.engine.settles = harness.queue
+	fireVote := fireVoteOnCleanup(t, harness)
+	runServedWinnerWithOpenNonce(t, sim)
+	awaitScheduled(t, harness, 1)
+	atRaceEnd(sim.perf.recorded())
+	fireVote()
+	sim.settleAll()
+	return sim.perf.recorded()
 }

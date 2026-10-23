@@ -20,6 +20,7 @@ One client request, several attempts on different hosts, one winner. This packag
 | `reassembly.go`, `carry.go` | rebuilding events split across chunk boundaries |
 | `vocabulary.go` | the wire strings — metric labels, log fields, ledger reasons — declared once |
 | `trace.go` | the `RaceStep` a coordinator copies at emit, for the journal |
+| `winner_sample.go` | the served winners whose sample and metric labels wait for their nonce's finish |
 | `errors.go`, `capability.go` | what the race hands back, and what a host's refusal says about the host |
 
 ## What it does not own
@@ -32,7 +33,7 @@ It does not choose the escrow or commit the nonce — that is [`scheduler`](../s
 - **The race outlives the client.** A client that hangs up does not cancel the attempts, because their nonces still owe votes. The drain barrier is what makes shutdown wait for them.
 - **The outcome is reported exactly once**, from whichever goroutine ends the race.
 - **An SSE error event counts as a chunk but never crowns.** A host that answers with an error has answered something, but not content.
-- **A step is copied on the coordinator goroutine.** `RaceStep` holds values, and its `Outcome` is a copy of the attempt's, so nothing the coordinator owns crosses to the journal's goroutine. `Deps.Journal` is optional and guarded; a race without one writes no trace.
+- **A step is copied on the coordinator goroutine.** `RaceStep` holds values, and its `Outcome` is a copy of the attempt's, so nothing the coordinator owns crosses to the journal's goroutine. The one step the engine emits itself, a held winner's finish landing (`winner_sample.go`), is built from the copy the hold took. `Deps.Journal` is optional and guarded; a race without one writes no trace.
 
 ## From pick to report
 
@@ -120,6 +121,8 @@ What the classifier reads out of an event:
 
 `responsive` decides whether a host earns a positive sample: confirmed, nonce finished, and not an empty stream. A long non-stream reply is exempt from being judged slow, but an empty one earns nothing — crediting a host that held the request for the whole window and returned no content teaches the router to prefer it. The long-response exemption gates on `ContentSource`, not `ContentChunks`, which counts error events too (rules.md, "1. A committed nonce is always settled").
 
+A won attempt whose nonce is still open when it completes is not judged on that read, because its host's Finish usually lands after the stream ends. `Engine.record` holds its sample and its metric labels (`FinishAwaited`, `heldWinners`) and decides them once: finished when `Engine.OnFinishApplied` reports the Finish applied, or at the post of the winner's execution vote, finished if the nonce reads finished by then and still open otherwise (race.md, "A served winner's sample waits for its finish").
+
 ### Measurements
 
 - `IsWinner` is the one test for "this attempt won the race". Whether a client was still there to receive it is `Lifecycle.ClientGone`, which visibility reads: the race outlives the client.
@@ -148,7 +151,7 @@ Every event `settleSteps` reports goes to `Deps.Metrics`, and nowhere else. The 
 
 `Engine.Stop` refuses new races and then waits: it returns once every race it admitted has posted the vote that settles its nonces. A failed refused vote is retried up to four times on the vote queue before the race lets go of its registration; `Stop` posts a retry still waiting on its timer at once and schedules no further round (race.md, "The swept vote and the retried vote"). `admit` registers a race under the lock before it starts, and returns nil once stopped. A panicking race still owes the barrier its release, and the panic itself is re-raised unchanged.
 
-`raceRegistration` is that place in the barrier and the holder of the escrow's in-flight count. Releasing is idempotent because the settling path and a panicking request path both reach for it and only one may be counted. It keeps the *first* hold for as long as the race's vote is owed — every hold a race is offered counts the same escrow, so a later one goes straight back rather than displacing the one being kept — and `launch` gives the commit's own hold back immediately for that reason.
+`raceRegistration` is that place in the barrier and the holder of the escrow's in-flight count. Releasing is idempotent because the settling path and a panicking request path both reach for it and only one may be counted. It keeps the *first* hold for as long as the race's vote is owed — every hold a race is offered counts the same escrow, so a later one goes straight back rather than displacing the one being kept — and `launch` gives the commit's own hold back immediately for that reason. It keeps the race's dispatch target beside the hold, so a held sample can read its nonce's finish when the winner's vote is posted.
 
 Facts the race observes about the escrow but must not act on travel in `Lifecycle` and are handed to the lifecycle observer on the response path, which must mark and return rather than reach the chain. The escrow-missing mark is made before the ledger row is queued, so an observer that has seen the row has also seen the mark.
 

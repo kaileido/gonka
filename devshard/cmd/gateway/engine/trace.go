@@ -1,5 +1,7 @@
 package engine
 
+import "time"
+
 // RaceStepKind names the lifecycle step a race reports to its journal.
 type RaceStepKind uint8
 
@@ -11,6 +13,7 @@ const (
 	RaceStepNonceStranded
 	RaceStepHostBlocked
 	RaceStepHostRewound
+	RaceStepWinnerFinishLanded
 )
 
 // RaceStep is one lifecycle step copied at emit on the coordinator goroutine. See README, "Boundaries".
@@ -31,6 +34,7 @@ type RaceStep struct {
 	HasOutcome    bool
 	PhaseAborted  bool
 	Outcome       AttemptOutcome
+	FinishLag     time.Duration
 }
 
 // raceJournal is satisfied by *journal.Journal; RecordStep returns without waiting on a sink.
