@@ -14,6 +14,7 @@ Each test starts an isolated Docker network with:
 - `mock-chain`: testenv gRPC mock chain (`testenv/cmd/mockchain`) seeded from
   `e2e/mock-chain-config.yaml`; serves escrow/participant queries on `:9090` and
   devshardctl phase-gate stubs on `:9191` (`/v1/epochs/*`).
+  With `MOCK_CHAIN_HUB_ADDR` set it also answers as the Hugging Face hub over TLS (`MOCK_CHAIN_HUB_DIR`, `MOCK_CHAIN_HUB_CERT`, `MOCK_CHAIN_HUB_KEY`); a scenario that aliases it `huggingface.co`, pins `hf_repo`/`hf_commit` on its epoch group and hands the gateway the certificate through `SSL_CERT_FILE` gets the pinned tokenizer without leaving the network.
 - `postgres`: smoke CI storage dependency.
 - `devshard-host-0..2`: three participant hosts with stub inference.
 - `devshardctl`: OpenAI-compatible HTTP entry point for the test client.

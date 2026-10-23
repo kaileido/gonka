@@ -31,11 +31,11 @@ func echoedRequestBody(prompt []byte) []byte {
 	if err != nil {
 		content = []byte(`""`)
 	}
-	return []byte(`{"choices":[{"message":{"content":` + string(content) + `}}],"usage":{"prompt_tokens":80,"completion_tokens":40}}`)
+	return []byte(`{"choices":[{"message":{"content":` + string(content) + `},"finish_reason":"stop"}],"usage":{"prompt_tokens":80,"completion_tokens":40}}`)
 }
 
 func NewInferenceEngine() *InferenceEngine {
-	body := []byte(`{"choices":[{"message":{"content":"stub"}}],"usage":{"prompt_tokens":80,"completion_tokens":40}}`)
+	body := []byte(`{"choices":[{"message":{"content":"stub"},"finish_reason":"stop"}],"usage":{"prompt_tokens":80,"completion_tokens":40}}`)
 	h := sha256.Sum256(body)
 	return &InferenceEngine{
 		ResponseHash: h[:],

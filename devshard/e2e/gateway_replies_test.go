@@ -12,15 +12,24 @@ import (
 	"devshard/internal/e2econfig"
 )
 
+const midStreamExecutionWindow = 2 * time.Minute
+
 // Test flow:
-//  1. Start the three-host environment with every host failing mid-stream with an SSE error.
+//  1. Start the three-host environment with short protocol deadlines and every host failing mid-stream
+//     with an SSE error.
 //  2. Send one completion.
 //  3. Assert the client was not told the broken stream succeeded.
-//  4. Assert the nonces it spent reached a disposition rather than vanishing.
+//  4. Poll the ledger until the receipted nonce the host never finished is filed as unfinished_execution.
 func TestE2E_GatewaySurfacesAHostErrorMidStream(t *testing.T) {
 	failing := map[string]string{e2econfig.StubInferenceSSEErrorEnv: "the model fell over"}
 	env, client := startGatewayEnv(t, e2eEnvOptions{
-		hostEnvOverrides: map[int]map[string]string{0: failing, 1: failing, 2: failing},
+		gatewayEnvOverrides: shortDeadlineGateway(),
+		mockChainParams:     shortDeadlineChain(),
+		hostEnvOverrides: map[int]map[string]string{
+			0: shortDeadlines(failing),
+			1: shortDeadlines(failing),
+			2: shortDeadlines(failing),
+		},
 	})
 
 	broken := testutil.SendCompletionRaw(t, client, env.clientURL, "mid-stream failure", testutil.AdminAPIKey)
@@ -28,15 +37,7 @@ func TestE2E_GatewaySurfacesAHostErrorMidStream(t *testing.T) {
 		t.Errorf("a stream that failed mid-answer was reported as success: %s", broken.Body)
 	}
 
-	ledger := gatewayLedger(t, client, env.statsURL)
-	var recorded uint64
-	for _, disposition := range []string{"finished_used", "finished_unused", "finished_usage_unknown",
-		"unfinished_refused", "unfinished_execution", "ghost"} {
-		recorded += testutil.AccountingDispositionCount(ledger, disposition)
-	}
-	if recorded == 0 {
-		t.Error("a failed stream spent nonces that reached no disposition at all")
-	}
+	awaitDisposition(t, client, env.statsURL, "unfinished_execution", midStreamExecutionWindow)
 }
 
 // Test flow:

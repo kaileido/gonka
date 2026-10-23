@@ -45,7 +45,7 @@ func (s *InferenceServer) DevshardEscrow(_ context.Context, req *inferencetypes.
 		return nil, status.Error(codes.Unavailable, "devshard escrow query faulted (testenv)")
 	}
 	e := s.store.GetEscrow(req.GetId())
-	if e == nil {
+	if e == nil || s.store.EscrowQueryAbsent() {
 		return &inferencetypes.QueryGetDevshardEscrowResponse{Found: false}, nil
 	}
 	return &inferencetypes.QueryGetDevshardEscrowResponse{Escrow: e, Found: true}, nil

@@ -38,6 +38,7 @@ type AccountingParticipant struct {
 	RefundedCost          uint64              `json:"refunded_cost"`
 	InputTokens           uint64              `json:"input_tokens"`
 	OutputTokens          uint64              `json:"output_tokens"`
+	ServiceNonces         map[string]uint64   `json:"service_nonces"`
 	CrossChecks           AccountingChecks    `json:"cross_checks"`
 	Counters              []AccountingCounter `json:"counters"`
 }
@@ -55,11 +56,30 @@ type AccountingCounterKey struct {
 	TimeoutEvaluationPhase string `json:"timeout_evaluation_phase,omitempty"`
 	QuarantineMode         string `json:"quarantine_mode,omitempty"`
 	NoSendReason           string `json:"no_send_reason,omitempty"`
+	GhostReason            string `json:"ghost_reason,omitempty"`
 	FailureOrigin          string `json:"failure_origin,omitempty"`
 	DetailReason           string `json:"detail_reason,omitempty"`
 	TimeoutKind            string `json:"timeout_kind,omitempty"`
 	TimeoutOutcome         string `json:"timeout_outcome,omitempty"`
 	TimeoutReason          string `json:"timeout_reason,omitempty"`
+}
+
+// UnmarshalJSON reads devshardctl's counter, keyed under "key", and the gateway's, keyed flat beside the count.
+func (c *AccountingCounter) UnmarshalJSON(data []byte) error {
+	var nested struct {
+		EscrowID string                `json:"escrow_id"`
+		Key      *AccountingCounterKey `json:"key"`
+		Count    uint64                `json:"count"`
+	}
+	if err := json.Unmarshal(data, &nested); err != nil {
+		return err
+	}
+	c.EscrowID, c.Count = nested.EscrowID, nested.Count
+	if nested.Key != nil {
+		c.Key = *nested.Key
+		return nil
+	}
+	return json.Unmarshal(data, &c.Key)
 }
 
 type AccountingChecks struct {
@@ -225,7 +245,7 @@ func AccountingGhostCounterCount(resp AccountingParticipantsResponse, noSendReas
 			if counter.Key.Disposition != "ghost" {
 				continue
 			}
-			if noSendReason != "" && counter.Key.NoSendReason != noSendReason {
+			if noSendReason != "" && counter.Key.NoSendReason != noSendReason && counter.Key.GhostReason != noSendReason {
 				continue
 			}
 			if quarantineMode != "" && counter.Key.QuarantineMode != quarantineMode {

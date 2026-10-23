@@ -59,7 +59,9 @@ func main() {
 		rpcAddr, blockInterval, blockIntervalDelta, blockSeed)
 	log.Printf("mock-chain testenv admin on %s", adminAddr)
 
-	errCh := make(chan error, 3)
+	hubAddr := os.Getenv("MOCK_CHAIN_HUB_ADDR")
+
+	errCh := make(chan error, 4)
 	go func() {
 		errCh <- grpcface.Serve(ctx, grpcAddr, grpcDeps)
 	}()
@@ -69,6 +71,13 @@ func main() {
 	go func() {
 		errCh <- adminSrv.Serve(ctx, adminAddr)
 	}()
+	if hubAddr != "" {
+		log.Printf("mock-chain hub listening on %s", hubAddr)
+		go func() {
+			errCh <- serveHub(ctx, hubAddr, envOr("MOCK_CHAIN_HUB_DIR", "/hub"),
+				os.Getenv("MOCK_CHAIN_HUB_CERT"), os.Getenv("MOCK_CHAIN_HUB_KEY"))
+		}()
+	}
 
 	if err := waitServe(ctx, errCh); err != nil {
 		log.Fatalf("mock-chain: %v", err)

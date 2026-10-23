@@ -28,12 +28,14 @@ func setChainPhase(ctx context.Context, t *testing.T, env *e2eEnv, request map[s
 }
 
 // Test flow:
-//  1. Start the default three-host gateway environment.
+//  1. Start the three-host environment with the gateway's PoC request mode off.
 //  2. Move the chain into proof of compute.
 //  3. Assert the gateway stops serving while the hosts are proving.
 //  4. Move the chain back and assert serving resumes.
 func TestE2E_GatewayStopsServingWhileTheChainIsInPoC(t *testing.T) {
-	env, client := startGatewayEnv(t, e2eEnvOptions{})
+	env, client := startGatewayEnv(t, e2eEnvOptions{
+		gatewayEnvOverrides: map[string]string{"DEVSHARD_POC_REQUEST_MODE": "off"},
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	t.Cleanup(cancel)
@@ -44,8 +46,8 @@ func TestE2E_GatewayStopsServingWhileTheChainIsInPoC(t *testing.T) {
 	setChainPhase(ctx, t, env, map[string]any{"phase": "PoCGenerate"})
 
 	deadline := time.Now().Add(60 * time.Second)
-	for {
-		blocked := testutil.SendCompletionRaw(t, client, env.clientURL, "during poc", testutil.AdminAPIKey)
+	for attempt := 0; ; attempt++ {
+		blocked := testutil.SendCompletionRaw(t, client, env.clientURL, fmt.Sprintf("during poc %d", attempt), testutil.AdminAPIKey)
 		if blocked.StatusCode == http.StatusServiceUnavailable {
 			break
 		}

@@ -8,8 +8,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"common/completionapi"
-
 	"devshard/e2e/testutil"
 )
 
@@ -20,6 +18,8 @@ const (
 
 	// Above the threshold below which Kimi silences thinking.
 	kimiThinkingMaxTokens = 1024
+
+	kimiOutputTokensFloor = 16
 )
 
 // Test flow:
@@ -49,12 +49,14 @@ func TestE2E_GatewayRejectsAnUnsupportedParameterWithoutSpendingANonce(t *testin
 
 // Test flow:
 //  1. Start the three-host environment with every host echoing the request it received.
-//  2. Send one completion asking for more output tokens than the configured cap.
-//  3. Assert the host received the request clamped to the cap.
-//  4. Send the same body with the admin key.
-//  5. Assert the host received the requested budget unclamped.
+//  2. Open the served model to callers without a key through the settings route.
+//  3. Send one completion asking for more output tokens than the configured cap.
+//  4. Assert the host received the request clamped to the cap.
+//  5. Send the same body with the admin key.
+//  6. Assert the host received the requested budget unclamped.
 func TestE2E_GatewayCapsOutputTokensUntilTheAdminKeyLiftsIt(t *testing.T) {
 	env, client := startGatewayEnv(t, e2eEnvOptions{hostEnvOverrides: testutil.EchoingHosts(e2eHostCount)})
+	putSettings(t, client, env.clientURL, map[string]any{"model_access": map[string]string{"stub-model": "open"}})
 
 	const requested = 8192
 	body := testutil.ChatCompletionBody("output token cap", false)
@@ -74,24 +76,20 @@ func TestE2E_GatewayCapsOutputTokensUntilTheAdminKeyLiftsIt(t *testing.T) {
 // Test flow:
 //  1. Start the three-host environment with every host echoing the request it received.
 //  2. Send one non-streaming completion asking for no logprobs.
-//  3. Assert the host was asked to stream, with usage, and with the logprobs validation needs, and was sent no return_token_ids, which it sets itself.
+//  3. Assert the host was asked to stream, with usage, and was sent no return_token_ids, which it sets itself.
+//  4. Assert the host was sent no logprobs and no top_logprobs, because the gateway carries the client's ask rather than forcing one.
 func TestE2E_GatewayForcesTheUpstreamShapeEveryHostSees(t *testing.T) {
 	env, client := startGatewayEnv(t, e2eEnvOptions{hostEnvOverrides: testutil.EchoingHosts(e2eHostCount)})
 
 	body := testutil.ChatCompletionBody("forced upstream shape", false)
 	received := testutil.EchoedRequest(t, testutil.PostJSONRaw(t, client, env.clientURL+"/v1/chat/completions", body, testutil.AdminAPIKey))
 
-	forced := []struct {
-		field string
-		want  any
-	}{
-		{"stream", true},
-		{"logprobs", true},
-		{"top_logprobs", float64(completionapi.ForcedTopLogprobs)},
+	if got := received["stream"]; got != true {
+		t.Errorf("host received stream = %v, want the forced true", got)
 	}
-	for _, expected := range forced {
-		if got := received[expected.field]; got != expected.want {
-			t.Errorf("host received %s = %v, want the forced %v", expected.field, got, expected.want)
+	for _, carried := range []string{"logprobs", "top_logprobs"} {
+		if got, held := received[carried]; held {
+			t.Errorf("host received %s = %v, want it absent: the client asked for none", carried, got)
 		}
 	}
 	if got, held := received["return_token_ids"]; held {
@@ -107,21 +105,22 @@ func TestE2E_GatewayForcesTheUpstreamShapeEveryHostSees(t *testing.T) {
 }
 
 // Test flow:
-//  1. Start the three-host environment with every host echoing the request it received.
-//  2. Send one completion asking for fewer output tokens than the protocol floor.
-//  3. Assert the host received both max_tokens and min_tokens raised to that floor.
+//  1. Start the three-host environment serving the Kimi model, with every host echoing its request.
+//  2. Send one completion asking for fewer output tokens than the Kimi floor.
+//  3. Assert the host received max_tokens raised to that floor, and no min_tokens the client did not send.
 func TestE2E_GatewayFloorsTheOutputBudgetBeforeAHostSeesIt(t *testing.T) {
-	env, client := startGatewayEnv(t, e2eEnvOptions{hostEnvOverrides: testutil.EchoingHosts(e2eHostCount)})
+	env, client := startGatewayEnv(t, e2eEnvOptions{model: kimiModel, hostEnvOverrides: testutil.EchoingHosts(e2eHostCount)})
 
 	body := testutil.ChatCompletionBody("below the floor", false)
+	body["model"] = kimiModel
 	body["max_tokens"] = 1
 	received := testutil.EchoedRequest(t, testutil.PostJSONRaw(t, client, env.clientURL+"/v1/chat/completions", body, testutil.AdminAPIKey))
 
-	if got := received["max_tokens"]; got != float64(completionapi.MinTokensFloor) {
-		t.Errorf("host received max_tokens = %v, want the floor %d", got, completionapi.MinTokensFloor)
+	if got := received["max_tokens"]; got != float64(kimiOutputTokensFloor) {
+		t.Errorf("host received max_tokens = %v, want the floor %d", got, kimiOutputTokensFloor)
 	}
-	if got := received["min_tokens"]; got != float64(completionapi.MinTokensFloor) {
-		t.Errorf("host received min_tokens = %v, want the floor %d", got, completionapi.MinTokensFloor)
+	if got, held := received["min_tokens"]; held {
+		t.Errorf("host received min_tokens = %v, want it absent: the client sent none", got)
 	}
 }
 
@@ -222,7 +221,7 @@ func TestE2E_GatewayRefusesAZeroOutputBudget(t *testing.T) {
 // Test flow:
 //  1. Start the three-host environment serving the Kimi model, with every host echoing its request.
 //  2. Send one completion asking for zero output tokens.
-//  3. Assert the host received the zero raised to the protocol floor rather than a refusal.
+//  3. Assert the host received the zero raised to the Kimi floor rather than a refusal.
 func TestE2E_GatewayLiftsAZeroOutputBudgetOnTheRouteThatAsksForIt(t *testing.T) {
 	env, client := startGatewayEnv(t, e2eEnvOptions{model: kimiModel, hostEnvOverrides: testutil.EchoingHosts(e2eHostCount)})
 
@@ -231,8 +230,8 @@ func TestE2E_GatewayLiftsAZeroOutputBudgetOnTheRouteThatAsksForIt(t *testing.T) 
 	body["max_tokens"] = 0
 	received := testutil.EchoedRequest(t, testutil.PostJSONRaw(t, client, env.clientURL+"/v1/chat/completions", body, testutil.AdminAPIKey))
 
-	if got := received["max_tokens"]; got != float64(completionapi.MinTokensFloor) {
-		t.Errorf("host received max_tokens = %v, want the zero lifted to the floor %d", got, completionapi.MinTokensFloor)
+	if got := received["max_tokens"]; got != float64(kimiOutputTokensFloor) {
+		t.Errorf("host received max_tokens = %v, want the zero lifted to the floor %d", got, kimiOutputTokensFloor)
 	}
 }
 

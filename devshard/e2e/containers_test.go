@@ -65,6 +65,7 @@ type containerSpec struct {
 	waitLog           string
 	waitLogOccurrence int
 	mounts            []mount.Mount
+	files             []testcontainers.ContainerFile
 }
 
 const (
@@ -100,6 +101,10 @@ type e2eEnvOptions struct {
 
 	// model routes the whole stand at one routed model id, so a test can reach a filter profile.
 	model string
+
+	mockChainAliases []string
+	mockChainFiles   []testcontainers.ContainerFile
+	gatewayFiles     []testcontainers.ContainerFile
 }
 
 func startHappyPathEnv(ctx context.Context, t *testing.T, images e2eImages) *e2eEnv {
@@ -144,10 +149,11 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 		name:       mockChainAlias,
 		image:      images.mockChain,
 		port:       "9090/tcp",
-		aliases:    []string{mockChainAlias},
+		aliases:    append([]string{mockChainAlias}, opts.mockChainAliases...),
 		env:        opts.mockChainEnv,
 		extraPorts: []string{"9191/tcp"},
 		waitLog:    "mock-chain gRPC listening",
+		files:      opts.mockChainFiles,
 	})
 	if len(opts.mockChainParams) > 0 {
 		patchMockChainParams(ctx, t, mockChain, opts.mockChainParams)
@@ -276,6 +282,7 @@ func (e *e2eEnv) startGateway(ctx context.Context, t *testing.T, opts e2eEnvOpti
 		env:        gatewayEnv,
 		// /metrics, not /v1/status: the kill switch turns that route off and the wait would never end.
 		waitPath: "/metrics",
+		files:    opts.gatewayFiles,
 	}
 	if opts.gatewayVolumeName == "" {
 		spec.tmpfs = map[string]string{"/tmp": "rw"}
@@ -495,6 +502,7 @@ func (e *e2eEnv) startContainer(ctx context.Context, t *testing.T, spec containe
 			Networks:       []string{e.networkName},
 			NetworkAliases: map[string][]string{e.networkName: spec.aliases},
 			Tmpfs:          spec.tmpfs,
+			Files:          spec.files,
 			HostConfigModifier: func(hostConfig *container.HostConfig) {
 				hostConfig.Mounts = append(hostConfig.Mounts, spec.mounts...)
 			},

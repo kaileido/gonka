@@ -6,6 +6,7 @@ import (
 	"maps"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -41,7 +42,7 @@ func TestE2E_GatewayServesThroughAHostOutage(t *testing.T) {
 
 	env.stopHost(ctx, t, 1)
 	for request := range 4 {
-		resp := testutil.SendCompletionRaw(t, client, env.clientURL, "during the outage", testutil.AdminAPIKey)
+		resp := testutil.SendCompletionRaw(t, client, env.clientURL, fmt.Sprintf("during the outage %d", request), testutil.AdminAPIKey)
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("request %d during a one-host outage = %d %s, want the remaining two to serve it",
 				request, resp.StatusCode, resp.Body)
@@ -85,7 +86,7 @@ func TestE2E_GatewayServesAroundAHostAnswering502(t *testing.T) {
 // Test flow:
 //  1. Start the three-host environment with every host answering HTTP 502.
 //  2. Send three completions that nobody can serve.
-//  3. Poll accounting until every assigned nonce carries a disposition, which lands only past the refusal deadline.
+//  3. Poll accounting until no participant holds a nonce unclassified, pending classification or in flight, which lands only past the refusal deadline.
 //  4. Assert no finding reports more nonces classified than the chain assigned.
 func TestE2E_GatewayAccountsEveryNonceWhenEveryHostFails(t *testing.T) {
 	broken := brokenHost("502", "upstream connect error")
@@ -101,13 +102,22 @@ func TestE2E_GatewayAccountsEveryNonceWhenEveryHostFails(t *testing.T) {
 
 	settled := testutil.WaitAccountingParticipants(t, client, env.statsURL, "",
 		func(resp testutil.AccountingParticipantsResponse) bool {
-			assigned := testutil.AccountingAssignedTotal(resp)
-			return assigned > 0 && testutil.AccountingDispositionTotal(resp) == assigned
+			if testutil.AccountingAssignedTotal(resp) == 0 || testutil.AccountingDispositionTotal(resp) == 0 {
+				return false
+			}
+			for _, participant := range resp.Participants {
+				if participant.Unclassified != 0 || participant.PendingClassification != 0 || participant.InFlight != 0 {
+					return false
+				}
+			}
+			return true
 		})
 
-	assigned := testutil.AccountingAssignedTotal(settled)
-	t.Logf("every nonce accounted: assigned=%d refused=%d", assigned,
-		testutil.AccountingDispositionCount(settled, "unfinished_refused"))
+	for _, participant := range settled.Participants {
+		t.Logf("%s accounted every nonce: assigned=%d dispositions=%v service=%v timeout_pending=%d",
+			participant.Participant, participant.AssignedNonces, participant.Dispositions,
+			participant.ServiceNonces, participant.TimeoutPending)
+	}
 	if codes := gatewayFindings(t, client, env.statsURL); slices.Contains(codes, "ledger_overcounted") {
 		t.Errorf("findings %v report more nonces classified than the chain assigned", codes)
 	}
@@ -257,12 +267,34 @@ func TestE2E_GatewayAccountsAStalledNonceEvenWhenTheGroupCallsItARefusal(t *test
 	}
 }
 
+const (
+	shortRefusalTimeoutSeconds      = 5
+	shortExecutionTimeoutSeconds    = 10
+	shortStreamingHardTimeoutMillis = 5000
+)
+
+func shortDeadlineGateway() map[string]string {
+	return map[string]string{
+		"DEVSHARD_E2E":                          "1",
+		e2econfig.RefusalTimeoutSecondsEnv:      strconv.Itoa(shortRefusalTimeoutSeconds),
+		e2econfig.ExecutionTimeoutSecondsEnv:    strconv.Itoa(shortExecutionTimeoutSeconds),
+		e2econfig.StreamingHardTimeoutMillisEnv: strconv.Itoa(shortStreamingHardTimeoutMillis),
+	}
+}
+
+func shortDeadlineChain() map[string]any {
+	return map[string]any{
+		"refusal_timeout":   shortRefusalTimeoutSeconds,
+		"execution_timeout": shortExecutionTimeoutSeconds,
+	}
+}
+
 // shortDeadlines gives a host the protocol deadlines this stand runs on, keeping whatever else the
 // scenario asked of it.
 func shortDeadlines(extra map[string]string) map[string]string {
 	host := map[string]string{
-		e2econfig.RefusalTimeoutSecondsEnv:   "5",
-		e2econfig.ExecutionTimeoutSecondsEnv: "10",
+		e2econfig.RefusalTimeoutSecondsEnv:   strconv.Itoa(shortRefusalTimeoutSeconds),
+		e2econfig.ExecutionTimeoutSecondsEnv: strconv.Itoa(shortExecutionTimeoutSeconds),
 	}
 	maps.Copy(host, extra)
 	return host

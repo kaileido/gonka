@@ -100,6 +100,8 @@ type EpochGroupBinding struct {
 	ModelID             string `yaml:"model_id"`
 	ValidationThreshold int64  `yaml:"validation_threshold_value"`
 	ValidationExponent  int32  `yaml:"validation_threshold_exponent"`
+	HfRepo              string `yaml:"hf_repo"`
+	HfCommit            string `yaml:"hf_commit"`
 }
 
 // MockChainCfg is the listen addresses of cmd/mockchain.

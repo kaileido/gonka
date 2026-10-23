@@ -34,9 +34,10 @@ type EpochRequest struct {
 	Advance             bool    `json:"advance,omitempty"`
 }
 
-// EscrowQueryFaultRequest toggles DevshardEscrow query failures for citest.
+// EscrowQueryFaultRequest toggles DevshardEscrow query failures for citest; Absent answers found=false, as a node behind the escrow's create height does.
 type EscrowQueryFaultRequest struct {
 	Faulted bool `json:"faulted"`
+	Absent  bool `json:"absent"`
 }
 
 // Mount registers POST /testenv/params, POST /testenv/epoch, POST /testenv/escrow,
@@ -113,7 +114,8 @@ func handleEscrowQueryFault(st *store.Store) echo.HandlerFunc {
 			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 		}
 		st.SetEscrowQueryFault(req.Faulted)
-		return c.JSON(http.StatusOK, map[string]any{"status": "ok", "faulted": req.Faulted})
+		st.SetEscrowQueryAbsent(req.Absent)
+		return c.JSON(http.StatusOK, map[string]any{"status": "ok", "faulted": req.Faulted, "absent": req.Absent})
 	}
 }
 

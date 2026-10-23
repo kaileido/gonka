@@ -49,6 +49,15 @@ func gatewayLedger(t *testing.T, client *http.Client, statsURL string) testutil.
 		func(testutil.AccountingParticipantsResponse) bool { return true })
 }
 
+func gatewayLedgerOnceFinishesLand(t *testing.T, client *http.Client, env *e2eEnv,
+	ready func(testutil.AccountingParticipantsResponse) bool,
+) testutil.AccountingParticipantsResponse {
+	t.Helper()
+	testutil.RequireOpenAINonStreamingCompletion(t,
+		testutil.SendCompletionRaw(t, client, env.clientURL, "carries the last finish", testutil.AdminAPIKey))
+	return testutil.WaitAccountingParticipants(t, client, env.statsURL, "", ready)
+}
+
 // gatewayFindings collects every finding the ledger raised. A healthy run raises none: a finding is this
 // gateway's own reading that something is wrong with a host or with its own counts.
 func gatewayFindings(t *testing.T, client *http.Client, statsURL string) []string {
@@ -83,8 +92,6 @@ func TestE2E_GatewayServesTheStack(t *testing.T) {
 	testutil.RequireOpenAINonStreamingCompletion(t, resp)
 }
 
-// gatewayGhostBurns reads raw JSON: the shared helper expects devshardctl's nested key and "no_send_reason",
-// so against the gateway's flat "ghost_reason" it silently matches nothing.
 func gatewayGhostBurns(t *testing.T, client *http.Client, statsURL, reason string) uint64 {
 	t.Helper()
 	body := testutil.GetJSON(t, client, statsURL+"/api/v1/epochs/current/participants")
