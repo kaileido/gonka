@@ -655,11 +655,13 @@ Neither list restrains anything but routing. Host pings, catch-up, finalize, the
 
 ## Settling an escrow that is still busy
 
-`POST /v1/admin/devshards/{id}/settle` answers 409 `devshard busy` while requests are still spending the escrow's nonces. By then the escrow has already been parked and taken out of routing, so it is draining: calling again once it has drained settles it.
+`POST /v1/admin/devshards/{id}/settle` answers 409 `devshard busy` while requests are still spending the escrow's nonces, and for up to a minute after its timeout sweep failed a vote, so the vote is retried before finalize pays that record in full (escrows.md, "Settlement and retirement"). By then the escrow has already been parked and taken out of routing, so it is draining: calling again once it has drained settles it.
 
 `POST /v1/admin/devshards/{id}/settle?force=true` does not wait. This route reads `force` from the query alone and takes no body; only the batch route below also reads it from its body. It crosses the busy check and nothing else — a second concurrent settlement of the same escrow is still refused, and an escrow already settled is still not rebroadcast. **The requests still in flight are failed for their callers, and their full reserved cost is paid to the hosts that held them**, because finalize closes the door on new nonces and the records still live take the settlement default. The forced call is written to the audit log as `escrow settled under force`, with `in_flight` naming how many requests it overrode.
 
 A forced settlement runs on an escrow that still has requests, so the one that finishes last would close the escrow's store while finalize is still collecting signatures. Finalizing, building the settlement, inspecting and the admin finalize and signature-collection routes therefore each take a settlement hold, and the draining escrow closes only after they return. The hold is counted apart from requests, so it neither makes the escrow busy nor moves routing (`registry/views.go`, `Registry.HoldSettlement`).
+
+A settle that has started runs to its end even if the client leaves: it runs on a context detached from the request, bounded by `adminSettleTimeout` (5 minutes; `api/admin_settle.go`), because a settle cut short between its timeout sweep and the end of finalize would pay full reserve on the records the sweep did not reach. A settle that does time out stops before finalize or partway through it, and the next settle resumes the finalize where it stopped.
 
 ## Settling an escrow the chain has pruned
 
@@ -673,7 +675,7 @@ The chain deletes an escrow a couple of epochs after the one that funded it. A s
 
 `POST /v1/admin/devshards/settle` with the body `{"escrow_ids": ["93033", "93040"], "batch_size": 8, "force": true}` settles each escrow the way the single-escrow route does. `force` crosses the busy check for every escrow in the list; `?force=true`, as on the single-escrow route, does the same. A repeated id is settled once.
 
-The answer is a stream of NDJSON (`application/x-ndjson`): `200` goes out before the first settle starts, then one line per escrow the moment it finishes, in finishing order (its transaction, or the status and message the single route would have answered with), and a last line `{"settled": N, "failed": M}`. A line for a client that has left is dropped. A list the route refuses outright (no ids, too many, a bad `batch_size`) still answers a plain `400`. Read it with `curl -N`:
+The answer is a stream of NDJSON (`application/x-ndjson`): `200` goes out before the first settle starts, then one line per escrow the moment it finishes, in finishing order (its transaction, or the status and message the single route would have answered with), and a last line `{"settled": N, "failed": M}`. A line for a client that has left is dropped, and once it has left no further escrow of the list is started; one already settling finishes. A list the route refuses outright (no ids, too many, a bad `batch_size`) still answers a plain `400`. Read it with `curl -N`:
 
 ```bash
 curl -sS -N -X POST "$GATEWAY/v1/admin/devshards/settle" \
@@ -682,7 +684,7 @@ curl -sS -N -X POST "$GATEWAY/v1/admin/devshards/settle" \
 ```
 
 - **`batch_size` at a time, four by default, sixteen at most.** Building a settlement asks every host in the escrow's group for its signature, so an unbounded batch is an unbounded fan-out onto the same hosts (`api/admin_batch.go`, `defaultBatchSize`, `maxBatchSize`).
-- **At most fifty per call.** The batch runs on the caller's context, so a list long enough to outlive the operator's patience would be cancelled halfway, with transactions already broadcast (`batchEscrowLimit`).
+- **At most fifty per call.** Each settle runs to its end on its own context, but a caller that leaves stops the list from going on, so a list long enough to outlive the operator's patience would stop halfway, with transactions already broadcast (`batchEscrowLimit`).
 
 ## Deactivating a list of escrows
 

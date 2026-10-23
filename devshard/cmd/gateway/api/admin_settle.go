@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	"devshard/cmd/gateway/chain"
 	"devshard/cmd/gateway/escrow"
 )
+
+const adminSettleTimeout = 5 * time.Minute
 
 type settleOutcome struct {
 	EscrowID string `json:"escrow_id"`
@@ -53,7 +56,9 @@ func (s *Server) settleOne(ctx context.Context, escrowID string, forced bool) (c
 	case s.escrows.IsBusy(escrowID):
 		return chain.SettleEscrowResult{}, fmt.Errorf("%w: %s", escrow.ErrDevshardBusy, escrowID)
 	}
-	result, err := s.operations.Settle(ctx, escrowID, forced)
+	settling, cancel := context.WithTimeout(context.WithoutCancel(ctx), adminSettleTimeout)
+	defer cancel()
+	result, err := s.operations.Settle(settling, escrowID, forced)
 	if err != nil {
 		return result, err
 	}
@@ -98,6 +103,9 @@ func (s *Server) handleAdminDevshardsSettleBatch(w http.ResponseWriter, r *http.
 func (s *Server) settleEntry(ctx context.Context, escrowID string, registered, forced bool) settleOutcome {
 	if !registered {
 		return settleRefused(escrowID, fmt.Errorf("%w: %s", ErrUnknownDevshard, escrowID))
+	}
+	if err := ctx.Err(); err != nil {
+		return settleRefused(escrowID, err)
 	}
 	result, err := s.settleOne(ctx, escrowID, forced)
 	if err != nil {

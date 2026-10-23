@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	"devshard/cmd/gateway/scheduler"
@@ -71,6 +70,7 @@ type EscrowSession interface {
 	Close() error
 	UserSession() *user.Session
 	SweepExecutionTimeouts(ctx context.Context, grace time.Duration, budget int) user.SweepReport
+	SweepBeforeFinalize(ctx context.Context, budget int) (user.SweepReport, error)
 }
 
 // SessionFactory: an escrow with no record must fail wrapping escrow.ErrUnknownEscrow. See README.md, "The two session kinds".
@@ -79,7 +79,7 @@ type SessionFactory func(ctx context.Context, escrowID string) (EscrowSession, e
 type sessionHandle struct {
 	*user.Session
 	machine         *state.StateMachine
-	finalizing      *sync.Mutex
+	finalizing      finalizeLock
 	protocolVersion string
 }
 
@@ -88,20 +88,16 @@ func NewSessionHandle(session *user.Session, machine *state.StateMachine) Escrow
 	return sessionHandle{
 		Session:         session,
 		machine:         machine,
-		finalizing:      &sync.Mutex{},
+		finalizing:      newFinalizeLock(),
 		protocolVersion: machine.SnapshotStateNoInferences().StateRootAndProtocolVersion,
 	}
 }
 
 func (h sessionHandle) Finalize(ctx context.Context) error {
-	h.finalizing.Lock()
-	defer h.finalizing.Unlock()
-	for h.machine.Phase() == types.PhaseFinalizing {
-		nonce := h.Nonce()
-		if err := h.SendFinalizeRound(ctx); err != nil && h.Nonce() == nonce {
-			return fmt.Errorf("resuming the finalize cut short at nonce %d: %w", nonce, err)
-		}
+	if err := h.finalizing.LockContext(ctx); err != nil {
+		return err
 	}
+	defer h.finalizing.Unlock()
 	return h.Session.Finalize(ctx)
 }
 
@@ -115,6 +111,50 @@ func (h sessionHandle) SweepExecutionTimeouts(ctx context.Context, grace time.Du
 		return user.SweepReport{}
 	}
 	return h.Session.SweepExecutionTimeouts(ctx, grace, budget)
+}
+
+// SweepBeforeFinalize waits out a sweep or Finalize holding the escrow, then votes with no race grace while the session is active.
+func (h sessionHandle) SweepBeforeFinalize(ctx context.Context, budget int) (user.SweepReport, error) {
+	if err := h.finalizing.LockContext(ctx); err != nil {
+		return user.SweepReport{}, err
+	}
+	defer h.finalizing.Unlock()
+	if h.machine.Phase() != types.PhaseActive {
+		return user.SweepReport{}, nil
+	}
+	return h.Session.SweepExecutionTimeouts(ctx, noRaceGrace, budget), nil
+}
+
+type finalizeLock chan struct{}
+
+func newFinalizeLock() finalizeLock { return make(finalizeLock, 1) }
+
+func (l finalizeLock) Lock() { l <- struct{}{} }
+
+func (l finalizeLock) Unlock() {
+	select {
+	case <-l:
+	default:
+		panic("registry: unlock of an unlocked finalize lock")
+	}
+}
+
+func (l finalizeLock) TryLock() bool {
+	select {
+	case l <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (l finalizeLock) LockContext(ctx context.Context) error {
+	select {
+	case l <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (h sessionHandle) Phase() types.SessionPhase        { return h.machine.Phase() }

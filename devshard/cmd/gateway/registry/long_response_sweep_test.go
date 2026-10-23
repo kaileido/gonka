@@ -59,6 +59,11 @@ type longResponseEscrow struct {
 
 func publishLongResponseEscrow(t *testing.T, servedBindings ...servedBindingObserver) longResponseEscrow {
 	t.Helper()
+	return publishVotingEscrow(t, func(voter acceptingVoter) user.HostClient { return voter }, servedBindings...)
+}
+
+func publishVotingEscrow(t *testing.T, client func(acceptingVoter) user.HostClient, servedBindings ...servedBindingObserver) longResponseEscrow {
+	t.Helper()
 	signers := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	group := testutil.MakeGroup(signers)
 	config := testutil.DefaultConfig(len(group))
@@ -69,7 +74,7 @@ func publishLongResponseEscrow(t *testing.T, servedBindings ...servedBindingObse
 		hostMachine := statetest.MustStateMachine(t, longResponseEscrowID, config, group, 1_000_000, creator.Address(), verifier)
 		hostNode, err := host.NewHost(hostMachine, signer, stub.NewInferenceEngine(), longResponseEscrowID, group, nil, host.WithGrace(100))
 		require.NoError(t, err)
-		clients[index] = acceptingVoter{HostClient: &user.InProcessClient{Host: hostNode}, signer: signer, slot: group[index].SlotID}
+		clients[index] = client(acceptingVoter{HostClient: &user.InProcessClient{Host: hostNode}, signer: signer, slot: group[index].SlotID})
 	}
 	machine := statetest.MustStateMachine(t, longResponseEscrowID, config, group, 1_000_000, creator.Address(), verifier)
 	session, err := user.NewSession(machine, creator, longResponseEscrowID, group, clients, verifier)
@@ -90,6 +95,11 @@ func publishLongResponseEscrow(t *testing.T, servedBindings ...servedBindingObse
 
 func startedTwoHoursAgo(t *testing.T, escrow longResponseEscrow) uint64 {
 	t.Helper()
+	return startedConfirmedAt(t, escrow, time.Now().Add(-2*time.Hour).Unix())
+}
+
+func startedConfirmedAt(t *testing.T, escrow longResponseEscrow, confirmedAt int64) uint64 {
+	t.Helper()
 	prepared, err := escrow.session.PrepareInferenceFn(func(user.HostBinding) (user.InferenceParams, bool, context.Context, error) {
 		return user.InferenceParams{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000}, false, nil, nil
 	})
@@ -97,7 +107,6 @@ func startedTwoHoursAgo(t *testing.T, escrow longResponseEscrow) uint64 {
 	nonce := prepared.Nonce()
 	record, tracked := escrow.machine.GetInference(nonce)
 	require.True(t, tracked)
-	confirmedAt := time.Now().Add(-2 * time.Hour).Unix()
 	receipt, err := proto.MarshalOptions{Deterministic: true}.Marshal(&types.ExecutorReceiptContent{
 		InferenceId: nonce,
 		PromptHash:  record.PromptHash,
