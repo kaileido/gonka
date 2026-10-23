@@ -146,16 +146,19 @@ func TestValidToolsDefaultsToolChoiceToAutoWhenAbsent(t *testing.T) {
 }
 
 // Test flow:
-//  1. Run `validTools` against a valid tool with `tool_choice:"required"`.
-//  2. Assert `tool_choice` is coerced to "auto".
+//  1. Run `validTools` against a valid tool with `tool_choice:"required"` and a `min_tokens`.
+//  2. Assert `tool_choice` is coerced to "auto" and `min_tokens` is deleted.
 func TestValidToolsCoercesRequiredToDefault(t *testing.T) {
 	rule := validTools(testToolsBounds(), "auto")
-	document := parseTestDocument(t, `{"tools":[{"type":"function","function":{"name":"x"}}],"tool_choice":"required"}`)
+	document := parseTestDocument(t, `{"tools":[{"type":"function","function":{"name":"x"}}],"tool_choice":"required","min_tokens":10}`)
 	if err := runRule(t, document, "tools", rule); err != nil {
 		t.Fatalf("validTools() = %v, want nil", err)
 	}
 	if got, _ := document.Get("tool_choice"); got != "auto" {
 		t.Fatalf("tool_choice = %v, want auto", got)
+	}
+	if document.Has("min_tokens") {
+		t.Fatal("min_tokens survived a coerced required choice, want it deleted")
 	}
 }
 

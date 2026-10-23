@@ -32,7 +32,7 @@ var (
 	}
 )
 
-// validTools enforces the OpenAI tool contract plus tool_choice cross-field cleanup. See README.md, "`tools` and `tool_choice`".
+// validTools enforces the OpenAI tool contract plus tool_choice and min_tokens cross-field cleanup. See README.md, "`tools` and `tool_choice`".
 func validTools(bounds SchemaBounds, defaultToolChoice string) RuleFunc {
 	return func(ctx RuleContext) error {
 		raw, exists := ctx.Document.Get("tools")
@@ -54,6 +54,7 @@ func validTools(bounds SchemaBounds, defaultToolChoice string) RuleFunc {
 		}
 		if choice, _ := ctx.Document.Get("tool_choice"); choice == "required" {
 			ctx.Document.Set("tool_choice", defaultToolChoice)
+			ctx.Document.Delete("min_tokens")
 		}
 		if !ctx.Document.Has("tool_choice") && defaultToolChoice != "" {
 			ctx.Document.Set("tool_choice", defaultToolChoice)

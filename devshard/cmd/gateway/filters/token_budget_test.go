@@ -116,10 +116,40 @@ func TestAGrammarConstrainedRequestCarriesNoMinTokens(t *testing.T) {
 
 // Test flow:
 //  1. Normalize a request with tools, tool_choice "required" and a min_tokens.
-//  2. Assert min_tokens is kept: the gateway rewrites "required" to the default choice before the budget is enforced, so no grammar remains.
-func TestARequiredToolChoiceTheGatewayRelaxesKeepsMinTokens(t *testing.T) {
+//  2. Assert tool_choice goes out as "auto" and min_tokens is dropped: masking EOS past the forced call pads the call's arguments into invalid JSON.
+func TestARequiredToolChoiceTheGatewayRelaxesCarriesNoMinTokens(t *testing.T) {
 	document := normalizedDocument(t, `{"messages":[{"role":"user","content":"x"}],"max_tokens":4096,"min_tokens":10,`+weatherTool+`,"tool_choice":"required"}`, "Qwen/Test")
-	requireUintField(t, document, "min_tokens", 10)
+	if got := document["tool_choice"]; got != "auto" {
+		t.Errorf("tool_choice = %v, want auto", got)
+	}
+	requireAbsent(t, document, "min_tokens")
+}
+
+// Test flow:
+//  1. Normalize requests with a min_tokens that force no tool call: tools with tool_choice "auto" or with no tool_choice, and tool_choice "required" without tools or with an empty tools array.
+//  2. Assert min_tokens is kept on each.
+func TestAnUnforcedToolChoiceKeepsMinTokens(t *testing.T) {
+	for name, fields := range map[string]string{
+		"explicit_auto":             weatherTool + `,"tool_choice":"auto"`,
+		"default_auto":              weatherTool,
+		"required_without_tools":    `"tool_choice":"required"`,
+		"required_with_empty_tools": `"tools":[],"tool_choice":"required"`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			document := normalizedDocument(t, `{"messages":[{"role":"user","content":"x"}],"max_tokens":4096,"min_tokens":10,`+fields+`}`, "Qwen/Test")
+			requireUintField(t, document, "min_tokens", 10)
+		})
+	}
+}
+
+// Test flow:
+//  1. Normalize a request with tools, tool_choice "required" and a min_tokens that is not an integer.
+//  2. Assert it is rejected: min_tokens is validated before the required choice drops it.
+func TestARequiredToolChoiceStillRejectsAMalformedMinTokens(t *testing.T) {
+	_, _, err := normalizeWith(t, `{"messages":[{"role":"user","content":"x"}],"max_tokens":4096,"min_tokens":"ten",`+weatherTool+`,"tool_choice":"required"}`, "Qwen/Test", nil)
+	if err == nil || err.Error() != "min_tokens: must be a non-negative integer" {
+		t.Fatalf("NormalizeRequest() = %v, want the min_tokens rejection", err)
+	}
 }
 
 // Test flow:
