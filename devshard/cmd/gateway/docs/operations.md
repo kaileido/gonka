@@ -331,7 +331,7 @@ A line the journal writes is stamped when the journal's consumer writes it, not 
 
 Follow one request by grepping its request id; follow one nonce through commit, dispatch and verdict by grepping the nonce.
 
-`attempt finished` carries the coordinator's reading of the attempt at the moment it completed: `racedTerminal` (`engine/report.go`) makes a backstopped attempt read `hard_timeout`, a stalled one `stalled`, an answer its host closed with neither `[DONE]` nor a finished nonce `sse_truncated`, a loser's as well as the crowned one's, and the winner `won`. Only a later `abandonedByHosts` reclassification, made once the whole race has finished, reaches the ledger without reaching this line.
+`attempt finished` carries the coordinator's reading of the attempt at the moment it completed: `racedTerminal` (`engine/report.go`) makes a backstopped attempt read `hard_timeout`, a stalled one `stalled`, an answer its host closed with neither `[DONE]` nor a finished nonce — a loser's as well as the crowned one's — `sse_truncated`, and the winner `won`. Only a later `abandonedByHosts` reclassification, made once the whole race has finished, reaches the ledger without reaching this line.
 
 ### When a host stops taking work
 

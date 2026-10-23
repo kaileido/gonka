@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"testing"
 	"time"
 
@@ -86,31 +87,31 @@ func TestATruncatedAnswerFailsTheRace(t *testing.T) {
 }
 
 // Test flow:
-//  1. For each loser script (content with or without [DONE], on a finished or unfinished nonce), start a two-host race whose first host is held before its receipt.
+//  1. For each loser script (content with or without [DONE], on a finished or unfinished nonce, closed cleanly or by a transfer the transport reports broken), start a two-host race whose first host is held before its receipt.
 //  2. Move the clock past the receipt timeout so the race dispatches the loser, which sends its receipt and first chunk and waits.
 //  3. Release the first host to answer with [DONE] on a finished nonce, assert the race returns it, then let the loser finish its script.
 //  4. Assert the race succeeded with the first host's attempt as TerminalWon.
-//  5. Assert the loser's terminal and the verdict the limiter reads from it.
+//  5. Assert the loser's terminal, the verdict the limiter reads from it, and the moves the limiter received for the loser's host.
 func TestALoserTheHostCutShortCountsAsATransportFault(t *testing.T) {
 	sseDone := string(filters.SSEDoneEvent)
-	policy := EscalationPolicy{
-		ReceiptTimeout:        time.Second,
-		FirstTokenFloor:       time.Hour,
-		InterChunkStall:       time.Hour,
-		LoserGrace:            10 * time.Minute,
-		MaxAttemptsPerRequest: 2,
-	}
+	policy := settledPolicy()
+	policy.ReceiptTimeout = time.Second
+	policy.MaxAttemptsPerRequest = 2
 	testCases := []struct {
-		name          string
-		loserChunks   []string
-		loserFinished bool
-		wantTerminal  Terminal
-		wantVerdict   limits.Verdict
+		name              string
+		loserChunks       []string
+		loserFinished     bool
+		loserTransportErr error
+		wantTerminal      Terminal
+		wantVerdict       limits.Verdict
+		wantLoserMoves    []windowMove
 	}{
-		{name: "a loser closed without [DONE] on an unfinished nonce", loserChunks: []string{roleEvent, contentEvent("half")}, wantTerminal: TerminalStreamTruncated, wantVerdict: limits.TransportFault},
+		{name: "a loser closed without [DONE] on an unfinished nonce", loserChunks: []string{roleEvent, contentEvent("half")}, wantTerminal: TerminalStreamTruncated, wantVerdict: limits.TransportFault, wantLoserMoves: []windowMove{{participant: "loser-host", verdict: limits.TransportFault}}},
 		{name: "a loser closed after [DONE] on an unfinished nonce", loserChunks: []string{roleEvent, contentEvent("whole"), sseDone}, wantTerminal: TerminalLost, wantVerdict: limits.ModelOutcome},
-		{name: "a loser closed without [DONE] on a finished nonce", loserChunks: []string{roleEvent, contentEvent("whole")}, loserFinished: true, wantTerminal: TerminalLost, wantVerdict: limits.Success},
-		{name: "a loser closed after [DONE] on a finished nonce", loserChunks: []string{roleEvent, contentEvent("whole"), sseDone}, loserFinished: true, wantTerminal: TerminalLost, wantVerdict: limits.Success},
+		{name: "a loser closed without [DONE] on a finished nonce", loserChunks: []string{roleEvent, contentEvent("whole")}, loserFinished: true, wantTerminal: TerminalLost, wantVerdict: limits.Success, wantLoserMoves: []windowMove{{participant: "loser-host", verdict: limits.Success}}},
+		{name: "a loser closed after [DONE] on a finished nonce", loserChunks: []string{roleEvent, contentEvent("whole"), sseDone}, loserFinished: true, wantTerminal: TerminalLost, wantVerdict: limits.Success, wantLoserMoves: []windowMove{{participant: "loser-host", verdict: limits.Success}}},
+		{name: "a loser's broken transfer before [DONE] on an unfinished nonce", loserChunks: []string{roleEvent, contentEvent("half")}, loserTransportErr: transport.ErrSSEStreamTruncated, wantTerminal: TerminalStreamTruncated, wantVerdict: limits.TransportFault, wantLoserMoves: []windowMove{{participant: "loser-host", verdict: limits.TransportFault}}},
+		{name: "a loser's broken transfer after [DONE] on a finished nonce", loserChunks: []string{roleEvent, contentEvent("whole"), sseDone}, loserFinished: true, loserTransportErr: transport.ErrSSEStreamTruncated, wantTerminal: TerminalStreamTruncated, wantVerdict: limits.TransportFault, wantLoserMoves: []windowMove{{participant: "loser-host", verdict: limits.TransportFault}}},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -126,6 +127,7 @@ func TestALoserTheHostCutShortCountsAsATransportFault(t *testing.T) {
 				streaming: streaming, resume: loserResume,
 				receipt: true, chunks: testCase.loserChunks,
 				confirmed: true, finished: testCase.loserFinished,
+				err: testCase.loserTransportErr,
 			})
 
 			outcomes := runInBackground(t, sim)
@@ -153,6 +155,15 @@ func TestALoserTheHostCutShortCountsAsATransportFault(t *testing.T) {
 			}
 			if verdict, _ := reported.Verdict(loser); verdict != testCase.wantVerdict {
 				t.Errorf("loser verdict = %v, want %v", verdict, testCase.wantVerdict)
+			}
+			var loserMoves []windowMove
+			for _, move := range sim.windows.recorded() {
+				if move.participant == "loser-host" {
+					loserMoves = append(loserMoves, move)
+				}
+			}
+			if !slices.Equal(loserMoves, testCase.wantLoserMoves) {
+				t.Errorf("limiter moves for the loser = %+v, want %+v", loserMoves, testCase.wantLoserMoves)
 			}
 			sim.assertOneOutcome(t)
 		})
