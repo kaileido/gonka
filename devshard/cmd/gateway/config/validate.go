@@ -30,9 +30,10 @@ const (
 	maxConsecutiveBurns   = 1_000
 	maxDispatchQueueDepth = 65_536
 
-	maxSnapshotAgeSeconds   = 86_400
-	maxEngineTimingMS       = 86_400_000
-	snapshotAgePollMultiple = 7
+	maxSnapshotAgeSeconds          = 86_400
+	maxVersionsPollIntervalSeconds = 86_400
+	maxEngineTimingMS              = 86_400_000
+	snapshotAgePollMultiple        = 7
 
 	minAddressDataLength = 4
 
@@ -77,6 +78,9 @@ func (c *Config) Validate() error {
 	}
 	if minimum := int64(chain.DefaultObserverPollInterval.Seconds()) * snapshotAgePollMultiple; c.Chain.SnapshotMaxAgeSeconds > 0 && c.Chain.SnapshotMaxAgeSeconds < minimum {
 		complain("chain_snapshot_max_age_seconds: %d must be 0 or at least %d, the observer's own refresh cadence", c.Chain.SnapshotMaxAgeSeconds, minimum)
+	}
+	if c.Chain.VersionsPollIntervalSeconds < 1 || c.Chain.VersionsPollIntervalSeconds > maxVersionsPollIntervalSeconds {
+		complain("chain_versions_poll_interval_seconds: %d must be between 1 and %d", c.Chain.VersionsPollIntervalSeconds, maxVersionsPollIntervalSeconds)
 	}
 	if c.Tx.FeeAmount < 0 {
 		complain("tx_fee_amount: %d must be >= 0", c.Tx.FeeAmount)

@@ -13,6 +13,7 @@ import (
 
 const (
 	DefaultObserverPollInterval = 5 * time.Second
+	DefaultVersionsPollInterval = 15 * time.Second
 	refreshDeadlineMultiple     = 6
 	versionsTTLPollMultiplier   = 3
 	observerHTTPTimeout         = 5 * time.Second
@@ -23,11 +24,12 @@ const (
 
 // ObserverConfig configures a PhaseObserver; PublicAPIBaseURL is required, and a nil Chain skips the preserved-nodes snapshot and the nonce ceiling. See README.md, "Which nodes count as preserved".
 type ObserverConfig struct {
-	PublicAPIBaseURL string
-	Chain            Reader
-	PollInterval     time.Duration
-	HTTPClient       *http.Client
-	Now              func() time.Time
+	PublicAPIBaseURL     string
+	Chain                Reader
+	PollInterval         time.Duration
+	VersionsPollInterval time.Duration
+	HTTPClient           *http.Client
+	Now                  func() time.Time
 }
 
 // healthNarrator is satisfied by *journal.Journal; chain never imports it. See README.md, "The poll loop".
@@ -38,12 +40,13 @@ type healthNarrator interface {
 
 // PhaseObserver polls chain phase and participant state and publishes an immutable PhaseSnapshot. See README.md, "What the chain observer provides".
 type PhaseObserver struct {
-	publicAPIBaseURL string
-	chain            Reader
-	client           *http.Client
-	pollInterval     time.Duration
-	now              func() time.Time
-	versions         *VersionsCache
+	publicAPIBaseURL     string
+	chain                Reader
+	client               *http.Client
+	pollInterval         time.Duration
+	versionsPollInterval time.Duration
+	now                  func() time.Time
+	versions             *VersionsCache
 
 	current  atomic.Pointer[PhaseSnapshot]
 	health   snapshotHealth
@@ -68,6 +71,10 @@ func NewPhaseObserver(cfg ObserverConfig) (*PhaseObserver, error) {
 	if pollInterval <= 0 {
 		pollInterval = DefaultObserverPollInterval
 	}
+	versionsPollInterval := cfg.VersionsPollInterval
+	if versionsPollInterval <= 0 {
+		versionsPollInterval = DefaultVersionsPollInterval
+	}
 	client := cfg.HTTPClient
 	if client == nil {
 		client = &http.Client{Timeout: observerHTTPTimeout}
@@ -78,13 +85,14 @@ func NewPhaseObserver(cfg ObserverConfig) (*PhaseObserver, error) {
 	}
 
 	observer := &PhaseObserver{
-		publicAPIBaseURL: baseURL,
-		chain:            cfg.Chain,
-		client:           client,
-		pollInterval:     pollInterval,
-		now:              now,
-		versions:         NewVersionsCache(newVersionsClient(), versionsTTLPollMultiplier*pollInterval, now),
-		subscribers:      make(map[int]func(PhaseSnapshot)),
+		publicAPIBaseURL:     baseURL,
+		chain:                cfg.Chain,
+		client:               client,
+		pollInterval:         pollInterval,
+		versionsPollInterval: versionsPollInterval,
+		now:                  now,
+		versions:             NewVersionsCache(newVersionsClient(), versionsTTLPollMultiplier*versionsPollInterval, now),
+		subscribers:          make(map[int]func(PhaseSnapshot)),
 	}
 	observer.current.Store(&PhaseSnapshot{})
 	return observer, nil
@@ -103,7 +111,7 @@ func (o *PhaseObserver) Start(ctx context.Context) {
 
 	var running sync.WaitGroup
 	running.Go(func() { o.run(ctx) })
-	running.Go(func() { o.versions.Run(ctx, o.pollInterval) })
+	running.Go(func() { o.versions.Run(ctx, o.versionsPollInterval) })
 	go func() {
 		running.Wait()
 		close(done)

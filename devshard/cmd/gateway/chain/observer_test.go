@@ -324,6 +324,32 @@ func TestNewPhaseObserver_AppliesDefaultsForZeroFields(t *testing.T) {
 }
 
 // Test flow:
+//  1. Call NewPhaseObserver once without a versions poll interval and once with 7 seconds.
+//  2. Assert the default is DefaultVersionsPollInterval with a TTL of three intervals, and the chain poll stays at its own default.
+//  3. Assert the configured interval is used and the TTL is three times it.
+func TestNewPhaseObserver_VersionsPollIntervalAndTTLComeFromConfig(t *testing.T) {
+	defaulted, err := NewPhaseObserver(ObserverConfig{PublicAPIBaseURL: "http://chain.example.invalid"})
+	if err != nil {
+		t.Fatalf("NewPhaseObserver(): %v", err)
+	}
+	if defaulted.versionsPollInterval != DefaultVersionsPollInterval || defaulted.versions.ttl != versionsTTLPollMultiplier*DefaultVersionsPollInterval {
+		t.Errorf("default versions interval/ttl = %v/%v, want %v/%v", defaulted.versionsPollInterval, defaulted.versions.ttl, DefaultVersionsPollInterval, versionsTTLPollMultiplier*DefaultVersionsPollInterval)
+	}
+	if defaulted.pollInterval != DefaultObserverPollInterval {
+		t.Errorf("chain pollInterval = %v, want %v", defaulted.pollInterval, DefaultObserverPollInterval)
+	}
+
+	const configuredInterval = 7 * time.Second
+	configured, err := NewPhaseObserver(ObserverConfig{PublicAPIBaseURL: "http://chain.example.invalid", VersionsPollInterval: configuredInterval})
+	if err != nil {
+		t.Fatalf("NewPhaseObserver(): %v", err)
+	}
+	if configured.versionsPollInterval != configuredInterval || configured.versions.ttl != versionsTTLPollMultiplier*configuredInterval {
+		t.Errorf("configured versions interval/ttl = %v/%v, want %v/%v", configured.versionsPollInterval, configured.versions.ttl, configuredInterval, versionsTTLPollMultiplier*configuredInterval)
+	}
+}
+
+// Test flow:
 //  1. Configure the stub with one inference-phase epoch and one participant, and create an observer with an hour-long poll interval.
 //  2. Subscribe to snapshots, call Start, and wait for the first published snapshot.
 //  3. Assert the first snapshot arrives immediately (proving Start doesn't wait for the ticker) with the epoch's block height, index, phase and timestamp.

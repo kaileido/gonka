@@ -1507,6 +1507,18 @@ func TestRoutingIsRefusedWithoutAFinishNotice(t *testing.T) {
 }
 
 // Test flow:
+//  1. Compose a gateway as run() does.
+//  2. Assert the finish notice compose kept holds the composed race engine, so finishes it is told about reach that engine.
+func TestComposeAttachesTheRaceEngineToTheFinishNotice(t *testing.T) {
+	gatewayEnvironment(t)
+	composed := composedGateway(t)
+
+	if attached := composed.finishes.races.Load(); attached == nil || attached != composed.races {
+		t.Fatalf("compose() finish notice engine = %p, want the composed engine %p", attached, composed.races)
+	}
+}
+
+// Test flow:
 //  1. Build a table of phase snapshots: a fresh poll naming no participants, a stale poll with last-known weights, and a fresh poll naming every participant at zero weight.
 //  2. Update capacity from each snapshot and route one request through a picker wired for two participants.
 //  3. Assert whether the pick reaches ErrNoEscrowCapacity matches the case's expected routed outcome.

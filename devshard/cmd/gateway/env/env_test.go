@@ -514,18 +514,19 @@ func TestEveryRotationKnobIsReachableFromTheEnvironment(t *testing.T) {
 }
 
 // Test flow:
-//  1. Set every engine timing and the chain snapshot max age environment variable.
+//  1. Set every engine timing, the chain snapshot max age and the chain versions poll interval environment variable.
 //  2. Call `Load`.
 //  3. Assert each field loads with its set value.
 func TestLoadParsesEngineTimings(t *testing.T) {
 	for name, value := range map[string]string{
-		"GATEWAY_ENGINE_RECEIPT_TIMEOUT_MS":         "7000",
-		"GATEWAY_ENGINE_FIRST_TOKEN_FLOOR_MS":       "1500",
-		"GATEWAY_ENGINE_FIRST_TOKEN_CEILING_MS":     "25000",
-		"GATEWAY_ENGINE_INTER_CHUNK_STALL_MS":       "45000",
-		"GATEWAY_ENGINE_LOSER_GRACE_MS":             "120000",
-		"GATEWAY_ENGINE_HEDGE_FIRST_TOKEN_FLOOR_MS": "900",
-		"GATEWAY_CHAIN_SNAPSHOT_MAX_AGE_SECONDS":    "45",
+		"GATEWAY_ENGINE_RECEIPT_TIMEOUT_MS":            "7000",
+		"GATEWAY_ENGINE_FIRST_TOKEN_FLOOR_MS":          "1500",
+		"GATEWAY_ENGINE_FIRST_TOKEN_CEILING_MS":        "25000",
+		"GATEWAY_ENGINE_INTER_CHUNK_STALL_MS":          "45000",
+		"GATEWAY_ENGINE_LOSER_GRACE_MS":                "120000",
+		"GATEWAY_ENGINE_HEDGE_FIRST_TOKEN_FLOOR_MS":    "900",
+		"GATEWAY_CHAIN_SNAPSHOT_MAX_AGE_SECONDS":       "45",
+		"GATEWAY_CHAIN_VERSIONS_POLL_INTERVAL_SECONDS": "20",
 	} {
 		t.Setenv(name, value)
 	}
@@ -547,6 +548,7 @@ func TestLoadParsesEngineTimings(t *testing.T) {
 		{"GATEWAY_ENGINE_LOSER_GRACE_MS", values.EngineLoserGraceMS, 120000},
 		{"GATEWAY_ENGINE_HEDGE_FIRST_TOKEN_FLOOR_MS", values.EngineHedgeFirstTokenFloorMS, 900},
 		{"GATEWAY_CHAIN_SNAPSHOT_MAX_AGE_SECONDS", values.ChainSnapshotMaxAgeSeconds, 45},
+		{"GATEWAY_CHAIN_VERSIONS_POLL_INTERVAL_SECONDS", values.ChainVersionsPollIntervalSeconds, 20},
 	} {
 		if field.got == nil || *field.got != field.want {
 			t.Errorf("%s = %v, want %d", field.name, field.got, field.want)

@@ -29,6 +29,7 @@ func Build(values env.Values, overrides Overrides) (*Config, error) {
 	overrideIfSet(&configuration.Chain.ChainID, values.ChainID)
 	overrideIfSet(&configuration.Chain.RPCEndpoint, values.ChainRPC)
 	overrideIfSet(&configuration.Chain.SnapshotMaxAgeSeconds, values.ChainSnapshotMaxAgeSeconds)
+	overrideIfSet(&configuration.Chain.VersionsPollIntervalSeconds, values.ChainVersionsPollIntervalSeconds)
 	overrideIfSet(&configuration.Tx.FeeAmount, values.TxFeeAmount)
 	overrideIfSet(&configuration.Tx.GasLimit, values.TxGasLimit)
 	overrideIfSet(&configuration.Tx.FeeDenom, values.TxFeeDenom)
