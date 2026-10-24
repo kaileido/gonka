@@ -74,6 +74,13 @@ CREATE TABLE IF NOT EXISTS accounting_first_content (
 	attempts           INTEGER NOT NULL,
 	PRIMARY KEY (escrow_id, slot_id)
 );
+CREATE TABLE IF NOT EXISTS accounting_first_content_buckets (
+	escrow_id TEXT    NOT NULL,
+	slot_id   INTEGER NOT NULL,
+	bucket    INTEGER NOT NULL,
+	attempts  INTEGER NOT NULL,
+	PRIMARY KEY (escrow_id, slot_id, bucket)
+);
 CREATE TABLE IF NOT EXISTS accounting_counters (
 	escrow_id      TEXT    NOT NULL,
 	slot_id        INTEGER NOT NULL,
@@ -134,15 +141,21 @@ var escrowTables = []string{
 	"accounting_service_nonces",
 	"accounting_money",
 	"accounting_first_content",
+	"accounting_first_content_buckets",
 	"accounting_slots",
 	"accounting_escrows",
 }
 
-var clearedTables = append(slices.Clone(escrowTables), "accounting_meta")
+var (
+	clearedTables      = append(slices.Clone(escrowTables), "accounting_meta")
+	firstContentTables = []string{"accounting_first_content", "accounting_first_content_buckets"}
+)
 
 const (
-	metaSchemaVersion = "schema_version"
-	metaUpdatedAt     = "updated_at"
+	metaSchemaVersion         = "schema_version"
+	metaUpdatedAt             = "updated_at"
+	metaFirstContentWrittenAt = "first_content_written_at"
+	selectMeta                = `SELECT value FROM accounting_meta WHERE key = ?`
 )
 
 func discardOutdatedSchema(db *sql.DB) error {
@@ -160,7 +173,7 @@ func discardOutdatedSchema(db *sql.DB) error {
 // An unreadable version says nothing about the tables beside it, so they are discarded rather than trusted.
 func currentSchema(db *sql.DB) bool {
 	var stored string
-	if err := db.QueryRow(`SELECT value FROM accounting_meta WHERE key = ?`, metaSchemaVersion).Scan(&stored); err != nil {
+	if err := db.QueryRow(selectMeta, metaSchemaVersion).Scan(&stored); err != nil {
 		return false
 	}
 	if stored != strconv.Itoa(SchemaVersion) {
@@ -175,4 +188,27 @@ func currentSchema(db *sql.DB) bool {
 		}
 	}
 	return true
+}
+
+func discardUntrustedFirstContent(db *sql.DB) error {
+	trusted := firstContentWrittenWithLastSave(db)
+	for _, table := range firstContentTables {
+		statement := `DELETE FROM ` + table
+		if trusted {
+			statement += ` WHERE escrow_id NOT IN (SELECT escrow_id FROM accounting_escrows)`
+		}
+		if _, err := db.Exec(statement); err != nil {
+			return fmt.Errorf("discarding stale rows of %s: %w", table, err)
+		}
+	}
+	return nil
+}
+
+func firstContentWrittenWithLastSave(db *sql.DB) bool {
+	var updatedAt, firstContentWrittenAt string
+	if db.QueryRow(selectMeta, metaUpdatedAt).Scan(&updatedAt) != nil ||
+		db.QueryRow(selectMeta, metaFirstContentWrittenAt).Scan(&firstContentWrittenAt) != nil {
+		return false
+	}
+	return updatedAt == firstContentWrittenAt
 }

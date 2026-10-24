@@ -28,6 +28,8 @@ const (
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	insertFirstContent = `INSERT INTO accounting_first_content (escrow_id, slot_id, total_milliseconds, attempts)
 		 VALUES (?, ?, ?, ?)`
+	insertFirstContentBucket = `INSERT INTO accounting_first_content_buckets (escrow_id, slot_id, bucket, attempts)
+		 VALUES (?, ?, ?, ?)`
 	insertCounter = `INSERT INTO accounting_counters
 		 (escrow_id, slot_id, disposition, ghost_reason, timeout_kind, timeout_action, timeout_reason,
 		  terminal, phase, slow_receipt, slow_chunk, clock_drifted, slow_decode, logprobs_decoded, count)
@@ -42,7 +44,7 @@ const (
 )
 
 type rowWriters struct {
-	escrow, slot, hostStats, slotActivity, serviceNonces, money, firstContent, counter, nonce, cost *sql.Stmt
+	escrow, slot, hostStats, slotActivity, serviceNonces, money, firstContent, firstContentBucket, counter, nonce, cost *sql.Stmt
 }
 
 // Save writes only the escrows changed since the last save, and removes the ones the book dropped. See README.md, "Storage".
@@ -83,6 +85,7 @@ func (s *Store) Save(ctx context.Context, book *Book) (err error) {
 		{&writers.serviceNonces, insertServiceNonces},
 		{&writers.money, insertMoney},
 		{&writers.firstContent, insertFirstContent},
+		{&writers.firstContentBucket, insertFirstContentBucket},
 		{&writers.counter, insertCounter},
 		{&writers.nonce, insertNonce},
 		{&writers.cost, insertCost},
@@ -94,10 +97,12 @@ func (s *Store) Save(ctx context.Context, book *Book) (err error) {
 		defer func() { err = errors.Join(err, statement.Close()) }()
 		*target.statement = statement
 	}
+	updatedAt := changes.snapshot.UpdatedAt.Format(time.RFC3339Nano)
 	if _, err = transaction.ExecContext(ctx,
-		`INSERT OR REPLACE INTO accounting_meta (key, value) VALUES (?, ?), (?, ?)`,
+		`INSERT OR REPLACE INTO accounting_meta (key, value) VALUES (?, ?), (?, ?), (?, ?)`,
 		metaSchemaVersion, strconv.Itoa(SchemaVersion),
-		metaUpdatedAt, changes.snapshot.UpdatedAt.Format(time.RFC3339Nano),
+		metaUpdatedAt, updatedAt,
+		metaFirstContentWrittenAt, updatedAt,
 	); err != nil {
 		return fmt.Errorf("writing accounting meta: %w", err)
 	}
@@ -182,9 +187,16 @@ func writeEscrow(ctx context.Context, writers rowWriters, escrow EscrowSnapshot)
 	for _, slotID := range slices.Sorted(maps.Keys(escrow.FirstContent)) {
 		timing := escrow.FirstContent[slotID]
 		if _, err := writers.firstContent.ExecContext(ctx,
-			identity, slotID, timing.FirstContentMilliseconds, timing.FirstContentAttempts,
+			identity, slotID, timing.FirstContentMillisecondsTotal, timing.FirstContentAttempts,
 		); err != nil {
 			return fmt.Errorf("writing first-content timing for slot %d of %s: %w", slotID, identity, err)
+		}
+		for _, bucket := range slices.Sorted(maps.Keys(timing.FirstContentBuckets)) {
+			if _, err := writers.firstContentBucket.ExecContext(ctx,
+				identity, slotID, bucket, timing.FirstContentBuckets[bucket],
+			); err != nil {
+				return fmt.Errorf("writing first-content bucket %d for slot %d of %s: %w", bucket, slotID, identity, err)
+			}
 		}
 	}
 	for _, counter := range escrow.Counters {

@@ -29,7 +29,7 @@ func TestARaceReportsTheTimeToFirstContentOfEachAttemptThatProducedContent(t *te
 
 	var milliseconds, attempts uint64
 	for _, record := range ledger.service.Book.Query(accounting.QueryFilter{}) {
-		milliseconds += record.FirstContentMilliseconds
+		milliseconds += record.FirstContentMillisecondsTotal
 		attempts += record.FirstContentAttempts
 	}
 	if milliseconds != 250 || attempts != 1 {

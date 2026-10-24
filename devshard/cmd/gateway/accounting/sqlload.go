@@ -33,7 +33,7 @@ func (s *Store) Load(ctx context.Context) (Snapshot, error) {
 	}
 	for _, read := range []func(context.Context, map[string]*EscrowSnapshot) error{
 		s.readSlots, s.readHostStats, s.readSlotActivity, s.readServiceNonces, s.readMoney, s.readFirstContent,
-		s.readCounters, s.readNonces, s.readCosts,
+		s.readFirstContentBuckets, s.readCounters, s.readNonces, s.readCosts,
 	} {
 		if err := read(ctx, escrows); err != nil {
 			return Snapshot{}, err
@@ -199,12 +199,33 @@ func (s *Store) readFirstContent(ctx context.Context, escrows map[string]*Escrow
 			var escrowID string
 			var slotID uint32
 			var timing FirstContentTiming
-			if err := rows.Scan(&escrowID, &slotID, &timing.FirstContentMilliseconds, &timing.FirstContentAttempts); err != nil {
+			if err := rows.Scan(&escrowID, &slotID, &timing.FirstContentMillisecondsTotal, &timing.FirstContentAttempts); err != nil {
 				return err
 			}
 			if escrow, known := escrows[escrowID]; known {
 				escrow.FirstContent[slotID] = timing
 			}
+			return nil
+		})
+}
+
+func (s *Store) readFirstContentBuckets(ctx context.Context, escrows map[string]*EscrowSnapshot) error {
+	return s.eachRow(ctx,
+		`SELECT escrow_id, slot_id, bucket, attempts FROM accounting_first_content_buckets`, "first-content buckets",
+		func(rows *sql.Rows) error {
+			var escrowID string
+			var slotID uint32
+			var bucket, attempts uint64
+			if err := rows.Scan(&escrowID, &slotID, &bucket, &attempts); err != nil {
+				return err
+			}
+			escrow, known := escrows[escrowID]
+			if !known || bucket > uint64(firstContentOverflow) {
+				return nil
+			}
+			timing := escrow.FirstContent[slotID]
+			timing.FirstContentBuckets = addInto(timing.FirstContentBuckets, FirstContentBuckets{FirstContentBucket(bucket): attempts})
+			escrow.FirstContent[slotID] = timing
 			return nil
 		})
 }

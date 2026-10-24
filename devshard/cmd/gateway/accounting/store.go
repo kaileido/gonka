@@ -165,7 +165,7 @@ func snapshotEscrow(escrow *escrowLedger) EscrowSnapshot {
 	}
 	slices.SortFunc(stored.LiveCosts, func(left, right PersistedCost) int { return cmp.Compare(left.Nonce, right.Nonce) })
 	stored.Produced = maps.Clone(escrow.produced)
-	stored.FirstContent = maps.Clone(escrow.firstContent)
+	stored.FirstContent = cloneFirstContent(escrow.firstContent)
 	for key, count := range escrow.serviceNonces {
 		stored.ServiceNonces = append(stored.ServiceNonces, PersistedServiceCount{SlotID: key.slotID, Purpose: key.purpose, Count: count})
 	}
@@ -232,7 +232,7 @@ func (b *Book) Restore(snapshot Snapshot) error {
 			}
 		}
 		maps.Copy(escrow.produced, stored.Produced)
-		maps.Copy(escrow.firstContent, stored.FirstContent)
+		maps.Copy(escrow.firstContent, cloneFirstContent(stored.FirstContent))
 		for slotID, activity := range stored.SlotActivity {
 			escrow.challenged[slotID] = activity.Challenged
 			escrow.validations[slotID] = activity.Validations

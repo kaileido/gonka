@@ -286,7 +286,7 @@ func (e *escrowLedger) slots(escrowID string) []SlotRecord {
 				OutputTokens:       e.produced[slotID],
 				ServiceNonces:      serviceBySlot[slotID],
 				ServiceFee:         serviceBySlot[slotID].fee(e.feePerNonce),
-				FirstContentTiming: e.firstContent[slotID],
+				firstContentReport: reportFirstContent(e.firstContent[slotID]),
 			},
 			hostActivity: hostActivity{
 				InFlight:             aggregate.inFlight,
