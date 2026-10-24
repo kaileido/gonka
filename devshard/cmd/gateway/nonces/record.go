@@ -45,6 +45,9 @@ func (n *Recorder) RecordRace(outcome engine.RaceOutcome) {
 			ClockDrifted:    clockDrifted(attempt),
 			SlowDecode:      engine.TimePerOutputToken(attempt) > accounting.SlowDecode,
 			LogprobsDecoded: attempt.LogprobsDecoded,
+
+			InputTokens:       outcome.InputTokens,
+			InputTokensSource: outcome.InputTokensSource,
 		})
 	}
 	n.reportFact(n.service.Book.RecordRace(outcome.EscrowID, attempts))

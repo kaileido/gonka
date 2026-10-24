@@ -24,8 +24,8 @@ const (
 	insertServiceNonces = `INSERT INTO accounting_service_nonces (escrow_id, slot_id, purpose, count) VALUES (?, ?, ?, ?)`
 	insertMoney         = `INSERT INTO accounting_money
 		 (escrow_id, slot_id, reserved_cost, actual_cost, refunded_cost, estimated_input, estimated_error,
-		  max_tokens, input_tokens, counted_nonces, output_tokens)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		  max_tokens, input_tokens, counted_nonces, output_tokens, tokenized_input, tokenized_error)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	insertCounter = `INSERT INTO accounting_counters
 		 (escrow_id, slot_id, disposition, ghost_reason, timeout_kind, timeout_action, timeout_reason,
 		  terminal, phase, slow_receipt, slow_chunk, clock_drifted, slow_decode, logprobs_decoded, count)
@@ -37,10 +37,11 @@ const (
 	insertCost = `INSERT INTO accounting_costs
 		 (escrow_id, nonce, reserved, actual, input_length, max_tokens, input, output, status)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	insertInputCount = `INSERT INTO accounting_input_counts (escrow_id, nonce, tokens, source) VALUES (?, ?, ?, ?)`
 )
 
 type rowWriters struct {
-	escrow, slot, hostStats, slotActivity, serviceNonces, money, counter, nonce, cost *sql.Stmt
+	escrow, slot, hostStats, slotActivity, serviceNonces, money, counter, nonce, cost, inputCount *sql.Stmt
 }
 
 // Save writes only the escrows changed since the last save, and removes the ones the book dropped. See README.md, "Storage".
@@ -83,6 +84,7 @@ func (s *Store) Save(ctx context.Context, book *Book) (err error) {
 		{&writers.counter, insertCounter},
 		{&writers.nonce, insertNonce},
 		{&writers.cost, insertCost},
+		{&writers.inputCount, insertInputCount},
 	} {
 		statement, prepareErr := transaction.PrepareContext(ctx, target.query)
 		if prepareErr != nil {
@@ -171,7 +173,7 @@ func writeEscrow(ctx context.Context, writers rowWriters, escrow EscrowSnapshot)
 		if _, err := writers.money.ExecContext(ctx,
 			identity, slotID, money.Reserved, money.Actual, money.Refunded, money.EstimatedInput,
 			money.EstimatedError, money.MaxTokens, money.Input, money.CountedNonces,
-			escrow.Produced[slotID],
+			escrow.Produced[slotID], money.TokenizedInput, money.TokenizedError,
 		); err != nil {
 			return fmt.Errorf("writing money for slot %d of %s: %w", slotID, identity, err)
 		}
@@ -202,6 +204,11 @@ func writeEscrow(ctx context.Context, writers rowWriters, escrow EscrowSnapshot)
 			live.Input, live.Output, live.Status,
 		); err != nil {
 			return fmt.Errorf("writing the cost of nonce %d of %s: %w", live.Nonce, identity, err)
+		}
+	}
+	for _, counted := range escrow.InputCounts {
+		if _, err := writers.inputCount.ExecContext(ctx, identity, counted.Nonce, counted.Tokens, counted.Source); err != nil {
+			return fmt.Errorf("writing the input count of nonce %d of %s: %w", counted.Nonce, identity, err)
 		}
 	}
 	return nil

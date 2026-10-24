@@ -65,6 +65,8 @@ CREATE TABLE IF NOT EXISTS accounting_money (
 	input_tokens     INTEGER NOT NULL,
 	counted_nonces   INTEGER NOT NULL,
 	output_tokens    INTEGER NOT NULL,
+	tokenized_input  INTEGER NOT NULL DEFAULT 0,
+	tokenized_error  INTEGER NOT NULL DEFAULT 0,
 	PRIMARY KEY (escrow_id, slot_id)
 );
 CREATE TABLE IF NOT EXISTS accounting_counters (
@@ -116,9 +118,22 @@ CREATE TABLE IF NOT EXISTS accounting_costs (
 	status       INTEGER NOT NULL,
 	PRIMARY KEY (escrow_id, nonce)
 );
+CREATE TABLE IF NOT EXISTS accounting_input_counts (
+	escrow_id TEXT    NOT NULL,
+	nonce     INTEGER NOT NULL,
+	tokens    INTEGER NOT NULL,
+	source    TEXT    NOT NULL,
+	PRIMARY KEY (escrow_id, nonce)
+);
 `
 
+var addedColumns = []struct{ table, column, definition string }{
+	{"accounting_money", "tokenized_input", "INTEGER NOT NULL DEFAULT 0"},
+	{"accounting_money", "tokenized_error", "INTEGER NOT NULL DEFAULT 0"},
+}
+
 var escrowTables = []string{
+	"accounting_input_counts",
 	"accounting_costs",
 	"accounting_nonces",
 	"accounting_counters",
@@ -167,4 +182,20 @@ func currentSchema(db *sql.DB) bool {
 		}
 	}
 	return true
+}
+
+func addMissingColumns(db *sql.DB) error {
+	for _, added := range addedColumns {
+		var present bool
+		if err := db.QueryRow(`SELECT COUNT(*) > 0 FROM pragma_table_info(?) WHERE name = ?`, added.table, added.column).Scan(&present); err != nil {
+			return fmt.Errorf("inspecting column %s.%s: %w", added.table, added.column, err)
+		}
+		if present {
+			continue
+		}
+		if _, err := db.Exec(`ALTER TABLE ` + added.table + ` ADD COLUMN ` + added.column + ` ` + added.definition); err != nil {
+			return fmt.Errorf("adding column %s.%s: %w", added.table, added.column, err)
+		}
+	}
+	return nil
 }

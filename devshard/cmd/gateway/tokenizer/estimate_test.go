@@ -67,6 +67,37 @@ func TestMinimumTokensPastTheBudgetIsTheSampledEstimateLessItsWorstOvercount(t *
 }
 
 // Test flow:
+//  1. Build a prompt of exactly exactBudgetBytes and one a byte past it.
+//  2. Take EstimateTokens and MinimumTokens of each.
+//  3. Assert the first is its exact count, not sampled, the second the unbiased sampled estimate, and both Minimums are what MinimumTokens returns.
+func TestEstimateTokensIsTheUnbiasedCountMinimumTokensLowers(t *testing.T) {
+	counter := loadTestdata(t, "isolated")
+	for _, size := range []int{exactBudgetBytes, exactBudgetBytes + 1} {
+		prompt := []string{sentencesOf(size)}
+
+		estimate, err := counter.EstimateTokens(prompt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		minimum, err := counter.MinimumTokens(prompt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tokens, sampled, err := counter.estimate(prompt)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if estimate != (Estimate{Tokens: tokens, Sampled: sampled}) || sampled != (size > exactBudgetBytes) {
+			t.Fatalf("%d bytes: EstimateTokens = %+v, want %d tokens, sampled %v", size, estimate, tokens, size > exactBudgetBytes)
+		}
+		if estimate.Minimum() != minimum || (sampled && minimum >= estimate.Tokens) {
+			t.Fatalf("%d bytes: Minimum = %d, MinimumTokens = %d, estimate %d", size, estimate.Minimum(), minimum, estimate.Tokens)
+		}
+	}
+}
+
+// Test flow:
 //  1. Build a 1 MiB prompt of sampleWindows eighths, each English in its first half and Chinese in its second.
 //  2. Estimate it and count it exactly.
 //  3. Assert the estimate is within 1% of the exact count, so the windows sample both halves of every eighth.

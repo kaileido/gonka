@@ -89,7 +89,7 @@ In `race`, the second `X-Devshard-ID` write is the authoritative one for a reply
 
 ## The request row carries two kinds of token count
 
-`estimated_input_tokens` is the gateway's own estimate of the prompt — the number the congestion windows are denominated in, from the one definition the nonce ledger also uses (`filters.EstimatedPromptTokens`). `prompt_tokens` and `winner_output_tokens` are what the host reported in its `usage` object. They are different kinds of number about the same request, so the row names them apart rather than serving an estimate beside a measurement under names that read as a pair. A host that reports no usage leaves the measured halves at zero; the estimate is never copied into them, or the estimate's own error would disappear from exactly the rows that would have shown it.
+`estimated_input_tokens` is the gateway's own count of the prompt — the one `countPrompt` took at admission, which the congestion windows and the nonce ledger read too — and `estimated_input_tokens_source` says where it came from: `tokenizer_exact`, `tokenizer_sampled`, or `bytes_estimate` for a model without a loaded tokenizer and for every row written before the column existed ([`docs/request.md`](../docs/request.md), "The prompt token count"). The tokenizer counts the messages without the chat template, so even an exact count stays below the host's `prompt_tokens`. `prompt_tokens` and `winner_output_tokens` are what the host reported in its `usage` object. They are different kinds of number about the same request, so the row names them apart rather than serving an estimate beside a measurement under names that read as a pair. A host that reports no usage leaves the measured halves at zero; the estimate is never copied into them, or the estimate's own error would disappear from exactly the rows that would have shown it.
 
 Both halves of `usage` latch together over an attempt, so a row can never pair one usage object's prompt with another's completion. Across the two ledgers one word means one thing: `estimated_input_tokens` is always the gateway's estimate, `input_tokens` is always the chain's count, and `prompt_tokens` is always what the host measured.
 
@@ -115,7 +115,7 @@ Both halves of `usage` latch together over an attempt, so a row can never pair o
 
 The journal's `winnerOutputTokens` is what the client actually received, which with `duration_ms` — measured on the handler goroutine, not the line's own timestamp, which trails the request's end by however long the journal's queue held it — is what a measured output rate is computed from.
 
-`estimatePromptTokens` is the limiter's and the perf buckets' input size, not a tokenizer call. The pinned tokenizer's bounds (`PromptTokens` and `PromptCount`, from the [`tokenizer`](../tokenizer/) package) gate only `fitsContext`, which tokenizes only a prompt whose byte bound the context does not clear: the windows, the ledger and the escalation deadlines stay denominated in the byte estimate, so a model with no tokenizer and one with a tokenizer are admitted and timed on the same scale.
+`countPrompt` is the request's one prompt count: `PromptTokens.Count`, the pinned [`tokenizer`](../tokenizer/)'s single pass, when the model has one, else `filters.EstimatedPromptTokens` of the body. `fitsContext` reads its `MinimumTokens`; the limiter, the race and the ledgers read its `Tokens`, so a prompt is never tokenized twice.
 
 `RaceLedger` is how the engine's single recording point reaches the ledger; nothing else writes a row.
 

@@ -3,12 +3,10 @@ package api
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"math/rand/v2"
 	"net/http"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -22,28 +20,19 @@ import (
 
 type fakePromptTokens struct {
 	tokens     uint64
-	slack      uint64
+	shortfall  uint64
+	sampled    bool
 	known      bool
 	model      string
 	body       string
 	tokenizing int
 }
 
-func (f *fakePromptTokens) Prompt(model string, body []byte) (PromptCount, bool) {
+func (f *fakePromptTokens) Count(model string, body []byte) (TokenizedPrompt, bool) {
 	f.model, f.body = model, string(body)
-	return f, f.known
-}
-
-func (f *fakePromptTokens) MaximumTokens() uint64 { return f.tokens + f.slack }
-
-func (f *fakePromptTokens) MinimumTokens() (uint64, bool) {
 	f.tokenizing++
-	return f.tokens, true
+	return TokenizedPrompt{Tokens: f.tokens, MinimumTokens: f.tokens - f.shortfall, Sampled: f.sampled}, f.known
 }
-
-type tokenizedOnly struct{ PromptCount }
-
-func (tokenizedOnly) MaximumTokens() uint64 { return math.MaxUint32 }
 
 func loadTestTokenizer(t *testing.T, name string) *tokenizer.Counter {
 	t.Helper()
@@ -226,29 +215,88 @@ func TestTheCheckReadsTheGovernedContextLengthBeforeThePin(t *testing.T) {
 }
 
 // Test flow:
-//  1. Pin qwen's context length at 20 000 tokens and define prompts whose byte bound fits it, whose bound is past it while their count fits, and whose count is past it too.
+//  1. Pin qwen's context length at 20 000 tokens and define a prompt count that fits it and one a token past it.
 //  2. Send a chat request with each.
-//  3. Assert the first is served without tokenizing, the second is served after tokenizing once, and the third is refused after tokenizing once.
-func TestThePromptIsTokenizedOnlyWhenItsByteBoundIsPastTheContext(t *testing.T) {
+//  3. Assert each was tokenized exactly once, the first served and the second refused.
+//  4. Assert the served one handed the limiter and the race that same count, marked as the tokenizer's exact count.
+func TestThePromptIsTokenizedOnceAndThatCountIsWhatTheLimiterAndTheRaceGet(t *testing.T) {
 	fits := uint64(20_000) - filters.DefaultRequestMaxTokens - chatTemplateMinimumTokens
 	for _, step := range []struct {
-		name       string
-		count      *fakePromptTokens
-		status     int
-		tokenizing int
-	}{
-		{name: "bound fits", count: &fakePromptTokens{tokens: fits, known: true}, status: http.StatusOK},
-		{name: "bound over, count fits", count: &fakePromptTokens{tokens: fits, slack: 1, known: true}, status: http.StatusOK, tokenizing: 1},
-		{name: "count over", count: &fakePromptTokens{tokens: fits + 1, known: true}, status: http.StatusBadRequest, tokenizing: 1},
-	} {
+		name   string
+		tokens uint64
+		status int
+	}{{"count fits", fits, http.StatusOK}, {"count over", fits + 1, http.StatusBadRequest}} {
 		t.Run(step.name, func(t *testing.T) {
 			live := newHarness(t, pinContextLength(20_000))
-			live.server.promptTokens = step.count
+			count := &fakePromptTokens{tokens: step.tokens, known: true}
+			live.server.promptTokens = count
 
 			recorder := live.request(t, http.MethodPost, "/v1/chat/completions", chatBody, nil)
 
-			if recorder.Code != step.status || step.count.tokenizing != step.tokenizing {
-				t.Fatalf("status = %d, tokenized %d times, want %d after %d", recorder.Code, step.count.tokenizing, step.status, step.tokenizing)
+			if recorder.Code != step.status || count.tokenizing != 1 {
+				t.Fatalf("status = %d, tokenized %d times, want %d after once", recorder.Code, count.tokenizing, step.status)
+			}
+			if step.status != http.StatusOK {
+				return
+			}
+			raced := live.inference.raced.Load()
+			if raced.InputTokens != fits || raced.InputTokensSource != filters.InputTokensTokenizerExact || live.limiter.acquired.Load() != int64(fits) {
+				t.Fatalf("race got %d tokens from %q, limiter %d, want the one count %d from %q", raced.InputTokens, raced.InputTokensSource, live.limiter.acquired.Load(), fits, filters.InputTokensTokenizerExact)
+			}
+		})
+	}
+}
+
+// Test flow:
+//  1. Pin qwen's context length at 20 000 tokens and wire sampled counts past it whose minimum fits it, and one whose minimum is a token past it.
+//  2. Send a chat request with each.
+//  3. Assert the first is served after one count and races the whole sampled count marked tokenizer_sampled, and the second is refused naming its minimum.
+func TestASampledCountIsCheckedByItsMinimumAndRacedWhole(t *testing.T) {
+	const shortfall = 50
+	fits := uint64(20_000) - filters.DefaultRequestMaxTokens - chatTemplateMinimumTokens
+	live := newHarness(t, pinContextLength(20_000))
+	count := &fakePromptTokens{tokens: fits + shortfall, shortfall: shortfall, sampled: true, known: true}
+	live.server.promptTokens = count
+
+	if recorder := live.request(t, http.MethodPost, "/v1/chat/completions", chatBody, nil); recorder.Code != http.StatusOK || count.tokenizing != 1 {
+		t.Fatalf("status = %d (%s), tokenized %d times, want served after one count", recorder.Code, recorder.Body.String(), count.tokenizing)
+	}
+	raced := live.inference.raced.Load()
+	if raced.InputTokens != fits+shortfall || raced.InputTokensSource != filters.InputTokensTokenizerSampled {
+		t.Fatalf("race got %d tokens from %q, want the whole sampled count %d from %q", raced.InputTokens, raced.InputTokensSource, fits+shortfall, filters.InputTokensTokenizerSampled)
+	}
+
+	refused := newHarness(t, pinContextLength(20_000))
+	refused.server.promptTokens = &fakePromptTokens{tokens: fits + shortfall, shortfall: shortfall - 1, sampled: true, known: true}
+	recorder := refused.request(t, http.MethodPost, "/v1/chat/completions", chatBody, nil)
+	message := decodeErrorDetail(t, recorder.Body.Bytes()).Message
+	if want := fmt.Sprintf("at least %d tokens with the chat template", fits+1+chatTemplateMinimumTokens); recorder.Code != http.StatusBadRequest || !strings.Contains(message, want) {
+		t.Fatalf("status = %d, message = %q, want 400 naming %q", recorder.Code, message, want)
+	}
+}
+
+// Test flow:
+//  1. Define requests without a tokenizer count: no counter wired, and a counter that knows no tokenizer for the model.
+//  2. Send a chat request with each through a fresh harness.
+//  3. Assert the limiter and the race were handed the body's byte estimate, marked bytes_estimate.
+func TestWithoutATokenizerCountTheRequestCarriesTheByteEstimate(t *testing.T) {
+	for _, testCase := range []struct {
+		name  string
+		count *fakePromptTokens
+	}{{name: "no counter"}, {name: "model without a tokenizer", count: &fakePromptTokens{tokens: 7}}} {
+		t.Run(testCase.name, func(t *testing.T) {
+			live := newHarness(t, pinContextLength(20_000))
+			if testCase.count != nil {
+				live.server.promptTokens = testCase.count
+			}
+
+			if recorder := live.request(t, http.MethodPost, "/v1/chat/completions", chatBody, nil); recorder.Code != http.StatusOK {
+				t.Fatalf("status = %d (%s), want served", recorder.Code, recorder.Body.String())
+			}
+			raced := live.inference.raced.Load()
+			want := filters.EstimatedPromptTokens(int(raced.InputBytes))
+			if raced.InputTokens != want || raced.InputTokensSource != filters.InputTokensBytesEstimate || live.limiter.acquired.Load() != int64(want) {
+				t.Fatalf("race got %d tokens from %q, limiter %d, want the byte estimate %d", raced.InputTokens, raced.InputTokensSource, live.limiter.acquired.Load(), want)
 			}
 		})
 	}
@@ -256,13 +304,14 @@ func TestThePromptIsTokenizedOnlyWhenItsByteBoundIsPastTheContext(t *testing.T) 
 
 // Test flow:
 //  1. Load the NFC and a plain testdata tokenizer, and build chat bodies of random ASCII, Cyrillic, CJK, emoji, special-token spellings, decomposed and NFC-expanding text, as written and decomposed, from empty to past 64 KiB.
-//  2. For each, take context lengths around the prompt's count and its byte bound, and judge the request with the byte bound and with the tokenizer alone.
-//  3. Assert both judgements are the same for every request, refusals included.
-func TestTheByteBoundNeverChangesTheJudgement(t *testing.T) {
+//  2. For each, take the tokenizer's MinimumTokens of the prompt text and context lengths around it with the template allowance and max_tokens.
+//  3. Assert the check, counting the body once, refuses exactly the requests MinimumTokens leaves no room for, sampled past 64 KiB included.
+func TestTheCheckJudgesByTheTokenizersMinimum(t *testing.T) {
 	live := newHarness(t)
 	rng := rand.New(rand.NewPCG(3, 4))
 	for _, name := range []string{"removed-nfc", "sequence"} {
-		counter := counterPromptTokens{counter: loadTestTokenizer(t, name)}
+		counter := loadTestTokenizer(t, name)
+		live.server.promptTokens = counterPromptTokens{counter: counter}
 		for _, size := range []int{0, 1, 200, 4 << 10, 70 << 10} {
 			for _, text := range []string{randomPromptText(size, rng), norm.NFD.String(randomPromptText(size, rng))} {
 				content, err := json.Marshal(text)
@@ -270,34 +319,29 @@ func TestTheByteBoundNeverChangesTheJudgement(t *testing.T) {
 					t.Fatal(err)
 				}
 				body := []byte(`{"model":"qwen","messages":[{"role":"user","content":` + string(content) + `}]}`)
-				prompt, _ := counter.Prompt("qwen", body)
-				count, _ := prompt.MinimumTokens()
+				parts, err := filters.PromptText(body)
+				if err != nil {
+					t.Fatal(err)
+				}
+				minimum, err := counter.MinimumTokens(parts)
+				if err != nil {
+					t.Fatal(err)
+				}
 				for _, maxTokens := range []uint64{1, filters.DefaultRequestMaxTokens} {
-					for _, edge := range []uint64{count, prompt.MaximumTokens()} {
-						for _, length := range []uint64{edge + chatTemplateMinimumTokens + maxTokens - 1, edge + chatTemplateMinimumTokens + maxTokens, edge + chatTemplateMinimumTokens + maxTokens + 1} {
-							pinned := int64(length)
-							limits := config.Limits{ModelLimits: map[string]config.ModelLimits{"qwen": {MaxModelLen: &pinned}}}
-							normalized := filters.Result{Model: "qwen", Body: body, MaxTokens: maxTokens}
+					normalized := filters.Result{Model: "qwen", Body: body, MaxTokens: maxTokens}
+					prompt := live.server.countPrompt(normalized)
+					for _, length := range []uint64{minimum + chatTemplateMinimumTokens + maxTokens - 1, minimum + chatTemplateMinimumTokens + maxTokens} {
+						pinned := int64(length)
+						limits := config.Limits{ModelLimits: map[string]config.ModelLimits{"qwen": {MaxModelLen: &pinned}}}
 
-							live.server.promptTokens = counter
-							withBound := live.server.fitsContext(limits, normalized)
-							live.server.promptTokens = tokenizedOnlyPrompts{counter}
-							tokenized := live.server.fitsContext(limits, normalized)
+						err := live.server.fitsContext(limits, normalized, prompt)
 
-							if !reflect.DeepEqual(withBound, tokenized) {
-								t.Fatalf("%s, %d bytes, max_tokens %d, context %d: with the bound %v, tokenized alone %v", name, len(text), maxTokens, length, withBound, tokenized)
-							}
+						if fits := minimum+chatTemplateMinimumTokens+maxTokens <= length; fits != (err == nil) {
+							t.Fatalf("%s, %d bytes, max_tokens %d, context %d: minimum %d, check said %v", name, len(text), maxTokens, length, minimum, err)
 						}
 					}
 				}
 			}
 		}
 	}
-}
-
-type tokenizedOnlyPrompts struct{ PromptTokens }
-
-func (t tokenizedOnlyPrompts) Prompt(model string, body []byte) (PromptCount, bool) {
-	prompt, known := t.PromptTokens.Prompt(model, body)
-	return tokenizedOnly{prompt}, known
 }

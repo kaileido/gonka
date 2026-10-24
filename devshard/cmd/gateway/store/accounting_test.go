@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"devshard/cmd/gateway/filters"
 	"devshard/cmd/gateway/internal/leakcheck"
 )
 
@@ -55,6 +56,7 @@ func sampleRecord(requestID string) RequestRecord {
 		WinnerHostIdx:      3,
 		Attempts:           2,
 		InputTokens:        128,
+		InputTokensSource:  string(filters.InputTokensTokenizerExact),
 		WinnerOutputTokens: 256,
 		TotalOutputTokens:  381,
 		BalanceExhausted:   true,

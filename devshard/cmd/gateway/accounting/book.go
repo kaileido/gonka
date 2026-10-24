@@ -33,6 +33,7 @@ type escrowLedger struct {
 	counters      map[CounterKey]uint64
 	nonces        map[uint64]*nonceRecord
 	costs         map[uint64]nonceCost
+	inputCounts   map[uint64]inputCount
 	folded        map[uint32]SlotMoney
 	produced      map[uint32]uint64
 	events        []protocolEvent
@@ -65,6 +66,7 @@ func newEscrowLedger(metadata EscrowMetadata) *escrowLedger {
 		counters:      make(map[CounterKey]uint64),
 		nonces:        make(map[uint64]*nonceRecord),
 		costs:         make(map[uint64]nonceCost),
+		inputCounts:   make(map[uint64]inputCount),
 		folded:        make(map[uint32]SlotMoney),
 		produced:      make(map[uint32]uint64),
 	}
@@ -236,6 +238,7 @@ func (b *Book) ObserveInferences(escrowID string, inferences map[uint64]*types.I
 		}
 		escrow.challenged = challenged
 		escrow.inFlightReserved, escrow.challengedCost = inFlight, challengedCost
+		escrow.dropSealedInputCounts()
 		return nil
 	})
 }
@@ -305,6 +308,7 @@ func (b *Book) RecordGhost(escrowID string, nonce uint64, reason string) error {
 	return b.withEscrow(escrowID, func(escrow *escrowLedger) error {
 		record := escrow.record(nonce)
 		record.ghostReason = reason
+		delete(escrow.inputCounts, nonce)
 		escrow.reclassify(nonce, record)
 		return nil
 	})
@@ -326,6 +330,7 @@ func (b *Book) RecordRace(escrowID string, attempts []Attempt) error {
 			record.slowDecode = attempt.SlowDecode
 			record.logprobsDecoded = attempt.LogprobsDecoded
 			record.raced = true
+			escrow.recordInputCount(attempt)
 			escrow.addProduced(attempt.Nonce, record, attempt.OutputTokens)
 			escrow.reclassify(attempt.Nonce, record)
 			if record.sealed {

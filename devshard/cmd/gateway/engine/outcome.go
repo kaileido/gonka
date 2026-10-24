@@ -5,6 +5,7 @@ package engine
 import (
 	"time"
 
+	"devshard/cmd/gateway/filters"
 	"devshard/types"
 )
 
@@ -22,13 +23,14 @@ type Lifecycle struct {
 }
 
 type RaceOutcome struct {
-	RequestID    string
-	EscrowID     string
-	Model        string
-	InputTokens  uint64
-	OutputTokens uint64
-	Decision     string
-	ClientStream bool
+	RequestID         string
+	EscrowID          string
+	Model             string
+	InputTokens       uint64
+	InputTokensSource filters.InputTokensSource
+	OutputTokens      uint64
+	Decision          string
+	ClientStream      bool
 
 	ModelContextLength uint64
 

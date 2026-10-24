@@ -9,6 +9,7 @@ import (
 	"devshard/cmd/gateway/accounting"
 	"devshard/cmd/gateway/config"
 	"devshard/cmd/gateway/engine"
+	"devshard/cmd/gateway/filters"
 	"devshard/types"
 )
 
@@ -411,5 +412,41 @@ func TestAProbeOnAnUnopenedEscrowIsRefused(t *testing.T) {
 
 	if !errors.Is(err, accounting.ErrUnknownEscrow) {
 		t.Fatalf("RecordProbe() = %v, want the unknown-escrow refusal", err)
+	}
+}
+
+// Test flow:
+//  1. Record a won race whose request carries a tokenizer count, with a winning and a losing attempt.
+//  2. Observe both nonces finished with a byte length far from that count.
+//  3. Assert both nonces' estimated input tokens are the race's tokenizer count, marked tokenized.
+func TestEveryAttemptOfARaceCarriesTheRequestsTokenizerCountIntoTheLedger(t *testing.T) {
+	ledger := newLedgerForTest(t)
+	sent := time.Unix(100, 0)
+
+	ledger.RecordRace(engine.RaceOutcome{
+		EscrowID:          "escrow-1",
+		Succeeded:         true,
+		WinnerNonce:       4,
+		InputTokens:       21,
+		InputTokensSource: filters.InputTokensTokenizerExact,
+		Attempts: []engine.AttemptOutcome{
+			{Nonce: 4, SendTime: sent, NonceFinished: true, Terminal: engine.TerminalWon},
+			{Nonce: 5, SendTime: sent, NonceFinished: true, Terminal: engine.TerminalLost},
+		},
+	})
+	if err := ledger.service.Book.ObserveInferences("escrow-1", map[uint64]*types.InferenceRecord{
+		4: {Status: types.StatusFinished, InputLength: 4_000},
+		5: {Status: types.StatusFinished, InputLength: 4_000},
+	}); err != nil {
+		t.Fatalf("ObserveInferences(): %v", err)
+	}
+
+	var estimated, tokenized uint64
+	for _, record := range ledger.service.Book.Query(accounting.QueryFilter{}) {
+		estimated += record.EstimatedInput
+		tokenized += record.TokenizedInput
+	}
+	if estimated != 2*21 || tokenized != 2*21 {
+		t.Fatalf("estimated %d, tokenized %d, want both nonces at the race's 21 tokenizer tokens", estimated, tokenized)
 	}
 }

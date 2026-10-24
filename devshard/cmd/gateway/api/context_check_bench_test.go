@@ -14,24 +14,16 @@ import (
 
 type counterPromptTokens struct{ counter *tokenizer.Counter }
 
-type counterPrompt struct {
-	counter *tokenizer.Counter
-	parts   []string
-}
-
-func (c counterPromptTokens) Prompt(_ string, body []byte) (PromptCount, bool) {
+func (c counterPromptTokens) Count(_ string, body []byte) (TokenizedPrompt, bool) {
 	parts, err := filters.PromptText(body)
 	if err != nil {
-		return nil, false
+		return TokenizedPrompt{}, false
 	}
-	return counterPrompt{counter: c.counter, parts: parts}, true
-}
-
-func (c counterPrompt) MaximumTokens() uint64 { return c.counter.MaximumTokens(c.parts) }
-
-func (c counterPrompt) MinimumTokens() (uint64, bool) {
-	tokens, err := c.counter.MinimumTokens(c.parts)
-	return tokens, err == nil
+	estimate, err := c.counter.EstimateTokens(parts)
+	if err != nil {
+		return TokenizedPrompt{}, false
+	}
+	return TokenizedPrompt{Tokens: estimate.Tokens, MinimumTokens: estimate.Minimum(), Sampled: estimate.Sampled}, true
 }
 
 var benchPromptSizes = []struct {
@@ -64,55 +56,42 @@ func benchCounters(b *testing.B) map[string]*tokenizer.Counter {
 
 // Test flow:
 //  1. Load every tokenizer.json in GATEWAY_TOKENIZER_DIR, and skip when it names none.
-//  2. Build the benchmark server with qwen pinned to a context the prompts' byte bound fits, and to one only their count fits, half their bytes, so the check passes with and without tokenizing.
-//  3. Serve a buffered chat request of a 200 B and a 1 MiB prompt, without the check and with it for each tokenizer and context, and report the handler's time and allocations.
-func BenchmarkChatContextCheck(b *testing.B) {
+//  2. Build the benchmark server with qwen pinned to the largest context, so every request is served.
+//  3. Serve a buffered chat request of a 200 B and a 1 MiB prompt, with no tokenizer and with each, and report the handler's time and allocations.
+func BenchmarkChatPromptCount(b *testing.B) {
 	estimators := map[string]PromptTokens{"off": nil}
 	for name, counter := range benchCounters(b) {
 		estimators[name] = counterPromptTokens{counter: counter}
 	}
+	pinned := int64(config.MaxContextTokens)
 	for _, size := range benchPromptSizes {
 		body := benchChatBody(false, size.bytes)
-		contexts := map[string]int64{
-			"bound":     config.MaxContextTokens,
-			"tokenized": int64(size.bytes/2) + chatTemplateMinimumTokens + int64(filters.DefaultRequestMaxTokens),
-		}
-		for contextName, pinned := range contexts {
-			for name, estimator := range estimators {
-				b.Run(size.name+"/"+contextName+"/"+name, func(b *testing.B) {
-					server := benchServer(b, benchChunks(48, 24))
-					next := *server.config.Load()
-					next.Limits.ModelLimits = map[string]config.ModelLimits{"qwen": {MaxModelLen: &pinned}}
-					server.config.Swap(&next)
-					server.promptTokens = estimator
-					serveRepeatedly(b, server.Handler(), benchRequest("/v1/chat/completions", body), body, http.StatusOK)
-				})
-			}
+		for name, estimator := range estimators {
+			b.Run(size.name+"/"+name, func(b *testing.B) {
+				server := benchServer(b, benchChunks(48, 24))
+				next := *server.config.Load()
+				next.Limits.ModelLimits = map[string]config.ModelLimits{"qwen": {MaxModelLen: &pinned}}
+				server.config.Swap(&next)
+				server.promptTokens = estimator
+				serveRepeatedly(b, server.Handler(), benchRequest("/v1/chat/completions", body), body, http.StatusOK)
+			})
 		}
 	}
 }
 
 // Test flow:
 //  1. Load every tokenizer.json in GATEWAY_TOKENIZER_DIR, and skip when it names none.
-//  2. For a chat body of a 200 B and a 1 MiB prompt and each tokenizer, read the prompt and take its byte bound, and read it and tokenize it.
-//  3. Report the time and allocations of each, the check's own cost without the handler around it.
-func BenchmarkContextCheckCost(b *testing.B) {
+//  2. For a chat body of a 200 B and a 1 MiB prompt and each tokenizer, read the prompt and count it.
+//  3. Report the time and allocations of the one count a request takes, without the handler around it.
+func BenchmarkPromptCountCost(b *testing.B) {
 	for name, counter := range benchCounters(b) {
 		prompts := counterPromptTokens{counter: counter}
 		for _, size := range benchPromptSizes {
 			body := []byte(benchChatBody(false, size.bytes))
-			b.Run(size.name+"/"+name+"/bound", func(b *testing.B) {
+			b.Run(size.name+"/"+name, func(b *testing.B) {
 				b.ReportAllocs()
 				for b.Loop() {
-					prompt, _ := prompts.Prompt("qwen", body)
-					_ = prompt.MaximumTokens()
-				}
-			})
-			b.Run(size.name+"/"+name+"/tokenized", func(b *testing.B) {
-				b.ReportAllocs()
-				for b.Loop() {
-					prompt, _ := prompts.Prompt("qwen", body)
-					if _, known := prompt.MinimumTokens(); !known {
+					if _, known := prompts.Count("qwen", body); !known {
 						b.Fatal("the prompt could not be tokenized")
 					}
 				}

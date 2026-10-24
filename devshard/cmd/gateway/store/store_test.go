@@ -7,11 +7,13 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"devshard/cmd/gateway/config"
+	"devshard/cmd/gateway/filters"
 )
 
 func openTestStore(t *testing.T) *Store {
@@ -360,6 +362,45 @@ func TestOpenAddsAColumnWhoseVersionAnEarlierBuildSpentOnAnother(t *testing.T) {
 	}
 	if len(devshards) != 1 || devshards[0].EscrowID != "held-1" || devshards[0].ChainEpoch != 0 {
 		t.Fatalf("devshards after upgrade = %+v, want held-1 with chain_epoch 0", devshards)
+	}
+}
+
+// Test flow:
+//  1. Seed a database with every migration before the one adding input_tokens_source, recorded at that version, and one request row.
+//  2. Open the store against that file.
+//  3. Assert the row reads back with its input tokens, marked as the byte estimate it was counted as.
+func TestARequestRowFromBeforeTheSourceColumnReadsAsTheByteEstimate(t *testing.T) {
+	dir := t.TempDir()
+	seed, err := sql.Open("sqlite", filepath.Join(dir, gatewayDatabaseFileName))
+	if err != nil {
+		t.Fatalf("opening seed db: %v", err)
+	}
+	before := len(migrations) - 1
+	statements := slices.Concat([]string{`CREATE TABLE schema_version (version INTEGER NOT NULL)`}, migrations[:before], []string{
+		`WITH RECURSIVE versions(version) AS (SELECT 1 UNION ALL SELECT version + 1 FROM versions WHERE version < ` + strconv.Itoa(before) + `) INSERT INTO schema_version (version) SELECT version FROM versions`,
+		`INSERT INTO request_accounting (request_id, input_tokens, recorded_at) VALUES ('request-1', 33, '2026-10-24T00:00:00.000000000Z')`,
+	})
+	for _, statement := range statements {
+		if _, err := seed.Exec(statement); err != nil {
+			t.Fatalf("seeding the db with %q: %v", statement, err)
+		}
+	}
+	if err := seed.Close(); err != nil {
+		t.Fatalf("closing seed db: %v", err)
+	}
+
+	upgraded, err := Open(dir)
+	if err != nil {
+		t.Fatalf("Open() upgrading the db: %v", err)
+	}
+	t.Cleanup(func() { upgraded.Close() })
+
+	record, found, err := upgraded.FindRequest(context.Background(), "request-1")
+	if err != nil || !found {
+		t.Fatalf("FindRequest() = %v, %v", found, err)
+	}
+	if record.InputTokens != 33 || record.InputTokensSource != string(filters.InputTokensBytesEstimate) {
+		t.Fatalf("row = %d tokens from %q, want 33 from %q", record.InputTokens, record.InputTokensSource, filters.InputTokensBytesEstimate)
 	}
 }
 

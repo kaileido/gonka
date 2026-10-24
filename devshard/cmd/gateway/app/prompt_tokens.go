@@ -13,28 +13,20 @@ type pinnedPromptTokens struct {
 	library *tokenizer.Library
 }
 
-type countedPrompt struct {
-	counter *tokenizer.Counter
-	parts   []string
-}
-
-func (p pinnedPromptTokens) Prompt(model string, body []byte) (api.PromptCount, bool) {
+func (p pinnedPromptTokens) Count(model string, body []byte) (api.TokenizedPrompt, bool) {
 	counter := p.library.Counter(model)
 	if counter == nil {
-		return nil, false
+		return api.TokenizedPrompt{}, false
 	}
 	parts, err := filters.PromptText(body)
 	if err != nil {
-		return nil, false
+		return api.TokenizedPrompt{}, false
 	}
-	return countedPrompt{counter: counter, parts: parts}, true
-}
-
-func (c countedPrompt) MaximumTokens() uint64 { return c.counter.MaximumTokens(c.parts) }
-
-func (c countedPrompt) MinimumTokens() (uint64, bool) {
-	tokens, err := c.counter.MinimumTokens(c.parts)
-	return tokens, err == nil
+	estimate, err := counter.EstimateTokens(parts)
+	if err != nil {
+		return api.TokenizedPrompt{}, false
+	}
+	return api.TokenizedPrompt{Tokens: estimate.Tokens, MinimumTokens: estimate.Minimum(), Sampled: estimate.Sampled}, true
 }
 
 func knownEpoch(snapshots phaseSnapshots) func() (uint64, bool) {

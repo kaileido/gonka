@@ -5,6 +5,7 @@ package accounting
 import (
 	"time"
 
+	"devshard/cmd/gateway/filters"
 	"devshard/types"
 )
 
@@ -45,6 +46,9 @@ type Attempt struct {
 	ClockDrifted    bool
 	SlowDecode      bool
 	LogprobsDecoded bool
+
+	InputTokens       uint64
+	InputTokensSource filters.InputTokensSource
 }
 
 // One bucket of classified nonces. See README.md, "How a nonce is classified".

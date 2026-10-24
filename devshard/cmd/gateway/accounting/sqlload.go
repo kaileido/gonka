@@ -33,7 +33,7 @@ func (s *Store) Load(ctx context.Context) (Snapshot, error) {
 	}
 	for _, read := range []func(context.Context, map[string]*EscrowSnapshot) error{
 		s.readSlots, s.readHostStats, s.readSlotActivity, s.readServiceNonces, s.readMoney, s.readCounters, s.readNonces,
-		s.readCosts,
+		s.readCosts, s.readInputCounts,
 	} {
 		if err := read(ctx, escrows); err != nil {
 			return Snapshot{}, err
@@ -167,7 +167,7 @@ func (s *Store) readServiceNonces(ctx context.Context, escrows map[string]*Escro
 func (s *Store) readMoney(ctx context.Context, escrows map[string]*EscrowSnapshot) error {
 	return s.eachRow(ctx,
 		`SELECT escrow_id, slot_id, reserved_cost, actual_cost, refunded_cost, estimated_input, estimated_error,
-		        max_tokens, input_tokens, counted_nonces, output_tokens
+		        max_tokens, input_tokens, counted_nonces, output_tokens, tokenized_input, tokenized_error
 		 FROM accounting_money`, "money",
 		func(rows *sql.Rows) error {
 			var escrowID string
@@ -176,7 +176,7 @@ func (s *Store) readMoney(ctx context.Context, escrows map[string]*EscrowSnapsho
 			var produced uint64
 			if err := rows.Scan(&escrowID, &slotID, &money.Reserved, &money.Actual, &money.Refunded,
 				&money.EstimatedInput, &money.EstimatedError, &money.MaxTokens,
-				&money.Input, &money.CountedNonces, &produced); err != nil {
+				&money.Input, &money.CountedNonces, &produced, &money.TokenizedInput, &money.TokenizedError); err != nil {
 				return err
 			}
 			if escrow, known := escrows[escrowID]; known {
@@ -263,6 +263,22 @@ func (s *Store) readCosts(ctx context.Context, escrows map[string]*EscrowSnapsho
 			}
 			if escrow, known := escrows[escrowID]; known {
 				escrow.LiveCosts = append(escrow.LiveCosts, live)
+			}
+			return nil
+		})
+}
+
+func (s *Store) readInputCounts(ctx context.Context, escrows map[string]*EscrowSnapshot) error {
+	return s.eachRow(ctx,
+		`SELECT escrow_id, nonce, tokens, source FROM accounting_input_counts ORDER BY escrow_id, nonce`, "input counts",
+		func(rows *sql.Rows) error {
+			var escrowID string
+			var counted PersistedInputCount
+			if err := rows.Scan(&escrowID, &counted.Nonce, &counted.Tokens, &counted.Source); err != nil {
+				return err
+			}
+			if escrow, known := escrows[escrowID]; known {
+				escrow.InputCounts = append(escrow.InputCounts, counted)
 			}
 			return nil
 		})

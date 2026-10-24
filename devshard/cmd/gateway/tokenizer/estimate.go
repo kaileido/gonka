@@ -2,8 +2,6 @@ package tokenizer
 
 import (
 	"unicode/utf8"
-
-	"golang.org/x/text/unicode/norm"
 )
 
 // See README.md, "Estimating a long prompt".
@@ -15,61 +13,30 @@ const (
 	wholePercent            = 100
 )
 
-// See README.md, "The byte bound".
-const (
-	nfcMaxExpansion = 3
-)
+// Estimate is one count of a prompt's tokens: exact, or past exactBudgetBytes the sampled estimate, Sampled then true.
+type Estimate struct {
+	Tokens  uint64
+	Sampled bool
+}
 
-// MinimumTokens returns the fewest tokens prompt's parts hold, each counted on its own: exact up to exactBudgetBytes in all, the sampled estimate less its worst measured over-count beyond.
-func (c *Counter) MinimumTokens(prompt []string) (uint64, error) {
+// EstimateTokens returns prompt's tokens, each part counted on its own: exact up to exactBudgetBytes in all, the sampled estimate beyond.
+func (c *Counter) EstimateTokens(prompt []string) (Estimate, error) {
 	tokens, sampled, err := c.estimate(prompt)
-	if err != nil || !sampled {
-		return tokens, err
-	}
-	return tokens * wholePercent / (wholePercent + sampledOvercountPercent), nil
+	return Estimate{Tokens: tokens, Sampled: sampled}, err
 }
 
-// MaximumTokens returns a count MinimumTokens never exceeds, read from prompt's bytes without tokenizing: every token covers at least one byte of the text it counts.
-func (c *Counter) MaximumTokens(prompt []string) uint64 {
-	total := 0
-	for _, part := range prompt {
-		total += len(part)
+// Minimum returns the fewest tokens the estimated prompt holds: the exact count, or the sampled estimate less its worst measured over-count.
+func (e Estimate) Minimum() uint64 {
+	if !e.Sampled {
+		return e.Tokens
 	}
-	switch {
-	case !c.nfc:
-		return uint64(total)
-	case total > exactBudgetBytes:
-		for _, part := range prompt {
-			if !isASCII(part) {
-				return uint64(total) * nfcMaxExpansion
-			}
-		}
-		return uint64(total)
-	}
-	normalized := 0
-	for _, part := range prompt {
-		normalized += c.normalizedBytes(part)
-	}
-	return uint64(normalized)
+	return e.Tokens * wholePercent / (wholePercent + sampledOvercountPercent)
 }
 
-// normalizedBytes is text's length with each gap between its raw added tokens in NFC, as Count normalizes it; an added token is one token of at least one byte.
-func (c *Counter) normalizedBytes(text string) int {
-	gaps, _ := c.rawAddedTokens.split(text, nil)
-	total := len(text)
-	for _, gap := range gaps {
-		total += len(norm.NFC.String(gap)) - len(gap)
-	}
-	return total
-}
-
-func isASCII(text string) bool {
-	for index := range len(text) {
-		if text[index] >= utf8.RuneSelf {
-			return false
-		}
-	}
-	return true
+// MinimumTokens returns the fewest tokens prompt's parts hold, each counted on its own: EstimateTokens' Minimum.
+func (c *Counter) MinimumTokens(prompt []string) (uint64, error) {
+	estimate, err := c.EstimateTokens(prompt)
+	return estimate.Minimum(), err
 }
 
 func (c *Counter) estimate(prompt []string) (tokens uint64, sampled bool, err error) {

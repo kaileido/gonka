@@ -281,6 +281,8 @@ func (e *escrowLedger) slots(escrowID string) []SlotRecord {
 				CountedNonces:  money[slotID].CountedNonces,
 				EstimatedInput: money[slotID].EstimatedInput,
 				EstimatedError: money[slotID].EstimatedError,
+				TokenizedInput: money[slotID].TokenizedInput,
+				TokenizedError: money[slotID].TokenizedError,
 				MaxTokens:      money[slotID].MaxTokens,
 				InputTokens:    money[slotID].Input,
 				OutputTokens:   e.produced[slotID],

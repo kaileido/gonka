@@ -220,7 +220,8 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 		s.writeErrorFor(w, err)
 		return
 	}
-	if err := s.fitsContext(configuration.Limits, normalized); err != nil {
+	prompt := s.countPrompt(normalized)
+	if err := s.fitsContext(configuration.Limits, normalized, prompt); err != nil {
 		s.writeErrorFor(w, err)
 		return
 	}
@@ -247,8 +248,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 		return
 	}
 
-	inputTokens := estimatePromptTokens(normalized.Body)
-	if err := s.limiter.AcquireForModel(r.Context(), normalized.Model, int64(inputTokens), s.capacity.ForModel(normalized.Model)); err != nil {
+	if err := s.limiter.AcquireForModel(r.Context(), normalized.Model, int64(prompt.tokens), s.capacity.ForModel(normalized.Model)); err != nil {
 		if throttled, ours := rateLimited(err); ours && s.rejections != nil {
 			s.rejections.Rejected(normalized.Model, throttled.Label())
 			s.events.RequestThrottled(journal.RequestLine{
@@ -258,7 +258,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 		s.writeErrorFor(w, err)
 		return
 	}
-	defer s.limiter.ReleaseForModel(normalized.Model, int64(inputTokens))
+	defer s.limiter.ReleaseForModel(normalized.Model, int64(prompt.tokens))
 	// The limiter can hold a request for minutes: a block that began meanwhile refuses it before any nonce is spent.
 	afterWait := s.config.Load()
 	if refusal := admission(s.snapshots.Snapshot(), afterWait.Modes, s.now(), afterWait.Chain.SnapshotMaxAgeSeconds); refusal != nil {
@@ -268,12 +268,12 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 
 	if s.cache == nil {
 		// Nothing to store, so the outcome and the hidden failure the cache path reads are both moot.
-		_, _ = s.race(w, r, requestID, normalized, inputTokens, escrowPin, configuration.Limits.LogprobsOptimization)
+		_, _ = s.race(w, r, requestID, normalized, prompt, escrowPin, configuration.Limits.LogprobsOptimization)
 		return
 	}
 	recorder := newCacheRecorder(w, s.cache.entryLimit(), normalized.ClientStream, s.buffers)
 	defer recorder.releaseBudget()
-	outcome, hiddenFailure := s.race(recorder, r, requestID, normalized, inputTokens, escrowPin, configuration.Limits.LogprobsOptimization)
+	outcome, hiddenFailure := s.race(recorder, r, requestID, normalized, prompt, escrowPin, configuration.Limits.LogprobsOptimization)
 	unstorable := cmp.Or(r.Context().Err(), hiddenFailure)
 	entry, storable := recorder.entry(outcome.EscrowID, normalized.ClientStream, unstorable)
 	if !storable {
@@ -338,7 +338,7 @@ func authorizeModel(configured config.Limits, model string, identity credentials
 }
 
 // race returns the outcome and the failure the reply's status could not carry. See README.md, "Streaming the reply".
-func (s *Server) race(w http.ResponseWriter, r *http.Request, requestID string, normalized filters.Result, inputTokens uint64, escrowPin string, logprobsOptimization *bool) (engine.RaceOutcome, error) {
+func (s *Server) race(w http.ResponseWriter, r *http.Request, requestID string, normalized filters.Result, prompt promptCount, escrowPin string, logprobsOptimization *bool) (engine.RaceOutcome, error) {
 	startedAt := s.now()
 	client := newClientStream(w, requestID, normalized.ClientStream, normalized.ClientUsage, normalized.Logprobs, s.buffers)
 	defer client.discard()
@@ -347,7 +347,8 @@ func (s *Server) race(w http.ResponseWriter, r *http.Request, requestID string, 
 		RequestID:               requestID,
 		Model:                   normalized.Model,
 		Escrow:                  escrowPin,
-		InputTokens:             inputTokens,
+		InputTokens:             prompt.tokens,
+		InputTokensSource:       prompt.source,
 		InputBytes:              uint64(len(normalized.Body)),
 		OutputTokens:            outputTokens,
 		ClientStream:            normalized.ClientStream,

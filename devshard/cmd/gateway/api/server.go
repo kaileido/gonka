@@ -166,15 +166,16 @@ type LimitRejections interface {
 	Rejected(model, reason string)
 }
 
-// PromptTokens reads a normalized chat body's messages for the model's pinned tokenizer, known false while there is none; app's pinned tokenizer library satisfies it.
+// PromptTokens counts a normalized chat body's messages with the model's pinned tokenizer, known false while there is none or the count fails; app's pinned tokenizer library satisfies it.
 type PromptTokens interface {
-	Prompt(model string, body []byte) (prompt PromptCount, known bool)
+	Count(model string, body []byte) (count TokenizedPrompt, known bool)
 }
 
-// PromptCount bounds a prompt's tokens: MaximumTokens from its bytes alone, MinimumTokens, never above it, by tokenizing.
-type PromptCount interface {
-	MaximumTokens() uint64
-	MinimumTokens() (tokens uint64, known bool)
+// TokenizedPrompt is one tokenizer pass over a prompt: Tokens the count, sampled past the exact budget, and MinimumTokens never above the prompt's real count.
+type TokenizedPrompt struct {
+	Tokens        uint64
+	MinimumTokens uint64
+	Sampled       bool
 }
 
 // RequestJournal is satisfied by *journal.Journal; each method returns without waiting on a log handler.

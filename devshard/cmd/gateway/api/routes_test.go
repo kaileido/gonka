@@ -13,6 +13,7 @@ import (
 	"devshard/cmd/gateway/config"
 	"devshard/cmd/gateway/engine"
 	"devshard/cmd/gateway/escrow"
+	"devshard/cmd/gateway/filters"
 	"devshard/cmd/gateway/limits"
 	"devshard/cmd/gateway/registry"
 	"devshard/cmd/gateway/scheduler"
@@ -500,7 +501,7 @@ func TestStatusReportsTheAdmissionDecisionNotTheRawChainFlag(t *testing.T) {
 
 // Test flow:
 //  1. Define a table of request bodies, varying across empty, one byte, four bytes, and five bytes.
-//  2. For each case, call `estimatePromptTokens`.
+//  2. For each case, count it the way a request without a tokenizer is counted.
 //  3. Assert the result matches the expected token count, with a floor of one even for an empty body.
 func TestEstimatePromptTokensHasAFloorOfOne(t *testing.T) {
 	testCases := []struct {
@@ -515,7 +516,7 @@ func TestEstimatePromptTokensHasAFloorOfOne(t *testing.T) {
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			if got := estimatePromptTokens([]byte(testCase.body)); got != testCase.want {
+			if got := (&Server{}).countPrompt(filters.Result{Body: []byte(testCase.body)}).tokens; got != testCase.want {
 				t.Fatalf("got %d, want %d", got, testCase.want)
 			}
 		})

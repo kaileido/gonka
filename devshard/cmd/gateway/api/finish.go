@@ -26,11 +26,6 @@ func (s *Server) finishRequest(requestID string, normalized filters.Result, outc
 	})
 }
 
-// estimatePromptTokens is an input size, not a tokenizer call. See README.md, "What the boundary hands the engine".
-func estimatePromptTokens(body []byte) uint64 {
-	return filters.EstimatedPromptTokens(len(body))
-}
-
 func outputTokenBudget(normalized filters.Result) uint64 {
 	if normalized.MaxTokens > 0 {
 		return normalized.MaxTokens

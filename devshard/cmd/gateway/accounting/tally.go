@@ -16,6 +16,8 @@ type nonceTotals struct {
 	CountedNonces  uint64                    `json:"counted_nonces"`
 	EstimatedInput uint64                    `json:"estimated_input_tokens"`
 	EstimatedError uint64                    `json:"estimated_error_tokens"`
+	TokenizedInput uint64                    `json:"tokenized_input_tokens"`
+	TokenizedError uint64                    `json:"tokenized_error_tokens"`
 	MaxTokens      uint64                    `json:"max_tokens"`
 	InputTokens    uint64                    `json:"input_tokens"`
 	OutputTokens   uint64                    `json:"output_tokens"`
@@ -32,6 +34,8 @@ func (t *nonceTotals) add(other nonceTotals) {
 	t.CountedNonces += other.CountedNonces
 	t.EstimatedInput += other.EstimatedInput
 	t.EstimatedError += other.EstimatedError
+	t.TokenizedInput += other.TokenizedInput
+	t.TokenizedError += other.TokenizedError
 	t.MaxTokens += other.MaxTokens
 	t.InputTokens += other.InputTokens
 	t.OutputTokens += other.OutputTokens

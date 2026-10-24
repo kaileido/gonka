@@ -22,17 +22,18 @@ func (l *RaceLedger) RecordRequest(outcome engine.RaceOutcome) {
 
 func requestRecord(outcome engine.RaceOutcome) store.RequestRecord {
 	record := store.RequestRecord{
-		RequestID:        outcome.RequestID,
-		EscrowID:         outcome.EscrowID,
-		Model:            outcome.Model,
-		Outcome:          requestOutcome(outcome),
-		Decision:         outcome.Decision,
-		Stream:           outcome.ClientStream,
-		WinnerNonce:      outcome.WinnerNonce,
-		Attempts:         len(outcome.Attempts),
-		InputTokens:      outcome.InputTokens,
-		EscrowMissing:    outcome.Lifecycle.EscrowMissing,
-		BalanceExhausted: outcome.Lifecycle.BalanceExhausted,
+		RequestID:         outcome.RequestID,
+		EscrowID:          outcome.EscrowID,
+		Model:             outcome.Model,
+		Outcome:           requestOutcome(outcome),
+		Decision:          outcome.Decision,
+		Stream:            outcome.ClientStream,
+		WinnerNonce:       outcome.WinnerNonce,
+		Attempts:          len(outcome.Attempts),
+		InputTokens:       outcome.InputTokens,
+		InputTokensSource: string(outcome.InputTokensSource),
+		EscrowMissing:     outcome.Lifecycle.EscrowMissing,
+		BalanceExhausted:  outcome.Lifecycle.BalanceExhausted,
 	}
 	for _, attempt := range outcome.Attempts {
 		record.TotalOutputTokens = safemath.AddSaturating(record.TotalOutputTokens, attempt.OutputTokens())
@@ -86,6 +87,7 @@ type requestAccountingResponse struct {
 	WinnerHostIdx      int    `json:"winner_host_idx"`
 	Attempts           int    `json:"attempts"`
 	EstimatedInput     uint64 `json:"estimated_input_tokens"`
+	EstimatedSource    string `json:"estimated_input_tokens_source"`
 	PromptTokens       int64  `json:"prompt_tokens"`
 	WinnerOutputTokens int64  `json:"winner_output_tokens"`
 	TotalOutputTokens  int64  `json:"total_output_tokens"`
@@ -132,6 +134,7 @@ func accountingResponse(record store.RequestRecord) requestAccountingResponse {
 		WinnerHostIdx:      record.WinnerHostIdx,
 		Attempts:           record.Attempts,
 		EstimatedInput:     record.InputTokens,
+		EstimatedSource:    record.InputTokensSource,
 		PromptTokens:       record.PromptTokens,
 		WinnerOutputTokens: record.WinnerOutputTokens,
 		TotalOutputTokens:  record.TotalOutputTokens,

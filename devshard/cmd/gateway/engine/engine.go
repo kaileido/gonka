@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"devshard/cmd/gateway/config"
+	"devshard/cmd/gateway/filters"
 	"devshard/cmd/gateway/limits"
 	"devshard/cmd/gateway/perf"
 )
@@ -91,6 +92,7 @@ type Request struct {
 	Model                   string
 	Escrow                  string
 	InputTokens             uint64
+	InputTokensSource       filters.InputTokensSource
 	InputBytes              uint64
 	OutputTokens            uint64
 	ClientStream            bool

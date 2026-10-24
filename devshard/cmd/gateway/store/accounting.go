@@ -35,6 +35,7 @@ type RequestRecord struct {
 	WinnerHostIdx      int
 	Attempts           int
 	InputTokens        uint64
+	InputTokensSource  string
 	PromptTokens       int64
 	WinnerOutputTokens int64
 	TotalOutputTokens  int64
@@ -183,15 +184,15 @@ func (l *Ledger) insert(record RequestRecord) error {
 		INSERT INTO request_accounting (
 			request_id, escrow_id, model, outcome, decision, stream,
 			winner_nonce, winner_participant, winner_host, winner_host_idx,
-			attempts, input_tokens, prompt_tokens, winner_output_tokens, total_output_tokens,
+			attempts, input_tokens, input_tokens_source, prompt_tokens, winner_output_tokens, total_output_tokens,
 			escrow_missing, balance_exhausted,
 			started_at, completed_at, first_token_ms, duration_ms, recorded_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(request_id) DO NOTHING`,
 		record.RequestID, record.EscrowID, record.Model, string(record.Outcome), record.Decision,
 		record.Stream,
 		record.WinnerNonce, record.WinnerParticipant, record.WinnerHost, record.WinnerHostIdx,
-		record.Attempts, record.InputTokens, record.PromptTokens, record.WinnerOutputTokens, record.TotalOutputTokens,
+		record.Attempts, record.InputTokens, record.InputTokensSource, record.PromptTokens, record.WinnerOutputTokens, record.TotalOutputTokens,
 		record.EscrowMissing, record.BalanceExhausted,
 		FormatTime(record.StartedAt), FormatTime(record.CompletedAt),
 		record.FirstTokenMS, record.DurationMS, FormatTime(record.RecordedAt))
@@ -219,13 +220,13 @@ func (s *Store) FindRequest(ctx context.Context, requestID string) (RequestRecor
 	err := s.db.QueryRowContext(ctx, `
 		SELECT request_id, escrow_id, model, outcome, decision, stream,
 			winner_nonce, winner_participant, winner_host, winner_host_idx,
-			attempts, input_tokens, prompt_tokens, winner_output_tokens, total_output_tokens,
+			attempts, input_tokens, input_tokens_source, prompt_tokens, winner_output_tokens, total_output_tokens,
 			escrow_missing, balance_exhausted,
 			started_at, completed_at, first_token_ms, duration_ms, recorded_at
 		FROM request_accounting WHERE request_id = ?`, requestID).
 		Scan(&record.RequestID, &record.EscrowID, &record.Model, &outcome, &record.Decision, &record.Stream,
 			&record.WinnerNonce, &record.WinnerParticipant, &record.WinnerHost, &record.WinnerHostIdx,
-			&record.Attempts, &record.InputTokens, &record.PromptTokens, &record.WinnerOutputTokens, &record.TotalOutputTokens,
+			&record.Attempts, &record.InputTokens, &record.InputTokensSource, &record.PromptTokens, &record.WinnerOutputTokens, &record.TotalOutputTokens,
 			&record.EscrowMissing, &record.BalanceExhausted,
 			&startedAt, &completedAt, &record.FirstTokenMS, &record.DurationMS, &recordedAt)
 	if errors.Is(err, sql.ErrNoRows) {

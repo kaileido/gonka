@@ -236,15 +236,16 @@ func (c *raceCoordinator) outcome() RaceOutcome {
 
 func (c *raceCoordinator) raceFacts() RaceOutcome {
 	return RaceOutcome{
-		RequestID:       c.request.RequestID,
-		EscrowID:        c.escrowID,
-		Model:           c.request.Model,
-		InputTokens:     c.request.InputTokens,
-		OutputTokens:    c.request.OutputTokens,
-		ClientStream:    c.request.ClientStream,
-		Decision:        c.decision,
-		PoCBypassActive: c.pocBypass,
-		Lifecycle:       Lifecycle{BalanceExhausted: c.balanceExhausted, ClientGone: !c.clientGoneAt.IsZero()},
+		RequestID:         c.request.RequestID,
+		EscrowID:          c.escrowID,
+		Model:             c.request.Model,
+		InputTokens:       c.request.InputTokens,
+		InputTokensSource: c.request.InputTokensSource,
+		OutputTokens:      c.request.OutputTokens,
+		ClientStream:      c.request.ClientStream,
+		Decision:          c.decision,
+		PoCBypassActive:   c.pocBypass,
+		Lifecycle:         Lifecycle{BalanceExhausted: c.balanceExhausted, ClientGone: !c.clientGoneAt.IsZero()},
 
 		ModelContextLength: c.deps.ModelContextLength,
 	}

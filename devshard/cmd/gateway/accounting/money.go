@@ -1,7 +1,6 @@
 package accounting
 
 import (
-	"devshard/cmd/gateway/filters"
 	"devshard/types"
 )
 
@@ -23,6 +22,8 @@ type SlotMoney struct {
 	Refunded       uint64 `json:"refunded_cost,omitempty"`
 	EstimatedInput uint64 `json:"estimated_input_tokens,omitempty"`
 	EstimatedError uint64 `json:"estimated_error_tokens,omitempty"`
+	TokenizedInput uint64 `json:"tokenized_input_tokens,omitempty"`
+	TokenizedError uint64 `json:"tokenized_error_tokens,omitempty"`
 	MaxTokens      uint64 `json:"max_tokens,omitempty"`
 	Input          uint64 `json:"input_tokens,omitempty"`
 	CountedNonces  uint64 `json:"counted_nonces,omitempty"`
@@ -34,6 +35,8 @@ func (m *SlotMoney) add(other SlotMoney) {
 	m.Refunded += other.Refunded
 	m.EstimatedInput += other.EstimatedInput
 	m.EstimatedError += other.EstimatedError
+	m.TokenizedInput += other.TokenizedInput
+	m.TokenizedError += other.TokenizedError
 	m.MaxTokens += other.MaxTokens
 	m.Input += other.Input
 	m.CountedNonces += other.CountedNonces
@@ -82,12 +85,19 @@ func (e *escrowLedger) foldCost(money *SlotMoney, nonce uint64, cost nonceCost) 
 	if e.isGhost(nonce) {
 		return
 	}
+	tokens, tokenized := e.estimatedInput(nonce, cost)
 	if cost.status != types.StatusFinished && cost.status != types.StatusValidated {
-		money.EstimatedError += filters.EstimatedPromptTokens(int(cost.inputLength))
+		money.EstimatedError += tokens
+		if tokenized {
+			money.TokenizedError += tokens
+		}
 		return
 	}
 	money.CountedNonces++
 	money.Input += cost.input
-	money.EstimatedInput += filters.EstimatedPromptTokens(int(cost.inputLength))
+	money.EstimatedInput += tokens
+	if tokenized {
+		money.TokenizedInput += tokens
+	}
 	money.MaxTokens += cost.maxTokens
 }

@@ -29,23 +29,34 @@ func (e *ContextLengthError) Error() string {
 	return message + "."
 }
 
-func (s *Server) fitsContext(configured config.Limits, normalized filters.Result) error {
-	if s.promptTokens == nil {
+type promptCount struct {
+	tokens  uint64
+	minimum uint64
+	source  filters.InputTokensSource
+}
+
+func (s *Server) countPrompt(normalized filters.Result) promptCount {
+	if s.promptTokens != nil {
+		if counted, known := s.promptTokens.Count(normalized.Model, normalized.Body); known {
+			source := filters.InputTokensTokenizerExact
+			if counted.Sampled {
+				source = filters.InputTokensTokenizerSampled
+			}
+			return promptCount{tokens: counted.Tokens, minimum: counted.MinimumTokens, source: source}
+		}
+	}
+	return promptCount{tokens: filters.EstimatedPromptTokens(len(normalized.Body)), source: filters.InputTokensBytesEstimate}
+}
+
+func (s *Server) fitsContext(configured config.Limits, normalized filters.Result, prompt promptCount) error {
+	if !prompt.source.Tokenized() {
 		return nil
 	}
 	contextLength := configured.ContextLength(normalized.Model, s.snapshots.Snapshot().Models[normalized.Model].MaxModelLen)
 	if contextLength == config.NoContextLength {
 		return nil
 	}
-	prompt, known := s.promptTokens.Prompt(normalized.Model, normalized.Body)
-	if !known || prompt.MaximumTokens()+chatTemplateMinimumTokens+normalized.MaxTokens <= contextLength {
-		return nil
-	}
-	messageTokens, known := prompt.MinimumTokens()
-	if !known {
-		return nil
-	}
-	promptTokens := messageTokens + chatTemplateMinimumTokens
+	promptTokens := prompt.minimum + chatTemplateMinimumTokens
 	if promptTokens+normalized.MaxTokens <= contextLength {
 		return nil
 	}

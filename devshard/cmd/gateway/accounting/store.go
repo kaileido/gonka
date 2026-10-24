@@ -30,6 +30,7 @@ type EscrowSnapshot struct {
 	Nonces        []PersistedNonce           `json:"nonces,omitempty"`
 	ServiceNonces []PersistedServiceCount    `json:"service_nonces,omitempty"`
 	LiveCosts     []PersistedCost            `json:"live_costs,omitempty"`
+	InputCounts   []PersistedInputCount      `json:"input_counts,omitempty"`
 }
 
 // PersistedCost is the money of one nonce the chain still holds; a sealed nonce lives in Money instead.
@@ -163,6 +164,7 @@ func snapshotEscrow(escrow *escrowLedger) EscrowSnapshot {
 		})
 	}
 	slices.SortFunc(stored.LiveCosts, func(left, right PersistedCost) int { return cmp.Compare(left.Nonce, right.Nonce) })
+	stored.InputCounts = escrow.persistedInputCounts()
 	stored.Produced = maps.Clone(escrow.produced)
 	for key, count := range escrow.serviceNonces {
 		stored.ServiceNonces = append(stored.ServiceNonces, PersistedServiceCount{SlotID: key.slotID, Purpose: key.purpose, Count: count})
@@ -229,6 +231,7 @@ func (b *Book) Restore(snapshot Snapshot) error {
 				maxTokens: live.MaxTokens, input: live.Input, output: live.Output, status: live.Status,
 			}
 		}
+		escrow.restoreInputCounts(stored.InputCounts)
 		maps.Copy(escrow.produced, stored.Produced)
 		for slotID, activity := range stored.SlotActivity {
 			escrow.challenged[slotID] = activity.Challenged
