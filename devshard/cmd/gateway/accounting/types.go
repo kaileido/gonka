@@ -32,19 +32,20 @@ type EscrowMetadata struct {
 
 // One nonce's share of a race outcome. Sent is false for a stranded nonce, which is not a ghost.
 type Attempt struct {
-	Nonce           uint64
-	RequestID       string
-	OutputTokens    int64
-	Sent            bool
-	Acknowledged    bool
-	Usage           Usage
-	Terminal        string
-	Phase           Phase
-	SlowReceipt     bool
-	SlowChunk       bool
-	ClockDrifted    bool
-	SlowDecode      bool
-	LogprobsDecoded bool
+	Nonce             uint64
+	RequestID         string
+	OutputTokens      int64
+	FirstContentDelay time.Duration
+	Sent              bool
+	Acknowledged      bool
+	Usage             Usage
+	Terminal          string
+	Phase             Phase
+	SlowReceipt       bool
+	SlowChunk         bool
+	ClockDrifted      bool
+	SlowDecode        bool
+	LogprobsDecoded   bool
 }
 
 // One bucket of classified nonces. See README.md, "How a nonce is classified".

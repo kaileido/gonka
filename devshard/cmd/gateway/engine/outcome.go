@@ -168,7 +168,8 @@ func TimePerOutputToken(a AttemptOutcome) time.Duration {
 	return a.LastChunk.Sub(a.FirstContent) / time.Duration(a.UsageCompletionTokens)
 }
 
-func (a AttemptOutcome) firstContentDelay() time.Duration {
+// FirstContentDelay is the host's time to first content from this attempt's send; zero when it sent no content.
+func (a AttemptOutcome) FirstContentDelay() time.Duration {
 	if a.SendTime.IsZero() || !a.FirstContent.After(a.SendTime) {
 		return 0
 	}

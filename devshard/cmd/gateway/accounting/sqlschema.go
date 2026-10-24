@@ -67,6 +67,13 @@ CREATE TABLE IF NOT EXISTS accounting_money (
 	output_tokens    INTEGER NOT NULL,
 	PRIMARY KEY (escrow_id, slot_id)
 );
+CREATE TABLE IF NOT EXISTS accounting_first_content (
+	escrow_id          TEXT    NOT NULL,
+	slot_id            INTEGER NOT NULL,
+	total_milliseconds INTEGER NOT NULL,
+	attempts           INTEGER NOT NULL,
+	PRIMARY KEY (escrow_id, slot_id)
+);
 CREATE TABLE IF NOT EXISTS accounting_counters (
 	escrow_id      TEXT    NOT NULL,
 	slot_id        INTEGER NOT NULL,
@@ -126,6 +133,7 @@ var escrowTables = []string{
 	"accounting_slot_activity",
 	"accounting_service_nonces",
 	"accounting_money",
+	"accounting_first_content",
 	"accounting_slots",
 	"accounting_escrows",
 }

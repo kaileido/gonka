@@ -111,7 +111,7 @@ func (o RaceOutcome) Sample(a AttemptOutcome) (perf.Sample, SampleExemption) {
 		ParticipantKey: a.Participant,
 		Model:          o.Model,
 		Responsive:     o.responsive(a),
-		FirstContent:   a.firstContentDelay(),
+		FirstContent:   a.FirstContentDelay(),
 
 		TimePerOutputToken: TimePerOutputToken(a),
 	}, SampleRecorded

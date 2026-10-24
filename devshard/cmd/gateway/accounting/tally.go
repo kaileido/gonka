@@ -21,6 +21,7 @@ type nonceTotals struct {
 	OutputTokens   uint64                    `json:"output_tokens"`
 	ServiceNonces  map[ServicePurpose]uint64 `json:"service_nonces"`
 	ServiceFee     uint64                    `json:"service_fee"`
+	FirstContentTiming
 }
 
 func (t *nonceTotals) add(other nonceTotals) {
@@ -36,6 +37,7 @@ func (t *nonceTotals) add(other nonceTotals) {
 	t.InputTokens += other.InputTokens
 	t.OutputTokens += other.OutputTokens
 	t.ServiceFee += other.ServiceFee
+	t.FirstContentTiming.add(other.FirstContentTiming)
 	t.ChainMissed += other.ChainMissed
 	t.ChainInvalid += other.ChainInvalid
 	t.Pending += other.Pending

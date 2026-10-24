@@ -35,6 +35,7 @@ type escrowLedger struct {
 	costs         map[uint64]nonceCost
 	folded        map[uint32]SlotMoney
 	produced      map[uint32]uint64
+	firstContent  map[uint32]FirstContentTiming
 	events        []protocolEvent
 	retired       bool
 
@@ -67,20 +68,22 @@ func newEscrowLedger(metadata EscrowMetadata) *escrowLedger {
 		costs:         make(map[uint64]nonceCost),
 		folded:        make(map[uint32]SlotMoney),
 		produced:      make(map[uint32]uint64),
+		firstContent:  make(map[uint32]FirstContentTiming),
 	}
 }
 
 type nonceRecord struct {
-	requestID    string
-	sent         bool
-	finished     bool
-	acknowledged bool
-	isCounted    bool
-	outputAdded  bool
-	raced        bool
-	sealed       bool
-	usage        Usage
-	ghostReason  string
+	requestID         string
+	sent              bool
+	finished          bool
+	acknowledged      bool
+	isCounted         bool
+	outputAdded       bool
+	firstContentTimed bool
+	raced             bool
+	sealed            bool
+	usage             Usage
+	ghostReason       string
 
 	timeoutKind   string
 	timeoutAction string
@@ -327,6 +330,7 @@ func (b *Book) RecordRace(escrowID string, attempts []Attempt) error {
 			record.logprobsDecoded = attempt.LogprobsDecoded
 			record.raced = true
 			escrow.addProduced(attempt.Nonce, record, attempt.OutputTokens)
+			escrow.addFirstContent(attempt.Nonce, record, attempt.FirstContentDelay)
 			escrow.reclassify(attempt.Nonce, record)
 			if record.sealed {
 				escrow.forgetSealed(attempt.Nonce)
