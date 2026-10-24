@@ -2,6 +2,7 @@ package nonces
 
 import (
 	"fmt"
+	"maps"
 	"path/filepath"
 	"testing"
 	"testing/synctest"
@@ -21,18 +22,25 @@ const (
 	restartSecondInputTokens = 43
 	restartOutputTokens      = 31
 	restartBothInputTokens   = restartFirstInputTokens + restartSecondInputTokens
-	crashLossBound           = time.Minute
 )
+
+var crashLossBound = time.Duration(config.Defaults().NonceAccounting.SnapshotSeconds) * time.Second
 
 type scriptedSession struct {
 	registry.EscrowSession
-	state  types.EscrowState
-	sealed map[uint64]types.InferenceRecord
+	state   types.EscrowState
+	sealed  map[uint64]types.InferenceRecord
+	lookups map[uint64]int
 }
 
-func (s *scriptedSession) SnapshotState() types.EscrowState { return s.state }
-func (s *scriptedSession) UserSession() *user.Session       { return nil }
+func (s *scriptedSession) UserSession() *user.Session { return nil }
+func (s *scriptedSession) SnapshotState() types.EscrowState {
+	snapshot := s.state
+	snapshot.Inferences = maps.Clone(s.state.Inferences)
+	return snapshot
+}
 func (s *scriptedSession) SealedInference(id uint64) (types.InferenceRecord, bool) {
+	s.lookups[id]++
 	record, kept := s.sealed[id]
 	return record, kept
 }
@@ -73,11 +81,12 @@ func twoStartedNonces() *scriptedSession {
 			LatestNonce: 2,
 			Inferences:  map[uint64]*types.InferenceRecord{1: startedRecord(1), 2: startedRecord(2)},
 		},
-		sealed: map[uint64]types.InferenceRecord{},
+		sealed:  map[uint64]types.InferenceRecord{},
+		lookups: map[uint64]int{},
 	}
 }
 
-func storedRecorder(t *testing.T, path string, snapshotSeconds int64, group []types.SlotAssignment) *Recorder {
+func storedRecorder(t *testing.T, path string, group []types.SlotAssignment) *Recorder {
 	t.Helper()
 	store, err := accounting.OpenStore(path)
 	if err != nil {
@@ -85,7 +94,7 @@ func storedRecorder(t *testing.T, path string, snapshotSeconds int64, group []ty
 	}
 	service, err := accounting.NewService(accounting.Settings{
 		Store:            store,
-		SnapshotInterval: time.Duration(snapshotSeconds) * time.Second,
+		SnapshotInterval: crashLossBound,
 		Now:              func() time.Time { return time.Unix(0, 0).UTC() },
 	})
 	if err != nil {
@@ -161,7 +170,7 @@ func assertBothNoncesCounted(t *testing.T, restored restoredLedger, when string)
 func TestAGracefulShutdownKeepsWhatTheChainRecordedSinceTheLastSweep(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "accounting.db")
 	session := twoStartedNonces()
-	ledger := storedRecorder(t, path, config.Defaults().NonceAccounting.SnapshotSeconds, session.state.Group)
+	ledger := storedRecorder(t, path, session.state.Group)
 	ledger.sweep(t.Context(), scriptedSource{session: session}, nil)
 
 	session.finishLive(1, restartFirstInputTokens)
@@ -185,13 +194,13 @@ func TestAGracefulShutdownKeepsWhatTheChainRecordedSinceTheLastSweep(t *testing.
 func TestASavedNonceSealedWhileTheGatewayWasDownFoldsTheRecordKeptAtSeal(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "accounting.db")
 	session := twoStartedNonces()
-	ledger := storedRecorder(t, path, config.Defaults().NonceAccounting.SnapshotSeconds, session.state.Group)
+	ledger := storedRecorder(t, path, session.state.Group)
 	ledger.sweep(t.Context(), scriptedSource{session: session}, nil)
 	closeService(t, ledger)
 
 	session.finishLive(1, restartFirstInputTokens)
 	session.finishAndSeal(2, restartSecondInputTokens)
-	restarted := storedRecorder(t, path, config.Defaults().NonceAccounting.SnapshotSeconds, session.state.Group)
+	restarted := storedRecorder(t, path, session.state.Group)
 	restarted.sweep(t.Context(), scriptedSource{session: session}, nil)
 	closeService(t, restarted)
 
@@ -205,7 +214,7 @@ func TestASavedNonceSealedWhileTheGatewayWasDownFoldsTheRecordKeptAtSeal(t *test
 func TestARestoreAndTheSweepsAfterItCountEveryNonceOnce(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "accounting.db")
 	session := twoStartedNonces()
-	ledger := storedRecorder(t, path, config.Defaults().NonceAccounting.SnapshotSeconds, session.state.Group)
+	ledger := storedRecorder(t, path, session.state.Group)
 	ledger.sweep(t.Context(), scriptedSource{session: session}, nil)
 	recordWonRace(t, ledger, 1)
 	closeService(t, ledger)
@@ -213,7 +222,7 @@ func TestARestoreAndTheSweepsAfterItCountEveryNonceOnce(t *testing.T) {
 	session.finishAndSeal(2, restartSecondInputTokens)
 
 	for reopening, sweeps := range []int{3, 2} {
-		restarted := storedRecorder(t, path, config.Defaults().NonceAccounting.SnapshotSeconds, session.state.Group)
+		restarted := storedRecorder(t, path, session.state.Group)
 		for range sweeps {
 			restarted.sweep(t.Context(), scriptedSource{session: session}, nil)
 			if err := restarted.service.Flush(); err != nil {
@@ -239,7 +248,7 @@ func TestACrashLosesAtMostOneMinuteOfOutputTokens(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "accounting.db")
 		session := twoStartedNonces()
-		ledger := storedRecorder(t, path, config.Defaults().NonceAccounting.SnapshotSeconds, session.state.Group)
+		ledger := storedRecorder(t, path, session.state.Group)
 		defer closeService(t, ledger)
 		recordWonRace(t, ledger, 1)
 

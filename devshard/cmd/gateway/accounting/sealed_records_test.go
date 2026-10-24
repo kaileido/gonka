@@ -29,13 +29,13 @@ func TestOnlyACostThatLeftTheLiveWindowIsListedToFold(t *testing.T) {
 		t.Fatalf("ObserveInferences(): %v", err)
 	}
 
-	leaving := book.CostsToFold(testEscrow, map[uint64]*types.InferenceRecord{6: inferences[6]})
+	leaving := book.NoncesToFold(testEscrow, map[uint64]*types.InferenceRecord{6: inferences[6]})
 
 	if !slices.Equal(leaving, []uint64{5}) {
-		t.Fatalf("CostsToFold() = %v, want [5]", leaving)
+		t.Fatalf("NoncesToFold() = %v, want [5]", leaving)
 	}
-	if unknown := book.CostsToFold("escrow-never-opened", nil); unknown != nil {
-		t.Fatalf("CostsToFold(unknown escrow) = %v, want nil", unknown)
+	if unknown := book.NoncesToFold("escrow-never-opened", nil); unknown != nil {
+		t.Fatalf("NoncesToFold(unknown escrow) = %v, want nil", unknown)
 	}
 }
 

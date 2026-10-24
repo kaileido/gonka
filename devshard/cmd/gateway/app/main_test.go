@@ -820,6 +820,7 @@ func recordedShutdownParts(listener *shutdownRecorder, recorder func(name string
 		dispatchers:     recorder("dispatchers"),
 		escrowLifecycle: recorder("escrow lifecycle"),
 		chainObserver:   recorder("chain observer"),
+		nonceSweep:      recorder("nonce sweep"),
 		sessions:        recorder("escrow sessions"),
 		events:          recorder("journal"),
 		nonceLedger:     recorder("nonce accounting"),
@@ -846,7 +847,7 @@ func TestShutdownStopsAcceptingFirstAndClosesTheStoreLast(t *testing.T) {
 		t.Fatalf("stopAll(): %v", err)
 	}
 
-	want := []string{"http server", "races", "dispatchers", "escrow lifecycle", "chain observer", "escrow sessions", "journal", "nonce accounting", "runtime params", "height follower", "store", "public api connections"}
+	want := []string{"http server", "races", "dispatchers", "escrow lifecycle", "chain observer", "nonce sweep", "escrow sessions", "journal", "nonce accounting", "runtime params", "height follower", "store", "public api connections"}
 	assertSame(t, "shutdown sequence", sequence, want)
 }
 

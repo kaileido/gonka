@@ -124,6 +124,7 @@ type shutdownParts struct {
 	dispatchers     stopper
 	escrowLifecycle stopper
 	chainObserver   stopper
+	nonceSweep      stopper
 	sessions        io.Closer
 	events          io.Closer
 	nonceLedger     io.Closer
@@ -133,7 +134,7 @@ type shutdownParts struct {
 	publicAPI       idleConnections
 }
 
-// shutdownOrder is the twelve-step contract every shutdown follows. See operations.md, "Shutdown".
+// shutdownOrder is the thirteen-step contract every shutdown follows. See operations.md, "Shutdown".
 func shutdownOrder(parts shutdownParts) []shutdownStep {
 	return []shutdownStep{
 		{name: "http server", stop: parts.listener.Shutdown},
@@ -141,6 +142,7 @@ func shutdownOrder(parts shutdownParts) []shutdownStep {
 		{name: "dispatchers", stop: waitFor(parts.dispatchers)},
 		{name: "escrow lifecycle", stop: waitFor(parts.escrowLifecycle)},
 		{name: "chain observer", stop: waitFor(parts.chainObserver)},
+		{name: "nonce sweep", stop: waitFor(parts.nonceSweep)},
 		{name: "escrow sessions", stop: closeOf(parts.sessions), needsQuiesced: true},
 		{name: "journal", stop: closeWithin(parts.events, journalCloseFloor)},
 		// After every emitter above, so the final snapshot holds the counters the run ended with.
@@ -231,6 +233,7 @@ func (g *gateway) shutdown(grace time.Duration) error {
 		dispatchers:     g.router,
 		escrowLifecycle: g.manager,
 		chainObserver:   g.observer,
+		nonceSweep:      g.nonces,
 		sessions:        g.escrows,
 		events:          g.events,
 		nonceLedger:     g.nonces,

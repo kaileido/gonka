@@ -59,6 +59,10 @@ type Recorder struct {
 	observing sync.Map
 	wake      chan struct{}
 
+	readings     sync.Mutex
+	stopSweeping context.CancelFunc
+	swept        chan struct{}
+
 	unknownEscrowFacts atomic.Uint64
 }
 

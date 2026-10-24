@@ -1,7 +1,9 @@
 package scenarios
 
 import (
+	"context"
 	"fmt"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -251,13 +253,22 @@ func TestAColdStartWithoutAnEpochCreatesNothing(t *testing.T) {
 	}
 }
 
+const (
+	ledgerDatabase         = "accounting.db"
+	participantInputTokens = 300
+	slowAnswer             = 15 * time.Second
+	beforeTheAnswers       = 12 * time.Second
+	untilTheAnswersLand    = 4 * time.Second
+	sweepsAfterTheRestart  = 30 * time.Second
+)
+
 type ledgerTokens struct {
 	input, output, counted, estimatedError uint64
 }
 
-func ledgerTokensOf(harness *gatewayHarness) ledgerTokens {
+func tokensOf(records []accounting.ParticipantRecord) ledgerTokens {
 	var tokens ledgerTokens
-	for _, record := range harness.currentGateway().Nonces().Book().Query(accounting.QueryFilter{}) {
+	for _, record := range records {
 		tokens.input += record.InputTokens
 		tokens.output += record.OutputTokens
 		tokens.counted += record.CountedNonces
@@ -266,33 +277,88 @@ func ledgerTokensOf(harness *gatewayHarness) ledgerTokens {
 	return tokens
 }
 
+func ledgerTokensOf(harness *gatewayHarness) ledgerTokens {
+	return tokensOf(harness.currentGateway().Nonces().Book().Query(accounting.QueryFilter{}))
+}
+
+func savedLedgerTokens(harness *gatewayHarness) (ledgerTokens, error) {
+	saved, err := accounting.OpenStore(filepath.Join(harness.storageDir, ledgerDatabase))
+	if err != nil {
+		return ledgerTokens{}, err
+	}
+	defer func() { _ = saved.Close() }()
+	snapshot, err := saved.Load(context.Background())
+	if err != nil {
+		return ledgerTokens{}, err
+	}
+	book := accounting.NewBook(time.Now)
+	if err := book.Restore(snapshot); err != nil {
+		return ledgerTokens{}, err
+	}
+	return tokensOf(book.Query(accounting.QueryFilter{})), nil
+}
+
+func finishedRecords(harness *gatewayHarness) int {
+	machine, built := harness.fleet.userMachine(harness.seededIDs[0])
+	if !built {
+		return 0
+	}
+	finished := 0
+	for _, record := range machine.SnapshotState().Inferences {
+		if record.Status == types.StatusFinished {
+			finished++
+		}
+	}
+	return finished
+}
+
 // Test flow:
-//  1. Boot with one funded escrow whose participants report 300 input tokens, send four requests one after another and advance thirty seconds, so the ledger sweeps their finishes.
-//  2. Note the ledger's input tokens, output tokens, counted nonces and estimated error, and assert input tokens and counted nonces are above zero.
-//  3. Restart the gateway on the same store and advance thirty seconds.
-//  4. Assert the restarted ledger holds the same four totals: nothing was lost or counted twice across the restart.
+//  1. Boot with one funded escrow whose participants answer after fifteen seconds and report 300 input tokens, send four requests at once and advance twelve seconds.
+//  2. Assert the ledger's last sweep read the requests started: nothing counted yet, their byte estimates held as estimated error.
+//  3. Let the answers land, then send four more requests one after another without advancing the clock, so the escrow holds finishes no sweep has read.
+//  4. Restart the gateway on the same store without advancing the clock; while it is down, assert the ledger the shutdown saved counts the finishes.
+//  5. Assert the restarted ledger, after its first sweep and after thirty more seconds, holds exactly the saved totals: nothing was lost or counted twice.
 func TestARestartKeepsTheLedgersTokenCounts(t *testing.T) {
 	spec := defaultSpec()
-	spec.behaviours = everyParticipant(spec.participants, participantBehaviour{inputTokens: 300})
-	var before ledgerTokens
+	spec.behaviours = everyParticipant(spec.participants, participantBehaviour{inputTokens: participantInputTokens, delay: slowAnswer})
+	var saved ledgerTokens
+	sameAsSaved := func(harness *gatewayHarness) error {
+		if restarted := ledgerTokensOf(harness); restarted != saved {
+			return fmt.Errorf("restarted ledger tokens %+v, want the %+v the shutdown saved", restarted, saved)
+		}
+		return nil
+	}
 	spec.steps = []harnessStep{
+		sendRequests{promptBytes: 200, maxTokens: 64, count: 4},
+		advance{by: beforeTheAnswers},
+		expectThat{label: "the last sweep read the requests started", verify: func(harness *gatewayHarness) error {
+			if read := ledgerTokensOf(harness); read.counted != 0 || read.estimatedError == 0 {
+				return fmt.Errorf("ledger tokens %+v while the answers are outstanding, want nothing counted and an estimated error held", read)
+			}
+			return nil
+		}},
+		changeParticipants{change: func(behaviour *participantBehaviour) { behaviour.delay = 0 }},
+		advance{by: untilTheAnswersLand},
 		sendRequests{promptBytes: 200, maxTokens: 64, count: 4, sequential: true},
-		advance{by: 30 * time.Second},
-		expectThat{label: "the ledger counted the requests' tokens", verify: func(harness *gatewayHarness) error {
-			before = ledgerTokensOf(harness)
-			if before.input == 0 || before.counted == 0 {
-				return fmt.Errorf("ledger tokens before the restart %+v, want input tokens and counted nonces above zero", before)
+		expectThat{label: "the escrow holds finishes no sweep has read", verify: func(harness *gatewayHarness) error {
+			if read, finished := ledgerTokensOf(harness), finishedRecords(harness); read.counted != 0 || finished == 0 {
+				return fmt.Errorf("ledger counted %d with %d finished records on the escrow, want 0 counted and some finished", read.counted, finished)
 			}
 			return nil
 		}},
-		restartGateway{},
-		advance{by: 30 * time.Second},
-		expectThat{label: "the restarted ledger holds the same tokens", verify: func(harness *gatewayHarness) error {
-			if after := ledgerTokensOf(harness); after != before {
-				return fmt.Errorf("ledger tokens after the restart %+v, want the %+v the run ended with", after, before)
+		restartGateway{whileDown: expectThat{label: "the shutdown saved the finishes", verify: func(harness *gatewayHarness) error {
+			var err error
+			if saved, err = savedLedgerTokens(harness); err != nil {
+				return err
+			}
+			if saved.counted == 0 || saved.input != saved.counted*participantInputTokens {
+				return fmt.Errorf("saved ledger tokens %+v, want every finish counted with its %d input tokens", saved, participantInputTokens)
 			}
 			return nil
-		}},
+		}}},
+		expectThat{label: "the restarted ledger holds the saved tokens", verify: sameAsSaved},
+		advance{by: sweepsAfterTheRestart},
+		expectThat{label: "the restarted ledger still holds the saved tokens", verify: sameAsSaved},
 	}
 	runSteps(t, spec)
 }

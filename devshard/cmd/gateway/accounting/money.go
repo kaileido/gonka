@@ -104,8 +104,8 @@ func costOf(record *types.InferenceRecord) nonceCost {
 	}
 }
 
-// CostsToFold lists the nonces whose cost an earlier reading left and the escrow no longer holds live: the ones the next reading folds.
-func (b *Book) CostsToFold(escrowID string, inferences map[uint64]*types.InferenceRecord) []uint64 {
+// NoncesToFold lists the nonces whose cost an earlier reading left and the escrow no longer holds live: the ones the next reading folds.
+func (b *Book) NoncesToFold(escrowID string, inferences map[uint64]*types.InferenceRecord) []uint64 {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	escrow, known := b.escrows[escrowID]

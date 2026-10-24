@@ -79,7 +79,7 @@ The per-weight *allowance* is the exception: it follows the raw chain phase rath
 
 ### Shutdown
 
-Twelve steps, in a fixed order, described in [`docs/operations.md`](./docs/operations.md), "Shutdown". Every step runs even after an earlier one fails, except a step marked as needing a quiesced system — that one is skipped and the skip reported, because it destroys state the steps above it may still be using. A drain step is bounded by the shutdown budget without cancelling the work inside it.
+Thirteen steps, in a fixed order, described in [`docs/operations.md`](./docs/operations.md), "Shutdown". Every step runs even after an earlier one fails, except a step marked as needing a quiesced system — that one is skipped and the skip reported, because it destroys state the steps above it may still be using. A drain step is bounded by the shutdown budget without cancelling the work inside it.
 
 Three positions in that order are load-bearing:
 
