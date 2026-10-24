@@ -102,7 +102,7 @@ func (s *Store) Save(ctx context.Context, book *Book) (err error) {
 		`INSERT OR REPLACE INTO accounting_meta (key, value) VALUES (?, ?), (?, ?), (?, ?)`,
 		metaSchemaVersion, strconv.Itoa(SchemaVersion),
 		metaUpdatedAt, updatedAt,
-		metaFirstContentWrittenAt, updatedAt,
+		metaFirstContentDistributionWrittenAt, updatedAt,
 	); err != nil {
 		return fmt.Errorf("writing accounting meta: %w", err)
 	}

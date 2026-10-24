@@ -31,16 +31,15 @@ type ModelFirstContent struct {
 
 func (m *ModelFirstContent) absorb(escrow *escrowLedger) {
 	for _, timing := range escrow.firstContent {
-		m.FirstContentTiming.add(timing)
+		m.add(timing)
 	}
 	m.FirstContentBuckets = addInto(m.FirstContentBuckets, escrow.firstContentBuckets)
 }
 
-func (m ModelFirstContent) withPercentiles() ModelFirstContent {
+func (m *ModelFirstContent) setPercentiles() {
 	m.FirstContentP50Milliseconds = m.FirstContentBuckets.percentile(firstContentMedianPercent)
 	m.FirstContentP95Milliseconds = m.FirstContentBuckets.percentile(firstContentTailPercent)
 	m.FirstContentP99Milliseconds = m.FirstContentBuckets.percentile(firstContentFarTailPercent)
-	return m
 }
 
 func (b *Book) firstContentByModel(admitted []string) map[uint64][]ModelFirstContent {
@@ -61,7 +60,8 @@ func (b *Book) firstContentByModel(admitted []string) map[uint64][]ModelFirstCon
 	byEpoch := make(map[uint64][]ModelFirstContent, len(entries))
 	for epoch, models := range entries {
 		for _, entry := range models {
-			byEpoch[epoch] = append(byEpoch[epoch], entry.withPercentiles())
+			entry.setPercentiles()
+			byEpoch[epoch] = append(byEpoch[epoch], *entry)
 		}
 		slices.SortFunc(byEpoch[epoch], func(left, right ModelFirstContent) int { return strings.Compare(left.Model, right.Model) })
 	}

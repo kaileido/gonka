@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-
-	"devshard/types"
 )
 
 const (
@@ -36,17 +34,6 @@ func recordFirstContentOn(t *testing.T, book *Book, escrowID string, attempts ..
 	}
 	if err := book.RecordRace(escrowID, attempts); err != nil {
 		t.Fatalf("RecordRace(): %v", err)
-	}
-}
-
-func openModelEscrow(t *testing.T, book *Book, escrowID, model string, epoch uint64, firstParticipant int) {
-	t.Helper()
-	slots := make([]types.SlotAssignment, 0, 4)
-	for slotID := range 4 {
-		slots = append(slots, types.SlotAssignment{SlotID: uint32(slotID), ValidatorAddress: participantFor(firstParticipant + slotID)})
-	}
-	if err := book.OpenEscrow(EscrowMetadata{EscrowID: escrowID, Model: model, CreationEpoch: epoch, Slots: slots}); err != nil {
-		t.Fatalf("OpenEscrow(%s): %v", escrowID, err)
 	}
 }
 
@@ -81,15 +68,6 @@ func modelOf(t *testing.T, epoch EpochSummary, model string) ModelFirstContent {
 	return ModelFirstContent{}
 }
 
-func bucketsJSON(t *testing.T, buckets FirstContentBuckets) string {
-	t.Helper()
-	encoded, err := json.Marshal(buckets)
-	if err != nil {
-		t.Fatalf("encoding buckets %v: %v", buckets, err)
-	}
-	return string(encoded)
-}
-
 func assertTiming(t *testing.T, level string, timing FirstContentTiming, total, attempts uint64) {
 	t.Helper()
 	if timing.FirstContentMillisecondsTotal != total || timing.FirstContentAttempts != attempts {
@@ -101,7 +79,7 @@ func assertTiming(t *testing.T, level string, timing FirstContentTiming, total, 
 func assertModel(t *testing.T, entry ModelFirstContent, total, attempts uint64, buckets string, percentiles [3]uint64) {
 	t.Helper()
 	assertTiming(t, entry.Model, entry.FirstContentTiming, total, attempts)
-	if got := bucketsJSON(t, entry.FirstContentBuckets); got != buckets {
+	if got := mustJSON(t, entry.FirstContentBuckets); got != buckets {
 		t.Fatalf("%s first_content_buckets = %s, want %s", entry.Model, got, buckets)
 	}
 	got := [3]uint64{entry.FirstContentP50Milliseconds, entry.FirstContentP95Milliseconds, entry.FirstContentP99Milliseconds}
@@ -168,14 +146,14 @@ func TestADelayLandsInTheBucketOfTheSmallestBoundItDoesNotExceed(t *testing.T) {
 		book := newTestBook(t, 4)
 		recordFirstContent(t, book, Attempt{Nonce: 5, FirstContentDelay: test.delay})
 
-		if got := bucketsJSON(t, modelOf(t, onlyEpoch(t, book), testModel).FirstContentBuckets); got != test.want {
+		if got := mustJSON(t, modelOf(t, onlyEpoch(t, book), testModel).FirstContentBuckets); got != test.want {
 			t.Fatalf("buckets after a %v delay = %s, want %s", test.delay, got, test.want)
 		}
 	}
 }
 
 // Test flow:
-//  1. For 1, 2 and 100 timed attempts with known delays, record them on slot 1 of a fresh book.
+//  1. For 1, 2, 20 and 100 timed attempts with known delays, record them on slot 1 of a fresh book.
 //  2. Assert the model's p50, p95 and p99 are the upper bounds of the buckets holding the nearest ranks, and its total and buckets hold every attempt.
 func TestThePercentilesAreTheUpperBoundOfTheBucketHoldingTheNearestRank(t *testing.T) {
 	for _, test := range []struct {
@@ -187,6 +165,11 @@ func TestThePercentilesAreTheUpperBoundOfTheBucketHoldingTheNearestRank(t *testi
 	}{
 		{"one attempt", []delayGroup{{300 * time.Millisecond, 1}}, 300, `{"355":1}`, [3]uint64{355, 355, 355}},
 		{"two attempts", []delayGroup{{300 * time.Millisecond, 1}, {500 * time.Millisecond, 1}}, 800, `{"355":1,"555":1}`, [3]uint64{355, 555, 555}},
+		{
+			"twenty attempts",
+			[]delayGroup{{50 * time.Millisecond, 10}, {200 * time.Millisecond, 9}, {2 * time.Second, 1}},
+			10*50 + 9*200 + 2000, `{"2118":1,"227":9,"60":10}`, [3]uint64{60, 227, 2118},
+		},
 		{
 			"hundred attempts",
 			[]delayGroup{{50 * time.Millisecond, 50}, {200 * time.Millisecond, 44}, {2 * time.Second, 4}, {20 * time.Second, 2}},
@@ -218,10 +201,9 @@ func TestAnAttemptPastTheLargestBoundReadsAsTheLargestBound(t *testing.T) {
 //  3. Assert model-a's entry merges both of its escrows' buckets, model-b's holds only escrow-3, and the entries come out in model order.
 //  4. Assert participant B keeps one sum and count per model, and the epoch sums every timed attempt.
 func TestTheBucketsRollUpIntoTheModelOfTheirEscrow(t *testing.T) {
-	book := NewBook(func() time.Time { return time.Unix(0, 0).UTC() })
-	openModelEscrow(t, book, testEscrow, testModel, testEpoch, 0)
-	openModelEscrow(t, book, otherEscrow, testModel, testEpoch, 4)
-	openModelEscrow(t, book, thirdEscrow, otherModel, testEpoch, 0)
+	book := newTestBook(t, 4)
+	openModelEscrow(t, book, otherEscrow, testModel, testEpoch, 4, 4)
+	openModelEscrow(t, book, thirdEscrow, otherModel, testEpoch, 4, 0)
 	recordFirstContentOn(t, book, testEscrow,
 		Attempt{Nonce: 5, FirstContentDelay: 50 * time.Millisecond},
 		Attempt{Nonce: 6, FirstContentDelay: 200 * time.Millisecond},
@@ -251,11 +233,11 @@ func TestTheBucketsRollUpIntoTheModelOfTheirEscrow(t *testing.T) {
 // Test flow:
 //  1. Open escrow-1 on model-a in epoch 7, escrow-2 on model-a in epoch 8 and escrow-3 on model-b in epoch 7, and time one attempt on each.
 //  2. Assert each epoch's model-a entry holds only its own escrow's attempt.
-//  3. Assert the epochs read filtered to model-b serves epoch 7 with the model-b entry alone.
-func TestAModelsDistributionStaysWithinItsEpochAndFilter(t *testing.T) {
+//  3. For a read filtered to model-b and one filtered to escrow-3, assert it serves epoch 7 with the model-b entry alone.
+func TestAModelsDistributionStaysWithinItsEpochAndTheFiltersNarrowTheModelList(t *testing.T) {
 	book := newTestBook(t, 4)
 	openTestEscrow(t, book, otherEscrow, testEpoch+1, 4)
-	openModelEscrow(t, book, thirdEscrow, otherModel, testEpoch, 0)
+	openModelEscrow(t, book, thirdEscrow, otherModel, testEpoch, 4, 0)
 	recordFirstContent(t, book, Attempt{Nonce: 5, FirstContentDelay: 50 * time.Millisecond})
 	recordFirstContentOn(t, book, otherEscrow, Attempt{Nonce: 5, FirstContentDelay: 2 * time.Second})
 	recordFirstContentOn(t, book, thirdEscrow, Attempt{Nonce: 5, FirstContentDelay: time.Second})
@@ -267,11 +249,14 @@ func TestAModelsDistributionStaysWithinItsEpochAndFilter(t *testing.T) {
 	}
 	assertModel(t, modelOf(t, epochs[0], testModel), 50, 1, `{"60":1}`, [3]uint64{60, 60, 60})
 	assertModel(t, modelOf(t, epochs[1], testModel), 2000, 1, `{"2118":1}`, [3]uint64{2118, 2118, 2118})
-	filtered := book.Epochs(QueryFilter{Model: otherModel})
-	if len(filtered) != 1 || len(filtered[0].FirstContentByModel) != 1 {
-		t.Fatalf("Epochs(model-b) = %+v, want epoch 7 with model-b alone", filtered)
+	for _, filter := range []QueryFilter{{Model: otherModel}, {EscrowIDs: []string{thirdEscrow}}} {
+		filtered := book.Epochs(filter)
+		if len(filtered) != 1 || filtered[0].EpochIndex != testEpoch ||
+			len(filtered[0].FirstContentByModel) != 1 || filtered[0].FirstContentByModel[0].Model != otherModel {
+			t.Fatalf("Epochs(%+v) = %+v, want epoch 7 with model-b alone", filter, filtered)
+		}
+		assertModel(t, filtered[0].FirstContentByModel[0], 1000, 1, `{"1084":1}`, [3]uint64{1084, 1084, 1084})
 	}
-	assertModel(t, filtered[0].FirstContentByModel[0], 1000, 1, `{"1084":1}`, [3]uint64{1084, 1084, 1084})
 }
 
 // Test flow:
@@ -300,24 +285,25 @@ func TestASnapshotAndAnEpochsReadDoNotShareTheLiveBuckets(t *testing.T) {
 
 	recordFirstContent(t, book, Attempt{Nonce: 9, FirstContentDelay: 300 * time.Millisecond})
 
-	if got := bucketsJSON(t, snapshot.Escrows[0].FirstContentBuckets); got != `{"355":1}` {
+	if got := mustJSON(t, snapshot.Escrows[0].FirstContentBuckets); got != `{"355":1}` {
 		t.Fatalf("snapshot buckets = %s, want the one attempt it was taken with", got)
 	}
-	if got := bucketsJSON(t, read.FirstContentBuckets); got != `{"355":1}` {
+	if got := mustJSON(t, read.FirstContentBuckets); got != `{"355":1}` {
 		t.Fatalf("epochs read buckets = %s, want the one attempt it was read with", got)
 	}
 }
 
 // Test flow:
-//  1. Record two timed attempts on slot 1 of a model-a escrow totalling 800 ms, one untimed attempt on slot 2, and two 2 s attempts on a model-b escrow.
+//  1. Record two timed attempts on slot 1 of a model-a escrow totalling 800 ms, one untimed attempt on slot 2, and two 2 s attempts and one 20 minute attempt on a model-b escrow.
 //  2. Save and reload the book.
-//  3. Assert the participant keeps its sum and count and each model keeps its own buckets and percentiles.
+//  3. Assert the participant keeps its sum and count and each model keeps its own buckets and percentiles, the overflow bucket included.
 func TestTheTimeToFirstContentSurvivesARestart(t *testing.T) {
 	book := timedBook(t)
-	openModelEscrow(t, book, otherEscrow, otherModel, testEpoch, 0)
+	openModelEscrow(t, book, otherEscrow, otherModel, testEpoch, 4, 0)
 	recordFirstContentOn(t, book, otherEscrow,
 		Attempt{Nonce: 5, FirstContentDelay: 2 * time.Second},
 		Attempt{Nonce: 9, FirstContentDelay: 2 * time.Second},
+		Attempt{Nonce: 13, FirstContentDelay: 20 * time.Minute},
 	)
 
 	restored := saveAndReload(t, book, openTestStore(t))
@@ -325,7 +311,8 @@ func TestTheTimeToFirstContentSurvivesARestart(t *testing.T) {
 	assertTiming(t, "participant", recordOf(t, restored, participantFor(1), testModel).FirstContentTiming, 800, 2)
 	epoch := onlyEpoch(t, restored)
 	assertModel(t, modelOf(t, epoch, testModel), 800, 2, `{"355":1,"555":1}`, [3]uint64{355, 555, 555})
-	assertModel(t, modelOf(t, epoch, otherModel), 4000, 2, `{"2118":2}`, [3]uint64{2118, 2118, 2118})
+	assertModel(t, modelOf(t, epoch, otherModel), 4000+uint64((20*time.Minute).Milliseconds()), 3,
+		`{"+Inf":1,"2118":2}`, [3]uint64{2118, 560519, 560519})
 }
 
 // Test flow:
@@ -461,7 +448,7 @@ func TestAStoreWrittenBeforeTheFirstContentTablesIsKeptRatherThanDropped(t *test
 	rewriteStore(t, path,
 		`DROP TABLE accounting_first_content`,
 		`DROP TABLE accounting_first_content_distribution`,
-		`DELETE FROM accounting_meta WHERE key = 'first_content_written_at'`,
+		`DELETE FROM accounting_meta WHERE key = 'first_content_distribution_written_at'`,
 	)
 
 	_, restored := reopenStore(t, path)
@@ -483,6 +470,42 @@ func TestFirstContentRowsAnotherBuildSavedAroundAreDiscarded(t *testing.T) {
 	if rows := storedFirstContentRows(t, store.db, testEscrow); rows != 0 {
 		t.Fatalf("first-content rows = %d, want none", rows)
 	}
+}
+
+// Test flow:
+//  1. Save a timed book, then reshape the store as a build that kept the buckets per slot leaves it: its rows in accounting_first_content_buckets, no distribution table, and first_content_written_at equal to updated_at.
+//  2. Reopen and load the store, record a 300 ms attempt, then save and reload the book.
+//  3. Assert the reopened ledger carries no first-content timing and the reloaded one carries the new attempt alone.
+func TestAStoreWithTheBucketsKeptPerSlotStartsItsTimingAtZero(t *testing.T) {
+	path := saveTimedStore(t)
+	rewriteStore(t, path,
+		`DROP TABLE accounting_first_content_distribution`,
+		`CREATE TABLE accounting_first_content_buckets (escrow_id TEXT NOT NULL, slot_id INTEGER NOT NULL, bucket INTEGER NOT NULL, attempts INTEGER NOT NULL, PRIMARY KEY (escrow_id, slot_id, bucket))`,
+		`INSERT INTO accounting_first_content_buckets VALUES ('escrow-1', 1, 18, 1), ('escrow-1', 1, 20, 1)`,
+		`DELETE FROM accounting_meta WHERE key = 'first_content_distribution_written_at'`,
+		`INSERT OR REPLACE INTO accounting_meta (key, value) SELECT 'first_content_written_at', value FROM accounting_meta WHERE key = 'updated_at'`,
+	)
+
+	store, restored := reopenStore(t, path)
+
+	assertUntimed(t, restored)
+	recordFirstContent(t, restored, Attempt{Nonce: 13, FirstContentDelay: 300 * time.Millisecond})
+	reloaded := saveAndReload(t, restored, store)
+	assertTiming(t, "participant", recordOf(t, reloaded, participantFor(1), testModel).FirstContentTiming, 300, 1)
+	assertModel(t, modelOf(t, onlyEpoch(t, reloaded), testModel), 300, 1, `{"355":1}`, [3]uint64{355, 355, 355})
+}
+
+// Test flow:
+//  1. Save a timed book, then add distribution rows for its escrow at indexes 51, 255 and 256, past the overflow bucket at 50.
+//  2. Reopen and load the store.
+//  3. Assert the model keeps the buckets it was saved with and none of the added rows.
+func TestABucketIndexPastTheOverflowBucketIsSkippedOnLoad(t *testing.T) {
+	path := saveTimedStore(t)
+	rewriteStore(t, path, `INSERT INTO accounting_first_content_distribution VALUES ('escrow-1', 51, 7), ('escrow-1', 255, 7), ('escrow-1', 256, 7)`)
+
+	_, restored := reopenStore(t, path)
+
+	assertModel(t, modelOf(t, onlyEpoch(t, restored), testModel), 800, 2, `{"355":1,"555":1}`, [3]uint64{355, 555, 555})
 }
 
 // Test flow:
@@ -607,7 +630,7 @@ func TestAServedEpochDecodesIntoTheLedgersOwnType(t *testing.T) {
 	if len(body.Epochs) != 1 {
 		t.Fatalf("epochs route = %d summaries, want 1", len(body.Epochs))
 	}
-	if got := bucketsJSON(t, modelOf(t, body.Epochs[0], testModel).FirstContentBuckets); got != `{"+Inf":1,"355":1,"555":1}` {
+	if got := mustJSON(t, modelOf(t, body.Epochs[0], testModel).FirstContentBuckets); got != `{"+Inf":1,"355":1,"555":1}` {
 		t.Fatalf("decoded buckets = %s, want the served ones", got)
 	}
 	var decoded FirstContentBuckets

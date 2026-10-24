@@ -34,15 +34,20 @@ func newTestBook(t *testing.T, groupSize int) *Book {
 // openTestEscrow gives every escrow the same slot-to-participant mapping.
 func openTestEscrow(t *testing.T, book *Book, escrowID string, epoch uint64, groupSize int) {
 	t.Helper()
+	openModelEscrow(t, book, escrowID, testModel, epoch, groupSize, 0)
+}
+
+func openModelEscrow(t *testing.T, book *Book, escrowID, model string, epoch uint64, groupSize, firstParticipant int) {
+	t.Helper()
 	slots := make([]types.SlotAssignment, 0, groupSize)
 	for slotID := range groupSize {
 		slots = append(slots, types.SlotAssignment{
 			SlotID:           uint32(slotID),
-			ValidatorAddress: participantFor(slotID),
+			ValidatorAddress: participantFor(firstParticipant + slotID),
 		})
 	}
 	if err := book.OpenEscrow(EscrowMetadata{
-		EscrowID: escrowID, Model: testModel, CreationEpoch: epoch, Slots: slots,
+		EscrowID: escrowID, Model: model, CreationEpoch: epoch, Slots: slots,
 	}); err != nil {
 		t.Fatalf("OpenEscrow(%s): %v", escrowID, err)
 	}

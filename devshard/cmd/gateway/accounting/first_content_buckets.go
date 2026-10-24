@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// The bucket bounds grow by a fixed factor, so a percentile read as its bucket's upper bound is at most one bucket step above the truth. See docs/accounting.md, "Time to first content".
+// See docs/accounting.md, "Time to first content".
 const (
 	firstContentSmallestBound = 10 * time.Millisecond
 	firstContentBucketGrowth  = 1.25

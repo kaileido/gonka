@@ -139,22 +139,24 @@ var escrowTables = []string{
 	"accounting_slot_activity",
 	"accounting_service_nonces",
 	"accounting_money",
-	"accounting_first_content",
-	"accounting_first_content_distribution",
+	firstContentTable,
+	firstContentDistributionTable,
 	"accounting_slots",
 	"accounting_escrows",
 }
 
 var (
 	clearedTables      = append(slices.Clone(escrowTables), "accounting_meta")
-	firstContentTables = []string{"accounting_first_content", "accounting_first_content_distribution"}
+	firstContentTables = []string{firstContentTable, firstContentDistributionTable}
 )
 
 const (
-	metaSchemaVersion         = "schema_version"
-	metaUpdatedAt             = "updated_at"
-	metaFirstContentWrittenAt = "first_content_written_at"
-	selectMeta                = `SELECT value FROM accounting_meta WHERE key = ?`
+	firstContentTable                     = "accounting_first_content"
+	firstContentDistributionTable         = "accounting_first_content_distribution"
+	metaSchemaVersion                     = "schema_version"
+	metaUpdatedAt                         = "updated_at"
+	metaFirstContentDistributionWrittenAt = "first_content_distribution_written_at"
+	selectMeta                            = `SELECT value FROM accounting_meta WHERE key = ?`
 )
 
 func discardOutdatedSchema(db *sql.DB) error {
@@ -204,10 +206,10 @@ func discardUntrustedFirstContent(db *sql.DB) error {
 }
 
 func firstContentWrittenWithLastSave(db *sql.DB) bool {
-	var updatedAt, firstContentWrittenAt string
+	var updatedAt, distributionWrittenAt string
 	if db.QueryRow(selectMeta, metaUpdatedAt).Scan(&updatedAt) != nil ||
-		db.QueryRow(selectMeta, metaFirstContentWrittenAt).Scan(&firstContentWrittenAt) != nil {
+		db.QueryRow(selectMeta, metaFirstContentDistributionWrittenAt).Scan(&distributionWrittenAt) != nil {
 		return false
 	}
-	return updatedAt == firstContentWrittenAt
+	return updatedAt == distributionWrittenAt
 }
