@@ -86,6 +86,7 @@ func (s *Store) readEscrows(ctx context.Context) (map[string]*EscrowSnapshot, []
 			stored.Money = make(map[uint32]SlotMoney)
 			stored.Produced = make(map[uint32]uint64)
 			stored.FirstContent = make(map[uint32]FirstContentTiming)
+			stored.FirstContentBuckets = make(FirstContentBuckets)
 			escrows[stored.Metadata.EscrowID] = &stored
 			order = append(order, stored.Metadata.EscrowID)
 			return nil
@@ -211,21 +212,16 @@ func (s *Store) readFirstContent(ctx context.Context, escrows map[string]*Escrow
 
 func (s *Store) readFirstContentBuckets(ctx context.Context, escrows map[string]*EscrowSnapshot) error {
 	return s.eachRow(ctx,
-		`SELECT escrow_id, slot_id, bucket, attempts FROM accounting_first_content_buckets`, "first-content buckets",
+		`SELECT escrow_id, bucket, attempts FROM accounting_first_content_distribution`, "first-content buckets",
 		func(rows *sql.Rows) error {
 			var escrowID string
-			var slotID uint32
 			var bucket, attempts uint64
-			if err := rows.Scan(&escrowID, &slotID, &bucket, &attempts); err != nil {
+			if err := rows.Scan(&escrowID, &bucket, &attempts); err != nil {
 				return err
 			}
-			escrow, known := escrows[escrowID]
-			if !known || bucket > uint64(firstContentOverflow) {
-				return nil
+			if escrow, known := escrows[escrowID]; known && bucket <= uint64(firstContentOverflow) {
+				escrow.FirstContentBuckets[FirstContentBucket(bucket)] = attempts
 			}
-			timing := escrow.FirstContent[slotID]
-			timing.FirstContentBuckets = addInto(timing.FirstContentBuckets, FirstContentBuckets{FirstContentBucket(bucket): attempts})
-			escrow.FirstContent[slotID] = timing
 			return nil
 		})
 }

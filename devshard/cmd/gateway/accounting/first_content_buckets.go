@@ -15,9 +15,10 @@ const (
 	firstContentBoundedCount  = 50
 	firstContentOverflow      = FirstContentBucket(firstContentBoundedCount)
 
-	firstContentMedianPercent = 50
-	firstContentTailPercent   = 95
-	percentScale              = 100
+	firstContentMedianPercent  = 50
+	firstContentTailPercent    = 95
+	firstContentFarTailPercent = 99
+	percentScale               = 100
 
 	noFirstContentMilliseconds uint64 = 0
 )

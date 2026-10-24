@@ -22,22 +22,23 @@ type Book struct {
 }
 
 type escrowLedger struct {
-	metadata      EscrowMetadata
-	latest        uint64
-	hostStats     map[uint32]types.HostStats
-	challenged    map[uint32]uint64
-	validations   map[uint32]uint64
-	serviceNonces map[serviceKey]uint64
-	timeouts      map[uint32]uint64
-	rejected      map[uint32]uint64
-	counters      map[CounterKey]uint64
-	nonces        map[uint64]*nonceRecord
-	costs         map[uint64]nonceCost
-	folded        map[uint32]SlotMoney
-	produced      map[uint32]uint64
-	firstContent  map[uint32]FirstContentTiming
-	events        []protocolEvent
-	retired       bool
+	metadata            EscrowMetadata
+	latest              uint64
+	hostStats           map[uint32]types.HostStats
+	challenged          map[uint32]uint64
+	validations         map[uint32]uint64
+	serviceNonces       map[serviceKey]uint64
+	timeouts            map[uint32]uint64
+	rejected            map[uint32]uint64
+	counters            map[CounterKey]uint64
+	nonces              map[uint64]*nonceRecord
+	costs               map[uint64]nonceCost
+	folded              map[uint32]SlotMoney
+	produced            map[uint32]uint64
+	firstContent        map[uint32]FirstContentTiming
+	firstContentBuckets FirstContentBuckets
+	events              []protocolEvent
+	retired             bool
 
 	feePerNonce      uint64
 	finalizingFrom   uint64
@@ -56,19 +57,20 @@ type serviceKey struct {
 // The only way to build one: a second site that forgot a map would panic on a path with no error to return.
 func newEscrowLedger(metadata EscrowMetadata) *escrowLedger {
 	return &escrowLedger{
-		metadata:      metadata,
-		hostStats:     make(map[uint32]types.HostStats),
-		challenged:    make(map[uint32]uint64),
-		validations:   make(map[uint32]uint64),
-		serviceNonces: make(map[serviceKey]uint64),
-		timeouts:      make(map[uint32]uint64),
-		rejected:      make(map[uint32]uint64),
-		counters:      make(map[CounterKey]uint64),
-		nonces:        make(map[uint64]*nonceRecord),
-		costs:         make(map[uint64]nonceCost),
-		folded:        make(map[uint32]SlotMoney),
-		produced:      make(map[uint32]uint64),
-		firstContent:  make(map[uint32]FirstContentTiming),
+		metadata:            metadata,
+		hostStats:           make(map[uint32]types.HostStats),
+		challenged:          make(map[uint32]uint64),
+		validations:         make(map[uint32]uint64),
+		serviceNonces:       make(map[serviceKey]uint64),
+		timeouts:            make(map[uint32]uint64),
+		rejected:            make(map[uint32]uint64),
+		counters:            make(map[CounterKey]uint64),
+		nonces:              make(map[uint64]*nonceRecord),
+		costs:               make(map[uint64]nonceCost),
+		folded:              make(map[uint32]SlotMoney),
+		produced:            make(map[uint32]uint64),
+		firstContent:        make(map[uint32]FirstContentTiming),
+		firstContentBuckets: make(FirstContentBuckets),
 	}
 }
 

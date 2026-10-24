@@ -120,6 +120,7 @@ type EpochSummary struct {
 	Participants  int       `json:"participants"`
 	nonceTotals
 	hostActivity
+	FirstContentByModel []ModelFirstContent `json:"first_content_by_model"`
 }
 
 // A zero field constrains nothing; epoch zero is unconstrained rather than selectable.

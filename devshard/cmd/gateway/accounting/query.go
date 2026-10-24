@@ -9,15 +9,13 @@ import (
 
 // Participant and epoch totals are aggregated on read, never stored: a stored total could only ever disagree with its own parts.
 func (b *Book) Query(filter QueryFilter) []ParticipantRecord {
-	return b.query(filter, true)
-}
-
-// Undetailed leaves out the counters, slots, latest nonces and findings, for a caller that sums the totals and throws the rest away.
-func (b *Book) query(filter QueryFilter, detailed bool) []ParticipantRecord {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
+	return b.query(b.admittedEscrows(filter), filter, true)
+}
 
-	admitted := b.admittedEscrows(filter)
+// Undetailed leaves out the counters, slots, latest nonces and findings, for a caller that sums the totals and throws the rest away. The caller holds b.mu.
+func (b *Book) query(admitted []string, filter QueryFilter, detailed bool) []ParticipantRecord {
 	records := make(map[participantIdentity]*ParticipantRecord)
 	for _, escrowID := range admitted {
 		escrow := b.escrows[escrowID]
@@ -123,15 +121,17 @@ func (f QueryFilter) admitsEscrow(escrowID string, metadata EscrowMetadata) bool
 }
 
 func (b *Book) Epochs(filter QueryFilter) []EpochSummary {
+	records, firstContentByModel := b.readEpochs(filter)
 	summaries := make(map[uint64]*EpochSummary)
-	for _, record := range b.query(filter, false) {
+	for _, record := range records {
 		summary, known := summaries[record.EpochIndex]
 		if !known {
 			summary = &EpochSummary{
-				SchemaVersion: SchemaVersion,
-				UpdatedAt:     record.UpdatedAt,
-				EpochIndex:    record.EpochIndex,
-				nonceTotals:   nonceTotals{Dispositions: make(map[Disposition]uint64), ServiceNonces: make(map[ServicePurpose]uint64)},
+				SchemaVersion:       SchemaVersion,
+				UpdatedAt:           record.UpdatedAt,
+				EpochIndex:          record.EpochIndex,
+				nonceTotals:         nonceTotals{Dispositions: make(map[Disposition]uint64), ServiceNonces: make(map[ServicePurpose]uint64)},
+				FirstContentByModel: firstContentByModel[record.EpochIndex],
 			}
 			summaries[record.EpochIndex] = summary
 		}
@@ -143,6 +143,13 @@ func (b *Book) Epochs(filter QueryFilter) []EpochSummary {
 		ordered = append(ordered, *summaries[epoch])
 	}
 	return ordered
+}
+
+func (b *Book) readEpochs(filter QueryFilter) ([]ParticipantRecord, map[uint64][]ModelFirstContent) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	admitted := b.admittedEscrows(filter)
+	return b.query(admitted, filter, false), b.firstContentByModel(admitted)
 }
 
 func (s *EpochSummary) absorb(record ParticipantRecord) {
@@ -286,7 +293,7 @@ func (e *escrowLedger) slots(escrowID string) []SlotRecord {
 				OutputTokens:       e.produced[slotID],
 				ServiceNonces:      serviceBySlot[slotID],
 				ServiceFee:         serviceBySlot[slotID].fee(e.feePerNonce),
-				firstContentReport: reportFirstContent(e.firstContent[slotID]),
+				FirstContentTiming: e.firstContent[slotID],
 			},
 			hostActivity: hostActivity{
 				InFlight:             aggregate.inFlight,

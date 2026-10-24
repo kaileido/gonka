@@ -28,8 +28,8 @@ const (
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	insertFirstContent = `INSERT INTO accounting_first_content (escrow_id, slot_id, total_milliseconds, attempts)
 		 VALUES (?, ?, ?, ?)`
-	insertFirstContentBucket = `INSERT INTO accounting_first_content_buckets (escrow_id, slot_id, bucket, attempts)
-		 VALUES (?, ?, ?, ?)`
+	insertFirstContentBucket = `INSERT INTO accounting_first_content_distribution (escrow_id, bucket, attempts)
+		 VALUES (?, ?, ?)`
 	insertCounter = `INSERT INTO accounting_counters
 		 (escrow_id, slot_id, disposition, ghost_reason, timeout_kind, timeout_action, timeout_reason,
 		  terminal, phase, slow_receipt, slow_chunk, clock_drifted, slow_decode, logprobs_decoded, count)
@@ -191,12 +191,10 @@ func writeEscrow(ctx context.Context, writers rowWriters, escrow EscrowSnapshot)
 		); err != nil {
 			return fmt.Errorf("writing first-content timing for slot %d of %s: %w", slotID, identity, err)
 		}
-		for _, bucket := range slices.Sorted(maps.Keys(timing.FirstContentBuckets)) {
-			if _, err := writers.firstContentBucket.ExecContext(ctx,
-				identity, slotID, bucket, timing.FirstContentBuckets[bucket],
-			); err != nil {
-				return fmt.Errorf("writing first-content bucket %d for slot %d of %s: %w", bucket, slotID, identity, err)
-			}
+	}
+	for _, bucket := range slices.Sorted(maps.Keys(escrow.FirstContentBuckets)) {
+		if _, err := writers.firstContentBucket.ExecContext(ctx, identity, bucket, escrow.FirstContentBuckets[bucket]); err != nil {
+			return fmt.Errorf("writing first-content bucket %d of %s: %w", bucket, identity, err)
 		}
 	}
 	for _, counter := range escrow.Counters {

@@ -74,12 +74,11 @@ CREATE TABLE IF NOT EXISTS accounting_first_content (
 	attempts           INTEGER NOT NULL,
 	PRIMARY KEY (escrow_id, slot_id)
 );
-CREATE TABLE IF NOT EXISTS accounting_first_content_buckets (
+CREATE TABLE IF NOT EXISTS accounting_first_content_distribution (
 	escrow_id TEXT    NOT NULL,
-	slot_id   INTEGER NOT NULL,
 	bucket    INTEGER NOT NULL,
 	attempts  INTEGER NOT NULL,
-	PRIMARY KEY (escrow_id, slot_id, bucket)
+	PRIMARY KEY (escrow_id, bucket)
 );
 CREATE TABLE IF NOT EXISTS accounting_counters (
 	escrow_id      TEXT    NOT NULL,
@@ -141,14 +140,14 @@ var escrowTables = []string{
 	"accounting_service_nonces",
 	"accounting_money",
 	"accounting_first_content",
-	"accounting_first_content_buckets",
+	"accounting_first_content_distribution",
 	"accounting_slots",
 	"accounting_escrows",
 }
 
 var (
 	clearedTables      = append(slices.Clone(escrowTables), "accounting_meta")
-	firstContentTables = []string{"accounting_first_content", "accounting_first_content_buckets"}
+	firstContentTables = []string{"accounting_first_content", "accounting_first_content_distribution"}
 )
 
 const (
