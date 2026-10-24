@@ -20,7 +20,7 @@ func markFinished(t *testing.T, ledger *Recorder, escrowID string, nonces ...uin
 }
 
 func recorderFor(service *accounting.Service) *Recorder {
-	return &Recorder{service: service, readingLock: make(chan struct{}, 1)}
+	return newRecorder(service, nil)
 }
 
 func newLedgerForTest(t *testing.T) *Recorder {

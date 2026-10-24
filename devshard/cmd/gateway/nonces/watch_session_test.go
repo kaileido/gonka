@@ -24,7 +24,7 @@ func (silentJournal) DiffComposed(string, *types.Diff) {}
 //  2. Watch the same escrow again on the session it was published with afterwards.
 //  3. Assert the ledger now watches the new session: the mark names the session it was set on, so a stale one never keeps a re-published escrow unwatched.
 func TestAReplacedSessionOfTheSameEscrowIsWatched(t *testing.T) {
-	recorder := &Recorder{}
+	recorder := recorderFor(nil)
 	retired, republished := &user.Session{}, &user.Session{}
 
 	recorder.watchDiffs("escrow-1", watchedSession{session: retired}, silentJournal{})

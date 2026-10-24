@@ -117,11 +117,15 @@ func (n *Recorder) hostCapability(participant, model string) accounting.HostCapa
 	return accounting.HostCapability{}
 }
 
+func newRecorder(service *accounting.Service, epochs EpochSource) *Recorder {
+	return &Recorder{service: service, epochs: epochs, wake: make(chan struct{}, 1), readingLock: make(chan struct{}, 1)}
+}
+
 func Open(settings config.NonceAccounting, storageDir string, epochs EpochSource, now func() time.Time) *Recorder {
 	if !settings.Enabled {
 		return nil
 	}
-	ledger := &Recorder{epochs: epochs, wake: make(chan struct{}, 1), readingLock: make(chan struct{}, 1)}
+	ledger := newRecorder(nil, epochs)
 	store, openErr := accounting.OpenStore(DatabasePath(storageDir))
 	if openErr != nil {
 		logging.Error("nonce accounting could not open its store", "error", openErr)

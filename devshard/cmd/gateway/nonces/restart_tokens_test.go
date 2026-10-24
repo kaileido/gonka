@@ -3,7 +3,6 @@ package nonces
 import (
 	"fmt"
 	"maps"
-	"path/filepath"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -32,15 +31,15 @@ type scriptedSession struct {
 	sealed  map[uint64]types.InferenceRecord
 	lookups map[uint64]int
 
-	snapshotTaken func()
+	onSnapshot func()
 }
 
 func (s *scriptedSession) UserSession() *user.Session { return nil }
 func (s *scriptedSession) SnapshotState() types.EscrowState {
 	snapshot := s.state
 	snapshot.Inferences = maps.Clone(s.state.Inferences)
-	if s.snapshotTaken != nil {
-		s.snapshotTaken()
+	if s.onSnapshot != nil {
+		s.onSnapshot()
 	}
 	return snapshot
 }
@@ -173,7 +172,7 @@ func assertBothNoncesCounted(t *testing.T, restored restoredLedger, when string)
 //  3. Shut down the way the gateway does: the registry hands the session to `EscrowClosing`, then the ledger closes and writes.
 //  4. Assert the saved ledger, read with no sweep after it, holds both nonces' real input tokens, no estimated error, and the escrow not retired.
 func TestAGracefulShutdownKeepsWhatTheChainRecordedSinceTheLastSweep(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "accounting.db")
+	path := DatabasePath(t.TempDir())
 	session := twoStartedNonces()
 	ledger := storedRecorder(t, path, session.state.Group)
 	ledger.sweep(t.Context(), scriptedSource{session: session}, nil)
@@ -197,7 +196,7 @@ func TestAGracefulShutdownKeepsWhatTheChainRecordedSinceTheLastSweep(t *testing.
 //  2. Finish nonce 1 live and finish and seal nonce 2 while the gateway is down, reopen the ledger on the same store and sweep once.
 //  3. Assert the ledger holds both nonces' real input tokens and no estimated error.
 func TestASavedNonceSealedWhileTheGatewayWasDownFoldsTheRecordKeptAtSeal(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "accounting.db")
+	path := DatabasePath(t.TempDir())
 	session := twoStartedNonces()
 	ledger := storedRecorder(t, path, session.state.Group)
 	ledger.sweep(t.Context(), scriptedSource{session: session}, nil)
@@ -217,7 +216,7 @@ func TestASavedNonceSealedWhileTheGatewayWasDownFoldsTheRecordKeptAtSeal(t *test
 //  2. Finish nonce 1 live and finish and seal nonce 2, reopen the ledger and sweep three times with a write after each, then reopen it again and sweep twice more.
 //  3. Assert input tokens, counted nonces and output tokens equal one count of each nonce after every reopening.
 func TestARestoreAndTheSweepsAfterItCountEveryNonceOnce(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "accounting.db")
+	path := DatabasePath(t.TempDir())
 	session := twoStartedNonces()
 	ledger := storedRecorder(t, path, session.state.Group)
 	ledger.sweep(t.Context(), scriptedSource{session: session}, nil)
@@ -251,7 +250,7 @@ func TestARestoreAndTheSweepsAfterItCountEveryNonceOnce(t *testing.T) {
 //  4. Assert the store held the first race's tokens within the interval, lost only the second until the next write, and held both after it.
 func TestACrashLosesAtMostOneSnapshotIntervalOfOutputTokens(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "accounting.db")
+		path := DatabasePath(t.TempDir())
 		session := twoStartedNonces()
 		ledger := storedRecorder(t, path, session.state.Group)
 		defer closeService(t, ledger)
