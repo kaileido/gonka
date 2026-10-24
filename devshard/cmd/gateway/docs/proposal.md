@@ -42,7 +42,7 @@ Structural evidence:
 
 - Changing the external HTTP API. Broker- and participant-facing routes and schemas stay.
 - Building KV-cache affinity. An extension point only; the feature is a separate proposal.
-- Preserving single-escrow mode, its top-level route aliases, or the legacy state layout.
+- Preserving single-escrow mode, its top-level route aliases, or devshardctl's state layout.
 - A latency or throughput target. Both are set by hosts and the chain, not by this code.
 
 ## 5. Options considered
@@ -111,7 +111,7 @@ Five consecutive runs, non-overlapping ranges.
 | today, built under `GOEXPERIMENT=jsonv2` | 509 256 | 388 150 | 5 948 |
 | rewritten on `encoding/json/v2` | 528 175 | **299 948** | 6 017 |
 
-The memory regression goes away exactly: **−68 304 B (−18.5%)** against the ordinary build, landing back on the ~299 KB the legacy gateway held. Time is the obstacle, and it is not the rewrite's: building the *unchanged* code under the experiment costs **+46.9%** on its own, while the rewrite costs **+3.7%** against that same build. All of the memory is won at encode; all of the time is lost in the experimental decoder.
+The memory regression goes away exactly: **−68 304 B (−18.5%)** against the ordinary build, landing back on the ~299 KB devshardctl held. Time is the obstacle, and it is not the rewrite's: building the *unchanged* code under the experiment costs **+46.9%** on its own, while the rewrite costs **+3.7%** against that same build. All of the memory is won at encode; all of the time is lost in the experimental decoder.
 
 Equivalence was proven before the numbers were read: 84 body-and-intent combinations byte-identical, including a `seed` beyond `float64` (9007199254740993) and an escaped stripped key (`"\u006cogprobs"`). It needs four options plus one unmarshaler, because v2 has no exported `UseNumber`: raw numbers are preserved by intercepting them in `WithUnmarshalers`, and duplicate names, invalid UTF-8, deterministic key order and JS escaping must each be asked for by name to match what v1 did by default.
 
@@ -122,7 +122,7 @@ Equivalence was proven before the numbers were read: 84 body-and-intent combinat
 | risk | mitigation |
 |---|---|
 | a second implementation diverges from observed behaviour | old tests kept as contracts; golden-parity harness for filters |
-| cutover loses escrow state | state rebuilt from `DEVSHARDS_JSON` and the admin import endpoint; the legacy database is not migrated |
+| cutover loses escrow state | state rebuilt from `DEVSHARDS_JSON` and the admin import endpoint; devshardctl's database is not migrated |
 | operators carry stale configuration | every variable the gateway kept from devshardctl is read under devshardctl's name, parsed as devshardctl parsed it; the ones it dropped are listed as not read in [operations.md](./operations.md), "Variable names" |
 | defects reachable only under real load | staged rollout on one node with log review after each burst — the source of section 8's measurements |
 

@@ -2,7 +2,7 @@
 
 The scenario tests run the real gateway — composed by [`app.Compose`](../app/composed.go), as `run` composes it — inside a `testing/synctest` bubble against a fake chain (`chain_test.go`) and real in-process hosts (`fleet_test.go`). An escrow's whole life (create, drain, timeout votes, settle, prune) runs on fake time, in seconds of wall time. Each test is a list of steps; after every step the harness checks every invariant below and stops at the first violation.
 
-They exist because the escrow lifecycle fails in the seams between the planner, the scheduler, the hosts and the chain, where a unit test of one package cannot see. The design they check is [`docs/superpowers/specs/2026-10-03-gateway-escrow-planner-design.md`](../../../../docs/superpowers/specs/2026-10-03-gateway-escrow-planner-design.md); its catalogue IDs are mapped to tests at the end of this file and nowhere else.
+They exist because the escrow lifecycle fails in the seams between the planner, the scheduler, the hosts and the chain, where a unit test of one package cannot see. The design they check is the gateway escrow planner design of 2026-10-03, which is not in this repository; its catalogue IDs are mapped to tests at the end of this file and nowhere else, and [`docs/escrows.md`](../docs/escrows.md) describes the escrow lifecycle as built.
 
 ## Running them
 

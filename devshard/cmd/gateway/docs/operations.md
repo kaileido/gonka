@@ -208,7 +208,7 @@ Signing keys are addressed **by the name of the variable that holds them**, neve
 | `DEVSHARD_HEIGHTSYNC_HEARTBEAT` | false | whether a quiet escrow composes heartbeat turns; on only for true/1/on. A finished request's leftovers settle either way ([`docs/escrows.md`](escrows.md), "Height sync") |
 | `DEVSHARD_REQUIRE_HEIGHT_SEED` | true | whether a session chases a host-signed tip from the moment it opens and reports `seed_incomplete` when it cannot. It does not refuse requests — see [`docs/escrows.md`](escrows.md), "Height sync". Off in the e2e stand |
 | `DEVSHARD_HEIGHTSYNC_K` / `DEVSHARD_HEIGHTSYNC_SLOTS` | 10 / 1 | the anchor cadence carried on the height-sync envelope |
-| `DEVSHARD_QUIET_SETTLE_DELAY` | 5m | how long a session keeps a finished request's leftovers for the next request before composing them on its own nonce; the legacy gateway reads the same variable, and the test stand sets `5s` |
+| `DEVSHARD_QUIET_SETTLE_DELAY` | 5m | how long a session keeps a finished request's leftovers for the next request before composing them on its own nonce; devshardctl reads the same variable, and the test stand sets `5s` |
 | `DEVSHARD_GATEWAY_CHAIN_ORACLE` | false | whether the gateway follows mainnet itself, from `NODE_MANAGER_ADDR`, the chain RPC and gRPC. It is not what the gateway stamps from — it only labels how much a carried tip is trusted ([`heights/README.md`](../heights/README.md)) |
 | `DEVSHARD_NODE_MANAGER_ADDR` / `NODE_MANAGER_ADDR` | localhost:9400 | node-manager's address, resolved once (`runtimeparams.SettingsFromEnv`) for both its readers: the runtime-params feed and, when it is on, the height follower. Unreachable is not fatal to either — the feed polls the chain instead, less promptly, and the follower fails over to the chain RPC and gRPC |
 | `DEVSHARD_PARAMS_SOURCE` | auto | which feed answers for governance: `auto` prefers the long poll with a chain fallback, `chain` polls the chain alone and dials no node manager |
@@ -450,7 +450,7 @@ Route labels are **templated** (`/devshard/{id}/…`), never per-escrow, so card
 
 ### Metric changes
 
-A dashboard or alert outside this repository may query a family this gateway does not emit; each row names the one to query instead, or says why none exists. The legacy gateway emits 95 families, and 19 `devshard_accounting_*` more with its stats on; 53 of the 95, and all 19, are not emitted here. The `participant_window_*` and `escalation_decisions_total` rows are this gateway's own former families.
+A dashboard or alert outside this repository may query a family this gateway does not emit; each row names the one to query instead, or says why none exists. devshardctl emits 95 families, and 19 `devshard_accounting_*` more with its stats on; 53 of the 95, and all 19, are not emitted here. The `participant_window_*` and `escalation_decisions_total` rows are this gateway's own former families.
 
 | Not emitted | Query instead |
 | --- | --- |
@@ -504,7 +504,7 @@ A dashboard or alert outside this repository may query a family this gateway doe
 | `devshard_speculative_decisions_total` | `devshard_gateway_attempts_started_total{role="primary"}` by `reason`: `primary` started alone, `primary_suspicious` and `primary_degraded` were hedged from the start |
 | `devshard_speculative_attempt_starts_total` | `devshard_gateway_attempts_started_total{role="speculative"}` by `reason` |
 | `devshard_gateway_slot_decisions_total` | `decision="real_send"` is `devshard_gateway_attempts_started_total`; `decision="ghost_no_send"` is `devshard_gateway_ghost_nonces_burned_total`; a warmup probe is the journal line `escrow warmed` |
-| `devshard_gateway_error_miss_rejects_total` | not emitted, non-goal: the legacy gateway never incremented it; a rejected error miss is `devshard_gateway_error_miss_verify_rejects_total{cause,completeness}` |
+| `devshard_gateway_error_miss_rejects_total` | not emitted, non-goal: devshardctl never incremented it; a rejected error miss is `devshard_gateway_error_miss_verify_rejects_total{cause,completeness}` |
 | `devshard_gateway_chat_cache_total` | `result="hit"` is `devshard_gateway_cache_hits_total` (no `model`); `stored` and each `skipped_<reason>` are `devshard_gateway_cache_results_total{model,result}`, the refusal named without the `skipped_` prefix |
 | `devshard_gateway_startup_skipped_escrow` | not emitted, non-goal: an escrow whose session will not open is retried every lifecycle tick rather than disabled for the process's life; the journal line `devshard could not be opened, retrying` names it |
 | `devshard_gateway_host_ping_ticks_skipped_total` | `devshard_gateway_host_ping_ticks_total{outcome="skipped"}` |
@@ -536,7 +536,7 @@ The gateway emits neither label nor the value below, so a selector that names on
 - `devshard_gateway_user_requests_with_hidden_failure_total` has no `severity`: every hidden failure it counts is on a protected request.
 - `devshard_gateway_host_ping_up`, `devshard_gateway_host_ping_rtt_seconds`, `devshard_gateway_host_ping_last_probe_timestamp_seconds` and `devshard_gateway_host_clock_divergence_seconds` have no `host`: the host is `participant_key`, the participant's key rather than the dial address.
 - `devshard_gateway_attempts_started_total` has no `quarantine_mode`: the per-host window and cut-off replaced quarantine.
-- `devshard_gateway_host_ping_ticks_total` counts skipped waves too: what the legacy family counted is `{outcome="started"}`.
+- `devshard_gateway_host_ping_ticks_total` counts skipped waves too: what the devshardctl family counted is `{outcome="started"}`.
 - `outcome="due"` on `devshard_gateway_timeout_sweep_total`: `applied` plus `failed` is what a tick found, short of it only on a tick that shutdown cut off mid-round.
 
 Participant-labelled race series — `devshard_gateway_attempts_*`, `devshard_gateway_attempt_failures_total`, `devshard_gateway_timeout_actions_total`, `devshard_gateway_stream_carry_overflow_total` and every `devshard_gateway_participant_*` family except the breaker gauge — are deleted once their participant and model go unwritten for `perf_host_staleness_seconds`. A host that returns afterwards starts from fresh counters, which `rate()` reads as a reset.
@@ -634,13 +634,13 @@ A chat request whose prompt and `max_tokens` its model's context cannot hold is 
 
 ## One process per escrow set
 
-The gateway is one process per set of escrows. It keeps its state in its own SQLite store under `DEVSHARD_STORAGE_DIR` and shares it with no other process: two gateways given the same escrows, through `DEVSHARDS_JSON` or the admin API, would each sequence their nonces and each ledger would see only its own share, which the chain rejects as diverged state. The legacy gateway's Postgres settings (`PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`, `PG_CONNECT_TIMEOUT`) are not read; when any is set the gateway logs `legacy Postgres settings are ignored` at boot, naming them (`env.LegacyPostgresVariablesSet`).
+The gateway is one process per set of escrows. It keeps its state in its own SQLite store under `DEVSHARD_STORAGE_DIR` and shares it with no other process: two gateways given the same escrows, through `DEVSHARDS_JSON` or the admin API, would each sequence their nonces and each ledger would see only its own share, which the chain rejects as diverged state. The devshardctl gateway's Postgres settings (`PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`, `PG_CONNECT_TIMEOUT`) are not read; when any is set the gateway logs `legacy Postgres settings are ignored` at boot, naming them (`env.LegacyPostgresVariablesSet`).
 
-## Moving from the legacy gateway
+## Moving from devshardctl
 
-The gateway reads none of the legacy gateway's state: its own store starts empty ([`rules.md`](./rules.md), "Migrated state"), so whatever the legacy store alone remembers is lost at the switch. That is its open create commitments, its parked and settle-pending escrows, and every escrow it served without a session directory the new gateway can import. An escrow nobody settles is pruned by the chain two epochs after the one that funded it and its amount split across its group, so the operator loses the refund. Cut over in this order:
+The gateway reads none of devshardctl's state: its own store starts empty ([`rules.md`](./rules.md), "Migrated state"), so whatever devshardctl's store alone remembers is lost at the switch. That is its open create commitments, its parked and settle-pending escrows, and every escrow it served without a session directory the new gateway can import. An escrow nobody settles is pruned by the chain two epochs after the one that funded it and its amount split across its group, so the operator loses the refund. Cut over in this order:
 
-1. Stop new work on the legacy gateway (its kill switch), and let its in-flight requests finish.
+1. Stop new work on devshardctl (its kill switch), and let its in-flight requests finish.
 2. Settle every escrow it holds, or let it drain and settle them, and wait until it reports no open create commitment and no settle-pending escrow.
 3. Copy the session directory of every escrow still worth serving and import each through `POST /v1/admin/devshards/import`, naming the variable that holds its key; an escrow with nothing left to serve is settled in step 2 instead.
 4. Set `model_access` through the settings override before opening the gateway to clients: every model starts admin-only ("Who may call what").

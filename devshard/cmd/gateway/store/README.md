@@ -22,7 +22,7 @@ One SQLite database at `<storageDir>/gateway.db`, holding what must survive a re
 
 ## Opening the database
 
-`Open` creates the storage dir, opens `gateway.db`, refuses a legacy database, and migrates.
+`Open` creates the storage dir, opens `gateway.db`, refuses a devshardctl database, and migrates.
 
 The connection pragmas — `journal_mode(WAL)`, `synchronous(NORMAL)`, `busy_timeout(5000)` — travel in the DSN rather than as statements issued after the open. They are per-connection, and a connection the pool recreates would come back without them, silently, with `busy_timeout` at 0 and `synchronous` back at FULL. In the DSN every connection carries them by construction.
 
@@ -32,7 +32,7 @@ Migrations run in order, one transaction per version, and the applied version is
 
 The list is append-only: a version number names whatever statement held that slot when a database recorded it, so replacing an entry leaves every database that already recorded its number without the new statement. The slot that holds `chain_epoch` is one an earlier build spent on `on_hold`, so a migration that only adds a column is matched by name as well (`applyMigration`): it is skipped when the column is already there, and after the numbered pass every such migration below the recorded version is run again and adds whatever column is missing. Any other kind of migration has no such repair, so append, never replace.
 
-### The legacy-database guard
+### The devshardctl-database guard
 
 A `gateway.db` of a different schema can share two table names with this one at different columns, so migrating it would adopt that shape instead of failing. A database with no `schema_version` that holds any of `gateway_settings`, `gateway_devshards`, `gateway_suspicious_hosts` or `participant_throttle_state` is refused with `ErrLegacyDatabase`: this gateway never creates those tables, so their presence is proof rather than a guess.
 
