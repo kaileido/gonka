@@ -134,7 +134,7 @@ These rules bind new and changed code; an existing comment in a file you touch m
 
 ## Scenario harness
 
-[`scenarios/`](./scenarios/) runs the composed gateway inside a `testing/synctest` bubble against a fake chain and real in-process hosts, so an escrow's whole life runs on fake time in seconds of wall time. Add a test there for every lifecycle change, named as the sentence it proves, with no catalogue ID; give it a row in [`scenarios/README.md`](./scenarios/README.md), which also says how to run them, how a known bug is pinned, and which test covers each ID of the escrow-planner design's catalogue.
+[`scenarios/`](./scenarios/) runs the composed gateway inside a `testing/synctest` bubble against a fake chain and real in-process hosts, so an escrow's whole life runs on fake time in seconds of wall time. Add a test there for every lifecycle change, named as the sentence it proves; give it a row in [`scenarios/README.md`](./scenarios/README.md), which also says how to run them and how a known bug is pinned.
 
 ## Commits
 
