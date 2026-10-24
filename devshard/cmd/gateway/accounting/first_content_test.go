@@ -476,6 +476,8 @@ func TestFirstContentRowsAnotherBuildSavedAroundAreDiscarded(t *testing.T) {
 //  1. Save a timed book, then reshape the store as a build that kept the buckets per slot leaves it: its rows in accounting_first_content_buckets, no distribution table, and first_content_written_at equal to updated_at.
 //  2. Reopen and load the store, record a 300 ms attempt, then save and reload the book.
 //  3. Assert the reopened ledger carries no first-content timing and the reloaded one carries the new attempt alone.
+//  4. Close the store, reopen and load it again.
+//  5. Assert the ledger loaded from the reopened store still carries the 300 ms attempt alone.
 func TestAStoreWithTheBucketsKeptPerSlotStartsItsTimingAtZero(t *testing.T) {
 	path := saveTimedStore(t)
 	rewriteStore(t, path,
@@ -493,6 +495,14 @@ func TestAStoreWithTheBucketsKeptPerSlotStartsItsTimingAtZero(t *testing.T) {
 	reloaded := saveAndReload(t, restored, store)
 	assertTiming(t, "participant", recordOf(t, reloaded, participantFor(1), testModel).FirstContentTiming, 300, 1)
 	assertModel(t, modelOf(t, onlyEpoch(t, reloaded), testModel), 300, 1, `{"355":1}`, [3]uint64{355, 355, 355})
+
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close(): %v", err)
+	}
+	_, reopened := reopenStore(t, path)
+
+	assertTiming(t, "participant", recordOf(t, reopened, participantFor(1), testModel).FirstContentTiming, 300, 1)
+	assertModel(t, modelOf(t, onlyEpoch(t, reopened), testModel), 300, 1, `{"355":1}`, [3]uint64{355, 355, 355})
 }
 
 // Test flow:

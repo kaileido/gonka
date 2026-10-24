@@ -131,21 +131,20 @@ CREATE TABLE IF NOT EXISTS accounting_costs (
 );
 `
 
-var escrowTables = []string{
-	"accounting_costs",
-	"accounting_nonces",
-	"accounting_counters",
-	"accounting_host_stats",
-	"accounting_slot_activity",
-	"accounting_service_nonces",
-	"accounting_money",
-	firstContentTable,
-	firstContentDistributionTable,
-	"accounting_slots",
-	"accounting_escrows",
-}
-
 var (
+	escrowTables = []string{
+		"accounting_costs",
+		"accounting_nonces",
+		"accounting_counters",
+		"accounting_host_stats",
+		"accounting_slot_activity",
+		"accounting_service_nonces",
+		"accounting_money",
+		firstContentTable,
+		firstContentDistributionTable,
+		"accounting_slots",
+		"accounting_escrows",
+	}
 	clearedTables      = append(slices.Clone(escrowTables), "accounting_meta")
 	firstContentTables = []string{firstContentTable, firstContentDistributionTable}
 )

@@ -14,7 +14,6 @@ func (b *Book) Query(filter QueryFilter) []ParticipantRecord {
 	return b.query(b.admittedEscrows(filter), filter, true)
 }
 
-// Undetailed leaves out the counters, slots, latest nonces and findings, for a caller that sums the totals and throws the rest away.
 func (b *Book) query(admitted []string, filter QueryFilter, detailed bool) []ParticipantRecord {
 	records := make(map[participantIdentity]*ParticipantRecord)
 	for _, escrowID := range admitted {
