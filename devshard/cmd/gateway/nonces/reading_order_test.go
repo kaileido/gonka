@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 
 	"devshard/cmd/gateway/registry"
 )
@@ -77,20 +78,85 @@ func TestASweepCannotUndoAReadingTakenWhileItRan(t *testing.T) {
 	}
 }
 
-func holdTheFirstEpochLookupUntilCancelled(ledger *Recorder) <-chan struct{} {
-	paused := make(chan struct{})
-	signal := sync.OnceFunc(func() { close(paused) })
+func holdTheFirstSnapshot(session *scriptedSession, release <-chan struct{}) <-chan struct{} {
+	held := make(chan struct{})
+	var taken atomic.Bool
+	session.snapshotTaken = func() {
+		if taken.CompareAndSwap(false, true) {
+			close(held)
+			<-release
+		}
+	}
+	return held
+}
+
+// Test flow:
+//  1. Inside a synctest bubble, sweep two started nonces into a stored ledger, then finish nonce 1 live.
+//  2. Start a second sweep and hold it inside the session snapshot it reads from.
+//  3. While it is held, seal nonce 2, unpublish the escrow and call `EscrowRetiring` from another goroutine, then wait until every goroutine is blocked.
+//  4. Assert the retirement has not returned: its reading waits for the sweep's.
+//  5. Release the sweep, wait for both readings, close the ledger and read the store.
+//  6. Assert both nonces are counted once with no estimated error, and the escrow stays retired.
+func TestARetirementReadingWaitsForTheSweepsReadingInProgress(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "accounting.db")
+		session := twoStartedNonces()
+		source := &unpublishableSource{session: session}
+		ledger := storedRecorder(t, path, session.state.Group)
+		ledger.sweep(t.Context(), source, nil)
+		session.finishLive(1, restartFirstInputTokens)
+
+		release := make(chan struct{})
+		held := holdTheFirstSnapshot(session, release)
+		swept := make(chan struct{})
+		go func() {
+			defer close(swept)
+			ledger.sweep(t.Context(), source, nil)
+		}()
+		<-held
+		session.finishAndSeal(2, restartSecondInputTokens)
+		source.unpublished.Store(true)
+		retired := make(chan struct{})
+		go func() {
+			defer close(retired)
+			ledger.EscrowRetiring(tokenEscrowID, session)
+		}()
+		synctest.Wait()
+
+		select {
+		case <-retired:
+			t.Errorf("the retirement took its reading while the sweep held a snapshot")
+		default:
+		}
+		close(release)
+		<-swept
+		<-retired
+		closeService(t, ledger)
+
+		restored := storedLedger(t, path)
+		assertBothNoncesCounted(t, restored, "after a retirement waited for the sweep")
+		if !restored.retired {
+			t.Fatalf("the escrow was saved serving after it retired")
+		}
+	})
+}
+
+func holdTheFirstEpochLookupUntilCancelled(ledger *Recorder) (paused, cancelled <-chan struct{}) {
+	pausedSignal, cancelledSignal := make(chan struct{}), make(chan struct{})
+	pause := sync.OnceFunc(func() { close(pausedSignal) })
+	cancel := sync.OnceFunc(func() { close(cancelledSignal) })
 	ledger.SetCreationEpoch(func(ctx context.Context, _ string) (uint64, bool) {
-		signal()
+		pause()
 		<-ctx.Done()
+		cancel()
 		return 0, false
 	})
-	return paused
+	return pausedSignal, cancelledSignal
 }
 
 // Test flow:
 //  1. Sweep two started nonces into a stored ledger, finish nonce 1 live, and start the sweep loop, holding its next sweep inside a creation-epoch lookup that ends only when its context does.
-//  2. Shut down in the gateway's order: `Stop` the sweep, then seal nonce 2, empty the live set and hand the session to `EscrowClosing`, as `Registry.Close` does, and wake the sweep.
+//  2. Shut down in the gateway's order: `Stop` the sweep and assert it cancelled the held lookup before returning, then seal nonce 2, empty the live set and hand the session to `EscrowClosing`, as `Registry.Close` does, and wake the sweep.
 //  3. Close the ledger and read the store.
 //  4. Assert both nonces are counted once with no estimated error and the escrow was not retired.
 func TestAShutdownRetiresNoEscrowInTheLedger(t *testing.T) {
@@ -101,11 +167,16 @@ func TestAShutdownRetiresNoEscrowInTheLedger(t *testing.T) {
 	ledger.wake = make(chan struct{}, 1)
 	ledger.sweep(t.Context(), source, nil)
 	session.finishLive(1, restartFirstInputTokens)
-	paused := holdTheFirstEpochLookupUntilCancelled(ledger)
+	paused, cancelled := holdTheFirstEpochLookupUntilCancelled(ledger)
 	ledger.StartSweeping(t.Context(), source, nil)
 	<-paused
 
 	ledger.Stop()
+	select {
+	case <-cancelled:
+	default:
+		t.Fatalf("Stop returned while the sweep's epoch lookup was still running")
+	}
 	session.finishAndSeal(2, restartSecondInputTokens)
 	source.unpublished.Store(true)
 	ledger.EscrowClosing(tokenEscrowID, session)

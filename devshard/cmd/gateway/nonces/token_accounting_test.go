@@ -146,7 +146,7 @@ func observedBy(t *testing.T, escrow *liveEscrow, reported func(book *accounting
 		t.Fatalf("NewService(): %v", err)
 	}
 	t.Cleanup(func() { _ = service.Close() })
-	ledger := &Recorder{service: service}
+	ledger := recorderFor(service)
 
 	snapshot := escrow.machine.SnapshotState()
 	if err := service.Book.OpenEscrow(accounting.EscrowMetadata{

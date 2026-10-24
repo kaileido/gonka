@@ -59,7 +59,7 @@ type Recorder struct {
 	observing sync.Map
 	wake      chan struct{}
 
-	readings     sync.Mutex
+	readingLock  chan struct{}
 	stopSweeping context.CancelFunc
 	swept        chan struct{}
 
@@ -121,8 +121,8 @@ func Open(settings config.NonceAccounting, storageDir string, epochs EpochSource
 	if !settings.Enabled {
 		return nil
 	}
-	ledger := &Recorder{epochs: epochs, wake: make(chan struct{}, 1)}
-	store, openErr := accounting.OpenStore(filepath.Join(storageDir, nonceAccountingDatabase))
+	ledger := &Recorder{epochs: epochs, wake: make(chan struct{}, 1), readingLock: make(chan struct{}, 1)}
+	store, openErr := accounting.OpenStore(DatabasePath(storageDir))
 	if openErr != nil {
 		logging.Error("nonce accounting could not open its store", "error", openErr)
 		return nil
@@ -144,6 +144,11 @@ func Open(settings config.NonceAccounting, storageDir string, epochs EpochSource
 		ReadHeaderTimeout: nonceAccountingReadHeaderTimeout,
 	}
 	return ledger
+}
+
+// DatabasePath returns the path of the ledger's store under storageDir.
+func DatabasePath(storageDir string) string {
+	return filepath.Join(storageDir, nonceAccountingDatabase)
 }
 
 func (n *Recorder) currentEpoch(context.Context) (uint64, error) {

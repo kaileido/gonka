@@ -31,12 +31,17 @@ type scriptedSession struct {
 	state   types.EscrowState
 	sealed  map[uint64]types.InferenceRecord
 	lookups map[uint64]int
+
+	snapshotTaken func()
 }
 
 func (s *scriptedSession) UserSession() *user.Session { return nil }
 func (s *scriptedSession) SnapshotState() types.EscrowState {
 	snapshot := s.state
 	snapshot.Inferences = maps.Clone(s.state.Inferences)
+	if s.snapshotTaken != nil {
+		s.snapshotTaken()
+	}
 	return snapshot
 }
 func (s *scriptedSession) SealedInference(id uint64) (types.InferenceRecord, bool) {
@@ -103,7 +108,7 @@ func storedRecorder(t *testing.T, path string, group []types.SlotAssignment) *Re
 	if err := service.Book.OpenEscrow(accounting.EscrowMetadata{EscrowID: tokenEscrowID, Model: "llama", CreationEpoch: 7, Slots: group}); err != nil {
 		t.Fatalf("OpenEscrow() = %v, want nil", err)
 	}
-	return &Recorder{service: service}
+	return recorderFor(service)
 }
 
 type restoredLedger struct {
@@ -241,10 +246,10 @@ func TestARestoreAndTheSweepsAfterItCountEveryNonceOnce(t *testing.T) {
 
 // Test flow:
 //  1. Open a stored ledger with the default snapshot interval inside a synctest bubble and record a won race with output tokens on nonce 1.
-//  2. Let one minute pass and record a second race on nonce 2.
-//  3. Read the store without closing the ledger, as a kill -9 leaves it, before and after another minute passes.
-//  4. Assert the store held the first race's tokens within the minute, lost only the second until the next write, and held both after it.
-func TestACrashLosesAtMostOneMinuteOfOutputTokens(t *testing.T) {
+//  2. Let one snapshot interval pass and record a second race on nonce 2.
+//  3. Read the store without closing the ledger, as a kill -9 leaves it, before and after another snapshot interval passes.
+//  4. Assert the store held the first race's tokens within the interval, lost only the second until the next write, and held both after it.
+func TestACrashLosesAtMostOneSnapshotIntervalOfOutputTokens(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "accounting.db")
 		session := twoStartedNonces()
@@ -255,16 +260,16 @@ func TestACrashLosesAtMostOneMinuteOfOutputTokens(t *testing.T) {
 		time.Sleep(crashLossBound)
 		synctest.Wait()
 		recordWonRace(t, ledger, 2)
-		afterOneMinute := storedLedger(t, path).totals.OutputTokens
+		afterOneInterval := storedLedger(t, path).totals.OutputTokens
 		time.Sleep(crashLossBound)
 		synctest.Wait()
-		afterTwoMinutes := storedLedger(t, path).totals.OutputTokens
+		afterTwoIntervals := storedLedger(t, path).totals.OutputTokens
 
-		if afterOneMinute != restartOutputTokens {
-			t.Fatalf("stored output_tokens = %d a minute after the first race, want its %d", afterOneMinute, restartOutputTokens)
+		if afterOneInterval != restartOutputTokens {
+			t.Fatalf("stored output_tokens = %d one snapshot interval after the first race, want its %d", afterOneInterval, restartOutputTokens)
 		}
-		if afterTwoMinutes != 2*restartOutputTokens {
-			t.Fatalf("stored output_tokens = %d a minute after the second race, want both races' %d", afterTwoMinutes, 2*restartOutputTokens)
+		if afterTwoIntervals != 2*restartOutputTokens {
+			t.Fatalf("stored output_tokens = %d one snapshot interval after the second race, want both races' %d", afterTwoIntervals, 2*restartOutputTokens)
 		}
 	})
 }

@@ -3,13 +3,13 @@ package scenarios
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"devshard/cmd/gateway/accounting"
 	"devshard/cmd/gateway/chain"
 	"devshard/cmd/gateway/liquidity"
+	"devshard/cmd/gateway/nonces"
 	"devshard/types"
 )
 
@@ -254,12 +254,11 @@ func TestAColdStartWithoutAnEpochCreatesNothing(t *testing.T) {
 }
 
 const (
-	ledgerDatabase         = "accounting.db"
 	participantInputTokens = 300
 	slowAnswer             = 15 * time.Second
 	beforeTheAnswers       = 12 * time.Second
 	untilTheAnswersLand    = 4 * time.Second
-	sweepsAfterTheRestart  = 30 * time.Second
+	afterTheRestart        = 30 * time.Second
 )
 
 type ledgerTokens struct {
@@ -282,7 +281,7 @@ func ledgerTokensOf(harness *gatewayHarness) ledgerTokens {
 }
 
 func savedLedgerTokens(harness *gatewayHarness) (ledgerTokens, error) {
-	saved, err := accounting.OpenStore(filepath.Join(harness.storageDir, ledgerDatabase))
+	saved, err := accounting.OpenStore(nonces.DatabasePath(harness.storageDir))
 	if err != nil {
 		return ledgerTokens{}, err
 	}
@@ -298,7 +297,7 @@ func savedLedgerTokens(harness *gatewayHarness) (ledgerTokens, error) {
 	return tokensOf(book.Query(accounting.QueryFilter{})), nil
 }
 
-func finishedRecords(harness *gatewayHarness) int {
+func finishedRecordCount(harness *gatewayHarness) int {
 	machine, built := harness.fleet.userMachine(harness.seededIDs[0])
 	if !built {
 		return 0
@@ -341,7 +340,7 @@ func TestARestartKeepsTheLedgersTokenCounts(t *testing.T) {
 		advance{by: untilTheAnswersLand},
 		sendRequests{promptBytes: 200, maxTokens: 64, count: 4, sequential: true},
 		expectThat{label: "the escrow holds finishes no sweep has read", verify: func(harness *gatewayHarness) error {
-			if read, finished := ledgerTokensOf(harness), finishedRecords(harness); read.counted != 0 || finished == 0 {
+			if read, finished := ledgerTokensOf(harness), finishedRecordCount(harness); read.counted != 0 || finished == 0 {
 				return fmt.Errorf("ledger counted %d with %d finished records on the escrow, want 0 counted and some finished", read.counted, finished)
 			}
 			return nil
@@ -357,7 +356,7 @@ func TestARestartKeepsTheLedgersTokenCounts(t *testing.T) {
 			return nil
 		}}},
 		expectThat{label: "the restarted ledger holds the saved tokens", verify: sameAsSaved},
-		advance{by: sweepsAfterTheRestart},
+		advance{by: afterTheRestart},
 		expectThat{label: "the restarted ledger still holds the saved tokens", verify: sameAsSaved},
 	}
 	runSteps(t, spec)

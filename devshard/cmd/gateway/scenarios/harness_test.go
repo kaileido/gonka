@@ -128,7 +128,7 @@ type changeParticipants struct {
 
 type moveChain struct{ move func(*fakeChain) }
 
-// restartGateway shuts the gateway down and composes it again on the same store directory, chain and hosts; work the shutdown abandoned dies with the process, and whileDown, when set, judges the storage the shutdown left.
+// restartGateway shuts the gateway down and composes it again on the same store directory, chain and hosts; work the shutdown abandoned dies with the process.
 type restartGateway struct {
 	whileDown expectThat
 }

@@ -91,7 +91,7 @@ func TestANonceSealedBetweenSweepsIsClosedByTheRecordKeptAtSeal(t *testing.T) {
 		t.Fatalf("NewService(): %v", err)
 	}
 	t.Cleanup(func() { _ = service.Close() })
-	ledger := &Recorder{service: service}
+	ledger := recorderFor(service)
 	escrow := newLiveEscrow(t, 3)
 	snapshot := escrow.machine.SnapshotState()
 	if err := service.Book.OpenEscrow(accounting.EscrowMetadata{EscrowID: tokenEscrowID, Model: "llama", CreationEpoch: 7, Slots: snapshot.Group}); err != nil {

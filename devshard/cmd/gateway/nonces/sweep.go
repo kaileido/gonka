@@ -142,7 +142,7 @@ func (n *Recorder) sweep(ctx context.Context, escrows EscrowSource, diffs DiffJo
 			continue
 		}
 		epoch, known := n.epochOf(ctx, state.ID)
-		session, read := n.readRoutable(escrows, state, epoch, known)
+		session, read := n.takeReadingIfRoutable(escrows, state, epoch, known)
 		if !read {
 			continue
 		}
@@ -157,9 +157,9 @@ func (n *Recorder) sweep(ctx context.Context, escrows EscrowSource, diffs DiffJo
 	}
 }
 
-func (n *Recorder) readRoutable(escrows EscrowSource, state registry.EscrowState, epoch uint64, epochKnown bool) (registry.EscrowSession, bool) {
-	n.readings.Lock()
-	defer n.readings.Unlock()
+func (n *Recorder) takeReadingIfRoutable(escrows EscrowSource, state registry.EscrowState, epoch uint64, epochKnown bool) (registry.EscrowSession, bool) {
+	n.readingLock <- struct{}{}
+	defer func() { <-n.readingLock }()
 	session, routable := escrows.RoutableSession(state.ID)
 	if !routable {
 		return nil, false
@@ -196,7 +196,7 @@ func (n *Recorder) EscrowRetiring(escrowID string, session registry.EscrowSessio
 		return
 	}
 	if session != nil {
-		n.read(escrowID, session)
+		n.takeLockedReading(escrowID, session)
 	}
 	n.service.Book.RetireEscrow(escrowID)
 	n.observing.Delete(escrowID)
@@ -208,12 +208,12 @@ func (n *Recorder) EscrowClosing(escrowID string, session registry.EscrowSession
 	if n == nil || n.service == nil || session == nil {
 		return
 	}
-	n.read(escrowID, session)
+	n.takeLockedReading(escrowID, session)
 }
 
-func (n *Recorder) read(escrowID string, session registry.EscrowSession) {
-	n.readings.Lock()
-	defer n.readings.Unlock()
+func (n *Recorder) takeLockedReading(escrowID string, session registry.EscrowSession) {
+	n.readingLock <- struct{}{}
+	defer func() { <-n.readingLock }()
 	n.takeReading(escrowID, session.SnapshotState(), session)
 }
 
@@ -262,7 +262,7 @@ func newSealedRecords(session registry.EscrowSession) *sealedRecords {
 }
 
 func (s *sealedRecords) lookup(nonce uint64) (types.InferenceRecord, bool) {
-	if earlier, looked := s.lookups[nonce]; looked {
+	if earlier, cached := s.lookups[nonce]; cached {
 		return earlier.record, earlier.kept
 	}
 	record, kept := s.session.SealedInference(nonce)

@@ -19,6 +19,10 @@ func markFinished(t *testing.T, ledger *Recorder, escrowID string, nonces ...uin
 	}
 }
 
+func recorderFor(service *accounting.Service) *Recorder {
+	return &Recorder{service: service, readingLock: make(chan struct{}, 1)}
+}
+
 func newLedgerForTest(t *testing.T) *Recorder {
 	t.Helper()
 	service, err := accounting.NewService(accounting.Settings{
@@ -27,7 +31,7 @@ func newLedgerForTest(t *testing.T) *Recorder {
 	if err != nil {
 		t.Fatalf("NewService(): %v", err)
 	}
-	ledger := &Recorder{service: service}
+	ledger := recorderFor(service)
 	t.Cleanup(func() { _ = ledger.service.Close() })
 	if err := ledger.service.Book.OpenEscrow(accounting.EscrowMetadata{
 		EscrowID: "escrow-1",
