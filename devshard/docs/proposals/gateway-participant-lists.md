@@ -42,7 +42,7 @@ Neither is modified by this proposal.
 
 ### 1.1 The allowlist has no source but the override document
 
-`PUT /v1/admin/settings` parses the body as a complete `Overrides` document ([api/admin.go:58](../../cmd/gateway/api/admin.go)), `Reconfigure` rebuilds the config from env plus that document ([operations.go:198-208](../../cmd/gateway/operations.go)), and `SaveOverrides` replaces the stored row whole ([store/overrides.go:29-42](../../cmd/gateway/store/overrides.go)). Replace semantics is deliberate — the audit line says "settings replaced".
+`PUT /v1/admin/settings` parses the body as a complete `Overrides` document ([api/admin.go:58](../../cmd/gateway/api/admin.go)), `Reconfigure` rebuilds the config from env plus that document ([app/operations.go:224-234](../../cmd/gateway/app/operations.go)), and `SaveOverrides` replaces the stored row whole ([store/overrides.go:29-42](../../cmd/gateway/store/overrides.go)). Replace semantics is deliberate — the audit line says "settings replaced".
 
 `participant_allowlist` is the one narrowing signal with no env value and no default behind that document; `config/build.go:126` is its only writer in the tree. So any later PUT that does not resend the key — an operator changing `max_tokens_cap`, a deploy script, a UI posting only the fields it knows — drops it, and the scheduler takes the "no allowlist" branch everywhere: `refusedByAllowlist` returns nil, `outsideAllowlist` reads nil as "no block", and `reachableByAllowlist` admits every escrow. The failure is silent and fails open. A fresh or lost SQLite volume does the same, since `LoadOverrides` returns the zero value on `ErrNoRows`.
 
@@ -60,7 +60,7 @@ A standing narrator over config swaps was built first and removed. `journal/guar
 
 ### 1.2 The warmup prober sends a paid inference to whoever holds the slot
 
-`dispatchProbe` discards the binding entirely — `func(user.HostBinding) (user.InferenceParams, bool, error)` — and accepts whatever slot the nonce landed on ([warmup/warmup.go:173](../../cmd/gateway/warmup/warmup.go)), then sends it with `SendOnly`. A fresh escrow is at nonce 1, so the probe always lands on slot 1 of the group, whoever that is. It is a real chat-completions inference charged to the escrow, it is on by default (`WarmNewEscrows: true`), and the prober is constructed from the config holder alone with no knowledge of the scheduler ([routing.go:48](../../cmd/gateway/routing.go)).
+`dispatchProbe` discards the binding entirely — `func(user.HostBinding) (user.InferenceParams, bool, error)` — and accepts whatever slot the nonce landed on ([warmup/warmup.go:173](../../cmd/gateway/warmup/warmup.go)), then sends it with `SendOnly`. A fresh escrow is at nonce 1, so the probe always lands on slot 1 of the group, whoever that is. It is a real chat-completions inference charged to the escrow, it is on by default (`WarmNewEscrows: true`), and the prober is constructed from the config holder alone with no knowledge of the scheduler ([app/routing.go:58](../../cmd/gateway/app/routing.go)).
 
 This is the one path on which a non-allowlisted participant receives an actual inference request.
 

@@ -50,7 +50,7 @@ var (
 		"/devshard/{id}/v1/debug/sync-hosts",
 	}
 
-	// deliberateDivergences are the only labels allowed to sit outside the legacy domain.
+	// deliberateDivergences are the only labels allowed to sit outside the devshardctl domain.
 	deliberateDivergences = []string{otherRouteLabel, "/v1/requests/{id}", "/v1/admin/hosts", "/v1/admin/devshards/settle", "/v1/admin/devshards/deactivate", "/v1/admin/filters", "/v1/admin/filters/presets", "/v1/admin/filters/{model}"}
 )
 
@@ -135,7 +135,7 @@ func TestEveryInstrumentedLabelIsALegacyLabelOrADeclaredDivergence(t *testing.T)
 		if slices.Contains(legacyRouteLabels, route.label) || slices.Contains(deliberateDivergences, route.label) {
 			continue
 		}
-		t.Fatalf("route %q emits label %q, which is neither a legacy label nor a declared divergence", route.pattern, route.label)
+		t.Fatalf("route %q emits label %q, which is neither a devshardctl label nor a declared divergence", route.pattern, route.label)
 	}
 }
 

@@ -110,7 +110,7 @@ var migrations = []string{
 	);`,
 }
 
-// ErrLegacyDatabase reports a gateway.db this gateway did not create, and legacyOnlyTables are the tables that prove it; both are kept out of the migrations block. See README.md, "The legacy-database guard".
+// ErrLegacyDatabase reports a gateway.db this gateway did not create, and legacyOnlyTables are the tables that prove it; both are kept out of the migrations block. See README.md, "The devshardctl-database guard".
 var (
 	ErrLegacyDatabase = errors.New("storage dir holds a gateway.db this gateway did not create; point the gateway at an empty storage dir")
 	legacyOnlyTables  = []string{"gateway_settings", "gateway_devshards", "gateway_suspicious_hosts", "participant_throttle_state"}

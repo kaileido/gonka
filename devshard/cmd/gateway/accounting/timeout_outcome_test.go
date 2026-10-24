@@ -7,7 +7,7 @@ import (
 )
 
 // Test flow:
-//  1. For each table case of a legacy action and reason string, call `timeoutOutcomeOf`.
+//  1. For each table case of a devshardctl action and reason string, call `timeoutOutcomeOf`.
 //  2. Assert the settled flag matches the case's expectation.
 //  3. Where settled is true, assert the returned outcome matches the case's wanted `TimeoutOutcome`.
 func TestTimeoutOutcomeOfSpeaksTheOldLedgersVocabulary(t *testing.T) {

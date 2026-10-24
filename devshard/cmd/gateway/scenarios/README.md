@@ -2,7 +2,7 @@
 
 The scenario tests run the real gateway — composed by [`app.Compose`](../app/composed.go), as `run` composes it — inside a `testing/synctest` bubble against a fake chain (`chain_test.go`) and real in-process hosts (`fleet_test.go`). An escrow's whole life (create, drain, timeout votes, settle, prune) runs on fake time, in seconds of wall time. Each test is a list of steps; after every step the harness checks every invariant below and stops at the first violation.
 
-They exist because the escrow lifecycle fails in the seams between the planner, the scheduler, the hosts and the chain, where a unit test of one package cannot see. The design they check is [`docs/superpowers/specs/2026-10-03-gateway-escrow-planner-design.md`](../../../../docs/superpowers/specs/2026-10-03-gateway-escrow-planner-design.md); its catalogue IDs are mapped to tests at the end of this file and nowhere else.
+They exist because the escrow lifecycle fails in the seams between the planner, the scheduler, the hosts and the chain, where a unit test of one package cannot see. [`docs/escrows.md`](../docs/escrows.md) describes the escrow lifecycle as built.
 
 ## Running them
 
@@ -37,18 +37,18 @@ Every new test gets a row below; `TestEveryTestHasAReadmeRow` fails otherwise.
 
 Checked after every step by `invariants_test.go`. A test that legitimately breaks one (an escrow the chain drops unsettled) sets `allowUnsettled`, which exempts `settlement match`'s prune check and `settle deadline`.
 
-| Key | What it checks | Design |
-| --- | --- | --- |
-| `money identity` | every session's balance, fees, host costs and open reservations add up to the escrow's funded amount | I1 |
-| `settlement match` | a settled escrow's costs and fees equal its session's and its refund is the amount less both; no escrow is pruned holding its whole amount | I2 |
-| `settle deadline` | no escrow is still unsettled once the chain's effective epoch reaches its epoch + 2 | I3 |
-| `unsettled budget` | a model never has more unsettled escrows on chain than its budget | I4 |
-| `create reason` | every create is stored with a role and narrated with a reason that the fleet's state at that moment justifies | I5 |
-| `active escrow routes` | every active row that is not parked for settlement is routable | I6 |
-| `inactive escrow unroutable` | no inactive row is routable | I7 |
-| `request ends` | no request stays open past the execution timeout and its buffer | I8 |
-| `ledger match` | the nonce ledger's charged, reserved and challenged money equals the chain's settlement and the live sessions | I9 |
-| `ledger classifies every nonce` | at rest, the nonce ledger has classified every nonce the chain assigned a live escrow, and never more; a gap is read again until none remains or the reservation return bound passes, so a fact still on its way is not read as a lost one | I9 |
+| Key | What it checks |
+| --- | --- |
+| `money identity` | every session's balance, fees, host costs and open reservations add up to the escrow's funded amount |
+| `settlement match` | a settled escrow's costs and fees equal its session's and its refund is the amount less both; no escrow is pruned holding its whole amount |
+| `settle deadline` | no escrow is still unsettled once the chain's effective epoch reaches its epoch + 2 |
+| `unsettled budget` | a model never has more unsettled escrows on chain than its budget |
+| `create reason` | every create is stored with a role and narrated with a reason that the fleet's state at that moment justifies |
+| `active escrow routes` | every active row that is not parked for settlement is routable |
+| `inactive escrow unroutable` | no inactive row is routable |
+| `request ends` | no request stays open past the execution timeout and its buffer |
+| `ledger match` | the nonce ledger's charged, reserved and challenged money equals the chain's settlement and the live sessions |
+| `ledger classifies every nonce` | at rest, the nonce ledger has classified every nonce the chain assigned a live escrow, and never more; a gap is read again until none remains or the reservation return bound passes, so a fact still on its way is not read as a lost one |
 
 ## The tests
 
@@ -249,7 +249,7 @@ Checked after every step by `invariants_test.go`. A test that legitimately break
 
 | Test | Why it exists | What it checks |
 | --- | --- | --- |
-| `TestRandomSeedsKeepEveryInvariant` | the catalogue cannot list every interleaving; random fleets and actions find the rest | every invariant holds after every step of sixteen seeds, within the wall budget |
+| `TestRandomSeedsKeepEveryInvariant` | the tests above script a fixed set of interleavings; random fleets and actions find the rest | every invariant holds after every step of sixteen seeds, within the wall budget |
 | `FuzzEscrowLifecycle` | the fuzzer explores action lists the seeds never generate | every invariant holds for every decoded action list |
 | `TestSeedsAreDeterministicAndInsideTheirRanges` | a seed must reproduce its actions to be a regression | the same seed gives the same shape and actions, inside their ranges |
 | `TestTheLedgerPrunesSettledEscrowsPastItsRetention` | a shrunk seed: retention pruning must not read as a missing ledger | every invariant holds and the ledger did prune a charged settled escrow |
@@ -262,81 +262,3 @@ Checked after every step by `invariants_test.go`. A test that legitimately break
 | Test | Why it exists | What it checks |
 | --- | --- | --- |
 | `TestEveryTestHasAReadmeRow` | the next test must get a row here too | every test in the directory has exactly one row and every row names a test |
-
-## Design catalogue cross-reference
-
-The design's catalogue IDs, for a reader coming from the spec. Tests carry no IDs.
-
-| ID | Test |
-| --- | --- |
-| A1 | `TestAFullContextBurstIsServedWithoutAReplacementStorm` |
-| A2 | `TestDepletedEscrowsInOneTickFundAtMostTwoEscrows` |
-| A3 | `TestAHedgeDoesNotRetireAnEscrowThatCanStillPay` |
-| A4 | `TestInputHeavyRequestsReturnTheirSurplusAtFinish` |
-| A5 | `TestSmallRequestsSpendTheStarvedResidueFirst` |
-| A6 | `TestAStandbyTakenWhileEveryRegularIsStarvedIsRepaired` |
-| A8 | `TestAThousandMoneyShortPicksBuyNoMoreThanTheBucket` |
-| A10 | `TestAnEscrowBelowItsFloorServesWhatItCanPay` |
-| A11 | `TestAPinnedHedgeThatCannotPayNeverMarksItsEscrow` |
-| A12 | `TestFiftyWakeupsInFifteenSecondsBuyAtMostTwo` |
-| A13 | `TestRefusedAttemptsReplacedOnOneEscrowStayWithinItsHosts` |
-| A14 | `TestPicksRacingANearlyEmptyEscrowParkNothing` |
-| A15 | `TestALargeOrUnmeasuredPromptIsNotRefusedAtIngest` |
-| A16 | `TestTokenDenseInputKeepsTheGuarantee` |
-| A17 | `TestAnOverContextPromptIsAnsweredAfterTheFirstRefusal`, `TestAShorterHostsContextRefusalIsRetriedOnALongerHost`, `TestAPromptOverTheModelIsNotRetriedPastAShorterHost` |
-| B1 | `TestARefusedNonceIsRefundedByTheVote` |
-| B2 | `TestAPendingRecordWhoseLadderARestartCutIsStuckNotWaitedOn` |
-| B3 | `TestAStalledExecutorIsLateThenSwept` |
-| B5 | `TestTwoHundredOverdueRecordsDrainWithinTheSweepBudget` |
-| B6 | `TestARefusalVoteShortOfQuorumIsAccountedStuck` |
-| B7 | `TestALongAnswerIsLateThenLeavesTheOpenSet` |
-| C1 | `TestAChallengedRecordIsStuckMoney` |
-| C2 | `TestAnInvalidatedInferenceReturnsItsCost` |
-| C3 | `TestChallengedMoneyDrivesNoCreate` |
-| C4 | `TestAnEscrowSettlesInsideItsWindowWithValidationsUndone` |
-| C6 | `TestAStarvedEscrowIdleButForAChallengeIsRetired` |
-| C7 | `TestAMajorityHolderVotingInvalidIsHandledWhicheverWayTheHostsResolveIt` |
-| D1 | `TestTheBridgeWindowOpensOverAStarvedFleet` |
-| D2 | `TestAnEscrowCreatedDuringPoCSettlesByItsChainEpoch` |
-| D3 | `TestABridgeWindowCrossingPoCStartFundsOneTempSet` |
-| D4 | `TestAStandbyShortfallInsideTheWindowIsRepairedAfterIt` |
-| D5 | `TestALateSetNewValidatorsLosesNoEscrow` |
-| D6 | `TestConfirmationPoCBlocksEveryPlannerCreate` |
-| D8 | `TestAnUnknownEffectiveEpochReadsDeadlinesEarly` |
-| D9 | `TestATempThatSurvivedItsBridgeIsRetiredAtItsDeadline` |
-| D10 | `TestABridgeWithoutRoomKeepsItsRegulars` |
-| D11 | `TestAnUnknownEffectiveEpochOutsidePoCStillSettlesBeforeTheSwitch` |
-| D12 | `TestMoneyShortDuringPoCCreatesNothing` |
-| D13 | `TestTheTickAfterPoCFundsRegularsBeforeTempsRetire` |
-| E1 | `TestAShortWalletParksResidueInsteadOfLooping` |
-| E2 | `TestAReplacementWhoseAnswerWasLostIsRecovered` |
-| E3 | `TestASettleThatNeverCommitsIsRebroadcastBeforeTheDeadline`, `TestASettleTheChainNeverTakesIsNarratedAndItsRowDropped`, `TestASettleThatNeverCommitsIsRebroadcastInRealBlockTime` |
-| E4 | `TestLookupsDownForTenMinutesDeactivateNothing` |
-| E5 | `TestAnEscrowPrunedWithSettlementOffIsMarkedGoneAndCounted` |
-| E7 | `TestTwoModelsSharingAWalletAreRepairedInTurn` |
-| E8 | `TestATokenPriceRiseReevaluatesWithoutAStorm` |
-| E9 | `TestAChainThatRejectsEveryCreateIsNotLoopedOn` |
-| E10 | `TestAContextRiseMisconfiguresWithoutACreateLoop` |
-| E11 | `TestAStarvedEscrowGoneFromChainLeavesTheCount` |
-| F1 | `TestARestartOverStarvedEscrowsCreatesNoStorm` |
-| F2 | `TestACreateWhoseAnswerALostRestartIsRecoveredOnce` |
-| F3 | `TestASettleWhoseAnswerARestartLostIsNotSettledTwice` |
-| F4 | `TestARestartRebuildsTheClassesOfStartedRecords` |
-| F5 | `TestARestartAcrossTheEpochSwitchKeepsTheDeadline` |
-| F7 | `TestARestartBeforeTheNewColumnsAreResolvedResolvesThemLazily` |
-| F8 | `TestNoSurplusRetireBeforeTheDemandWindowFills` |
-| F10 | `TestAColdStartWithoutAnEpochCreatesNothing` |
-| G1 | `TestEscrowsFallingBelowFullAreRepairedWithinTheBucket` |
-| G4 | `TestABurstKeepsEveryPlannerCreateWithinTheBucket` |
-| G5 | `TestALoweredBudgetParksTheLeastFreeStarvedOnePerTick` |
-| G6 | `TestALoweredTargetRetiresSurplusOnePerTick` |
-| G7 | `TestARaisedAnswerCapReevaluatesWithoutAStorm` |
-| G8 | `TestAModelRemovedFromRotationServesThenSettlesAtItsDeadline` |
-| G12 | `TestAnOperatorDeactivatedEscrowIsCountedAndNarratedAtItsMargin` |
-| G13 | `TestAnOperatorRegisteredRowResolvesLazilyAndIsCounted` |
-| G14 | `TestOperatorActionsBesideThePlanner` |
-| G15 | `TestTheDeadlineSettleRunsWithRotationOff`, `TestTheDeadlineSettleRunsWithAnUnparsableModelsList` |
-| G16 | `TestWithSettlementOffAnEscrowAtItsMarginIsNarratedNotParked` |
-| G17 | `TestTwoHoursOfSmallTrafficKeepTheGuaranteeAndSpendTheResidue` |
-| H3 | `TestAForcedSettleLeavesTheLedgerChargedAsTheChain` |
-| H4 | `TestTwoModelsKeepIndependentGuarantees` |
