@@ -32,6 +32,7 @@ type Deps struct {
 	Publications     publications
 	Narrator         escrowNarrator
 	Retiring         retiringObserver
+	Closing          closingObserver
 	ServedBindings   servedBindingObserver
 	PeerRPC          peerRPCAdoption
 	Now              func() time.Time
@@ -58,6 +59,7 @@ type Registry struct {
 	publications     publications
 	narrator         escrowNarrator
 	retiring         retiringObserver
+	closingObserver  closingObserver
 	servedBindings   servedBindingObserver
 	peerRPC          peerRPCAdoption
 	now              func() time.Time
@@ -92,6 +94,7 @@ func New(deps Deps) *Registry {
 		publications:     deps.Publications,
 		narrator:         deps.Narrator,
 		retiring:         deps.Retiring,
+		closingObserver:  deps.Closing,
 		servedBindings:   deps.ServedBindings,
 		peerRPC:          deps.PeerRPC,
 		now:              deps.Now,
@@ -421,6 +424,7 @@ func (r *Registry) Close() error {
 
 	errs := make([]error, 0, len(closing))
 	for _, entry := range closing {
+		r.observeClosing(entry)
 		_, err := entry.close()
 		errs = append(errs, err)
 	}

@@ -76,7 +76,7 @@ func Defaults() Config {
 		NonceAccounting: NonceAccounting{
 			Port:            9091,
 			RetentionEpochs: 2,
-			SnapshotSeconds: 300,
+			SnapshotSeconds: 60,
 		},
 		Capture: Capture{
 			SampleRate: 0.01,

@@ -137,8 +137,7 @@ func (n *Recorder) sweep(ctx context.Context, escrows EscrowSource, diffs DiffJo
 				Slots:         escrowState.Group,
 			}))
 		}
-		n.observeEscrowState(state.ID, escrowState)
-		n.closeSealed(state.ID, escrowState, session)
+		n.takeReading(state.ID, escrowState, session)
 		n.watchDiffs(state.ID, session, diffs)
 	}
 	for _, escrowID := range n.service.Book.EscrowIDs() {
@@ -168,13 +167,35 @@ func (n *Recorder) EscrowRetiring(escrowID string, session registry.EscrowSessio
 		return
 	}
 	if session != nil {
-		snapshot := session.SnapshotState()
-		n.observeEscrowState(escrowID, snapshot)
-		n.closeSealed(escrowID, snapshot, session)
+		n.takeReading(escrowID, session.SnapshotState(), session)
 	}
 	n.service.Book.RetireEscrow(escrowID)
 	n.observing.Delete(escrowID)
 	n.service.RequestFlush()
+}
+
+// EscrowClosing takes the reading a shutdown would otherwise lose, before the session closes, and leaves the escrow open. See docs/accounting.md, "Storage".
+func (n *Recorder) EscrowClosing(escrowID string, session registry.EscrowSession) {
+	if n == nil || n.service == nil || session == nil {
+		return
+	}
+	n.takeReading(escrowID, session.SnapshotState(), session)
+}
+
+func (n *Recorder) takeReading(escrowID string, snapshot types.EscrowState, session registry.EscrowSession) {
+	n.observeSealedRecords(escrowID, snapshot, session)
+	n.observeEscrowState(escrowID, snapshot)
+	n.closeSealed(escrowID, snapshot, session)
+}
+
+func (n *Recorder) observeSealedRecords(escrowID string, snapshot types.EscrowState, session registry.EscrowSession) {
+	records := make(map[uint64]types.InferenceRecord)
+	for _, nonce := range n.service.Book.CostsToFold(escrowID, snapshot.Inferences) {
+		if record, kept := session.SealedInference(nonce); kept {
+			records[nonce] = record
+		}
+	}
+	n.report(n.service.Book.ObserveSealedRecords(escrowID, records))
 }
 
 func (n *Recorder) closeSealed(escrowID string, snapshot types.EscrowState, session registry.EscrowSession) {

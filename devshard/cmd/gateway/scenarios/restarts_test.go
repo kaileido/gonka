@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"devshard/cmd/gateway/accounting"
 	"devshard/cmd/gateway/chain"
 	"devshard/cmd/gateway/liquidity"
 	"devshard/types"
@@ -248,4 +249,50 @@ func TestAColdStartWithoutAnEpochCreatesNothing(t *testing.T) {
 			runSteps(t, spec)
 		})
 	}
+}
+
+type ledgerTokens struct {
+	input, output, counted, estimatedError uint64
+}
+
+func ledgerTokensOf(harness *gatewayHarness) ledgerTokens {
+	var tokens ledgerTokens
+	for _, record := range harness.currentGateway().Nonces().Book().Query(accounting.QueryFilter{}) {
+		tokens.input += record.InputTokens
+		tokens.output += record.OutputTokens
+		tokens.counted += record.CountedNonces
+		tokens.estimatedError += record.EstimatedError
+	}
+	return tokens
+}
+
+// Test flow:
+//  1. Boot with one funded escrow whose participants report 300 input tokens, send four requests one after another and advance thirty seconds, so the ledger sweeps their finishes.
+//  2. Note the ledger's input tokens, output tokens, counted nonces and estimated error, and assert input tokens and counted nonces are above zero.
+//  3. Restart the gateway on the same store and advance thirty seconds.
+//  4. Assert the restarted ledger holds the same four totals: nothing was lost or counted twice across the restart.
+func TestARestartKeepsTheLedgersTokenCounts(t *testing.T) {
+	spec := defaultSpec()
+	spec.behaviours = everyParticipant(spec.participants, participantBehaviour{inputTokens: 300})
+	var before ledgerTokens
+	spec.steps = []harnessStep{
+		sendRequests{promptBytes: 200, maxTokens: 64, count: 4, sequential: true},
+		advance{by: 30 * time.Second},
+		expectThat{label: "the ledger counted the requests' tokens", verify: func(harness *gatewayHarness) error {
+			before = ledgerTokensOf(harness)
+			if before.input == 0 || before.counted == 0 {
+				return fmt.Errorf("ledger tokens before the restart %+v, want input tokens and counted nonces above zero", before)
+			}
+			return nil
+		}},
+		restartGateway{},
+		advance{by: 30 * time.Second},
+		expectThat{label: "the restarted ledger holds the same tokens", verify: func(harness *gatewayHarness) error {
+			if after := ledgerTokensOf(harness); after != before {
+				return fmt.Errorf("ledger tokens after the restart %+v, want the %+v the run ended with", after, before)
+			}
+			return nil
+		}},
+	}
+	runSteps(t, spec)
 }
