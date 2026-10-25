@@ -79,10 +79,11 @@ The per-weight *allowance* is the exception: it follows the raw chain phase rath
 
 ### Shutdown
 
-Twelve steps, in a fixed order, described in [`docs/operations.md`](./docs/operations.md), "Shutdown". Every step runs even after an earlier one fails, except a step marked as needing a quiesced system — that one is skipped and the skip reported, because it destroys state the steps above it may still be using. A drain step is bounded by the shutdown budget without cancelling the work inside it.
+Thirteen steps, in a fixed order, described in [`docs/operations.md`](./docs/operations.md), "Shutdown". Every step runs even after an earlier one fails, except a step marked as needing a quiesced system — that one is skipped and the skip reported, because it destroys state the steps above it may still be using. A drain step is bounded by the shutdown budget without cancelling the work inside it.
 
-Three positions in that order are load-bearing:
+Four positions in that order are load-bearing:
 
+- **The nonce sweep stops before the escrow sessions close.** The step waits out the sweep in progress, so no sweep reads a closing session, and none runs on the live set `Registry.Close` empties, which would retire every escrow the ledger holds.
 - **The journal closes after the escrow sessions and before nonce accounting.** Every producer that owns a shutdown step has stopped above it, and the ledger it drains into is still open; the warmup, which is only cancelled, and the republish after a devshard write can still narrate after it closes, and such a line is counted as a late event. Its close is bounded by the shutdown budget with a one-second floor, so a stuck sink cannot keep the ledger and the store from closing.
 - **Nonce accounting closes after every emitter above it has stopped**, so the final snapshot holds the counters the run ended with rather than one taken while races were still classifying nonces.
 - **Public-API connections close last.** Every step above can still reach the public API, and an idle socket closed under one of them is a socket the next poll has to re-dial. The chain's own gRPC connection is *not* closed here and cannot be: `common/chain` owns it and exposes no `Close`, so it lives until the process exits. That is why the tests ignore its goroutines rather than waiting for them.

@@ -129,7 +129,9 @@ type changeParticipants struct {
 type moveChain struct{ move func(*fakeChain) }
 
 // restartGateway shuts the gateway down and composes it again on the same store directory, chain and hosts; work the shutdown abandoned dies with the process.
-type restartGateway struct{}
+type restartGateway struct {
+	whileDown expectThat
+}
 
 type reconfigure struct{ change func(*config.Config) }
 
@@ -582,6 +584,9 @@ func (step moveChain) apply(harness *gatewayHarness) { step.move(harness.chain) 
 func (step restartGateway) apply(harness *gatewayHarness) {
 	harness.replacedEngines = append(harness.replacedEngines, harness.currentGateway().Races())
 	harness.stop()
+	if step.whileDown.verify != nil {
+		step.whileDown.apply(harness)
+	}
 	harness.severedSessions += harness.fleet.severOpenSessions()
 	gatewayStore, err := store.Open(harness.storageDir)
 	if err != nil {

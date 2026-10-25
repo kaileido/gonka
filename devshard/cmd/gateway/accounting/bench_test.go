@@ -30,6 +30,10 @@ func benchParticipant(index int) string {
 	return "gonka1participant" + string(rune('a'+index/26)) + string(rune('a'+index%26))
 }
 
+func benchHostStats() types.HostStats {
+	return types.HostStats{Missed: 3, Invalid: 1, Cost: 900000, RequiredValidations: 12, CompletedValidations: 11}
+}
+
 // benchBook fills a book the way a live epoch does, with every nonce classified.
 func benchBook(b *testing.B) *Book {
 	b.Helper()
@@ -60,9 +64,7 @@ func benchBook(b *testing.B) *Book {
 			b.Fatalf("ObserveLatestNonce(): %v", err)
 		}
 		for slotID := range uint32(benchGroupSize) {
-			if err := book.ObserveHostStats(escrowID, slotID, types.HostStats{
-				Missed: 3, Invalid: 1, Cost: 900000, RequiredValidations: 12, CompletedValidations: 11,
-			}); err != nil {
+			if err := book.ObserveHostStats(escrowID, slotID, benchHostStats()); err != nil {
 				b.Fatalf("ObserveHostStats(): %v", err)
 			}
 		}

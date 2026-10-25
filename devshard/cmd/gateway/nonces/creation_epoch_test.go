@@ -17,7 +17,7 @@ func newEpochlessLedger(t *testing.T) *Recorder {
 	if err != nil {
 		t.Fatalf("NewService(): %v", err)
 	}
-	ledger := &Recorder{service: service}
+	ledger := recorderFor(service)
 	t.Cleanup(func() { _ = ledger.service.Close() })
 	return ledger
 }

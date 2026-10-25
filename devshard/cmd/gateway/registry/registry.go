@@ -31,7 +31,8 @@ type Deps struct {
 	Exhaustion       exhaustion
 	Publications     publications
 	Narrator         escrowNarrator
-	Retiring         retiringObserver
+	Retiring         escrowObserver
+	Closing          escrowObserver
 	ServedBindings   servedBindingObserver
 	PeerRPC          peerRPCAdoption
 	Now              func() time.Time
@@ -44,9 +45,7 @@ type peerRPCAdoption interface {
 
 type servedBindingObserver func(escrowID, model, participant string, nonce uint64, verdict user.ServedBinding)
 
-// retiringObserver is told about an escrow once its last request has ended and before its session is
-// released, which is the last moment anything can be read from it. See README.md, "Publishing, retiring and draining".
-type retiringObserver func(escrowID string, session EscrowSession)
+type escrowObserver func(escrowID string, session EscrowSession)
 
 // Registry owns the live escrow set: live is written only under mu and read without it. See routing.md, "The escrow registry".
 type Registry struct {
@@ -57,7 +56,8 @@ type Registry struct {
 	exhaustion       exhaustion
 	publications     publications
 	narrator         escrowNarrator
-	retiring         retiringObserver
+	retiring         escrowObserver
+	closingObserver  escrowObserver
 	servedBindings   servedBindingObserver
 	peerRPC          peerRPCAdoption
 	now              func() time.Time
@@ -92,6 +92,7 @@ func New(deps Deps) *Registry {
 		publications:     deps.Publications,
 		narrator:         deps.Narrator,
 		retiring:         deps.Retiring,
+		closingObserver:  deps.Closing,
 		servedBindings:   deps.ServedBindings,
 		peerRPC:          deps.PeerRPC,
 		now:              deps.Now,
@@ -421,6 +422,9 @@ func (r *Registry) Close() error {
 
 	errs := make([]error, 0, len(closing))
 	for _, entry := range closing {
+		if r.closingObserver != nil {
+			r.closingObserver(entry.id, entry.session)
+		}
 		_, err := entry.close()
 		errs = append(errs, err)
 	}

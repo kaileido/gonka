@@ -36,7 +36,7 @@ func benchRecorder(b *testing.B) *Recorder {
 	}); err != nil {
 		b.Fatalf("OpenEscrow(): %v", err)
 	}
-	return &Recorder{service: service}
+	return recorderFor(service)
 }
 
 func benchEscrowState() types.EscrowState {
