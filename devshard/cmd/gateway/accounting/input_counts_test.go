@@ -209,3 +209,28 @@ func TestACountFiledWhileASweepIsBetweenItsWatermarkAndItsCostsIsKept(t *testing
 		t.Fatalf("money = %+v, want nonce 6 folded at its 37 tokenizer tokens", money)
 	}
 }
+
+// Test flow:
+//  1. Record a race whose nonce carries a tokenizer count and save the book.
+//  2. Sweep the escrow at a watermark holding that nonce with nothing live, so the sweep changes nothing but the count it drops.
+//  3. Save and reload, and assert the dropped count left the store too.
+func TestACountDroppedByASweepLeavesTheStore(t *testing.T) {
+	book := newTestBook(t, 4)
+	if err := book.RecordRace(testEscrow, []Attempt{{Nonce: 5, Sent: true, InputTokens: 37, InputTokensSource: filters.InputTokensTokenizerExact}}); err != nil {
+		t.Fatalf("RecordRace(): %v", err)
+	}
+	store := openTestStore(t)
+	if err := store.Save(t.Context(), book); err != nil {
+		t.Fatalf("Save(): %v", err)
+	}
+	sweep(t, book, 5, map[uint64]*types.InferenceRecord{})
+	if counts := book.Snapshot().Escrows[0].InputCounts; len(counts) != 0 {
+		t.Fatalf("input counts in the book = %+v, want none once the sweep passed nonce 5", counts)
+	}
+
+	reloaded := saveAndReload(t, book, store)
+
+	if counts := reloaded.Snapshot().Escrows[0].InputCounts; len(counts) != 0 {
+		t.Fatalf("input counts in the store = %+v, want none once the sweep passed nonce 5", counts)
+	}
+}
