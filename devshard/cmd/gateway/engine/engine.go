@@ -93,6 +93,7 @@ type Request struct {
 	Escrow                  string
 	InputTokens             uint64
 	InputTokensSource       filters.InputTokensSource
+	InputTokensFromBytes    uint64
 	InputBytes              uint64
 	OutputTokens            uint64
 	ClientStream            bool

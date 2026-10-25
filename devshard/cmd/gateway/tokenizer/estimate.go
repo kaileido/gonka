@@ -2,6 +2,8 @@ package tokenizer
 
 import (
 	"unicode/utf8"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // See README.md, "Estimating a long prompt".
@@ -11,6 +13,11 @@ const (
 	windowBytes             = exactBudgetBytes / sampleWindows
 	sampledOvercountPercent = 7
 	wholePercent            = 100
+)
+
+// See README.md, "The byte bound".
+const (
+	nfcMaxExpansion = 3
 )
 
 // Estimate is one count of a prompt's tokens: exact, or past exactBudgetBytes the sampled estimate, Sampled then true.
@@ -33,10 +40,46 @@ func (e Estimate) Minimum() uint64 {
 	return e.Tokens * wholePercent / (wholePercent + sampledOvercountPercent)
 }
 
-// MinimumTokens returns the fewest tokens prompt's parts hold, each counted on its own: EstimateTokens' Minimum.
-func (c *Counter) MinimumTokens(prompt []string) (uint64, error) {
-	estimate, err := c.EstimateTokens(prompt)
-	return estimate.Minimum(), err
+// MaximumTokens returns a count EstimateTokens' Minimum never exceeds, read from prompt's bytes without tokenizing: every token covers at least one byte of the text it counts.
+func (c *Counter) MaximumTokens(prompt []string) uint64 {
+	total := 0
+	for _, part := range prompt {
+		total += len(part)
+	}
+	switch {
+	case !c.nfc:
+		return uint64(total)
+	case total > exactBudgetBytes:
+		for _, part := range prompt {
+			if !isASCII(part) {
+				return uint64(total) * nfcMaxExpansion
+			}
+		}
+		return uint64(total)
+	}
+	normalized := 0
+	for _, part := range prompt {
+		normalized += c.normalizedBytes(part)
+	}
+	return uint64(normalized)
+}
+
+func (c *Counter) normalizedBytes(text string) int {
+	gaps, _ := c.rawAddedTokens.split(text, nil)
+	total := len(text)
+	for _, gap := range gaps {
+		total += len(norm.NFC.String(gap)) - len(gap)
+	}
+	return total
+}
+
+func isASCII(text string) bool {
+	for index := range len(text) {
+		if text[index] >= utf8.RuneSelf {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *Counter) estimate(prompt []string) (tokens uint64, sampled bool, err error) {

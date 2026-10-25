@@ -56,7 +56,7 @@ func sampleRecord(requestID string) RequestRecord {
 		WinnerHostIdx:      3,
 		Attempts:           2,
 		InputTokens:        128,
-		InputTokensSource:  string(filters.InputTokensTokenizerExact),
+		InputTokensSource:  filters.InputTokensTokenizerExact,
 		WinnerOutputTokens: 256,
 		TotalOutputTokens:  381,
 		BalanceExhausted:   true,

@@ -56,6 +56,9 @@ func (c *Config) Validate() error {
 	if c.Server.MaxConcurrentRuntimeBuilds < 1 {
 		complain("max_concurrent_runtime_builds: %d must be >= 1", c.Server.MaxConcurrentRuntimeBuilds)
 	}
+	if c.Server.MaxConcurrentPromptCounts < 1 {
+		complain("max_concurrent_prompt_counts: %d must be >= 1", c.Server.MaxConcurrentPromptCounts)
+	}
 	if c.Server.SessionRetentionEpochs < 0 {
 		complain("session_retention_epochs: %d must be >= 0", c.Server.SessionRetentionEpochs)
 	}

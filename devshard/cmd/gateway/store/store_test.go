@@ -375,7 +375,7 @@ func TestARequestRowFromBeforeTheSourceColumnReadsAsTheByteEstimate(t *testing.T
 	if err != nil {
 		t.Fatalf("opening seed db: %v", err)
 	}
-	before := len(migrations) - 1
+	before := slices.IndexFunc(migrations, func(migration string) bool { return strings.Contains(migration, "ADD COLUMN input_tokens_source") })
 	statements := slices.Concat([]string{`CREATE TABLE schema_version (version INTEGER NOT NULL)`}, migrations[:before], []string{
 		`WITH RECURSIVE versions(version) AS (SELECT 1 UNION ALL SELECT version + 1 FROM versions WHERE version < ` + strconv.Itoa(before) + `) INSERT INTO schema_version (version) SELECT version FROM versions`,
 		`INSERT INTO request_accounting (request_id, input_tokens, recorded_at) VALUES ('request-1', 33, '2026-10-24T00:00:00.000000000Z')`,
@@ -399,7 +399,7 @@ func TestARequestRowFromBeforeTheSourceColumnReadsAsTheByteEstimate(t *testing.T
 	if err != nil || !found {
 		t.Fatalf("FindRequest() = %v, %v", found, err)
 	}
-	if record.InputTokens != 33 || record.InputTokensSource != string(filters.InputTokensBytesEstimate) {
+	if record.InputTokens != 33 || record.InputTokensSource != filters.InputTokensBytesEstimate {
 		t.Fatalf("row = %d tokens from %q, want 33 from %q", record.InputTokens, record.InputTokensSource, filters.InputTokensBytesEstimate)
 	}
 }

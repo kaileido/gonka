@@ -166,9 +166,15 @@ type LimitRejections interface {
 	Rejected(model, reason string)
 }
 
-// PromptTokens counts a normalized chat body's messages with the model's pinned tokenizer, known false while there is none or the count fails; app's pinned tokenizer library satisfies it.
+// PromptTokens reads a normalized chat body's messages for the model's pinned tokenizer, known false while there is none; app's pinned tokenizer library satisfies it.
 type PromptTokens interface {
-	Count(model string, body []byte) (count TokenizedPrompt, known bool)
+	Prompt(model string, body []byte) (prompt PromptText, known bool)
+}
+
+// PromptText is a prompt read for one tokenizer: MaximumTokens bounds its count from its bytes alone, and Count tokenizes it, known false when the tokenizer fails.
+type PromptText interface {
+	MaximumTokens() uint64
+	Count() (count TokenizedPrompt, known bool)
 }
 
 // TokenizedPrompt is one tokenizer pass over a prompt: Tokens the count, sampled past the exact budget, and MinimumTokens never above the prompt's real count.
@@ -241,6 +247,7 @@ type Server struct {
 
 	stopTokenVocabulary func(model string) int
 	promptTokens        PromptTokens
+	promptCounts        promptCountGate
 	settingsWrites      sync.Mutex
 
 	gates   atomic.Pointer[keyGates]
@@ -313,6 +320,7 @@ func New(deps Deps) (*Server, error) {
 	}
 	configuration := deps.Config.Load()
 	server.cache = newResponseCache(configuration.Cache.ChatCacheMaxBytes)
+	server.promptCounts = newPromptCountGate(configuration.Server.MaxConcurrentPromptCounts)
 	capture, err := newRequestCapture(configuration.Capture, deps.StorageDir, server.now)
 	if err != nil {
 		return nil, err

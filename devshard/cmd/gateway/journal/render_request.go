@@ -20,7 +20,8 @@ const (
 func renderRequestFinished(lines logSink, line *RequestLine) {
 	if line.CacheHit {
 		lines.Info("request finished", logkey.Request, line.RequestID, logkey.Model, line.Model,
-			logkey.Escrow, line.EscrowID, logkey.Stream, line.ClientStream, logkey.Outcome, cacheHitOutcome, logkey.Bytes, line.Bytes)
+			logkey.Escrow, line.EscrowID, logkey.Stream, line.ClientStream, logkey.InputTokens, line.Outcome.InputTokens,
+			logkey.InputTokensSource, string(line.Outcome.InputTokensSource), logkey.Outcome, cacheHitOutcome, logkey.Bytes, line.Bytes)
 		return
 	}
 	fields := requestFinishedFields(line)

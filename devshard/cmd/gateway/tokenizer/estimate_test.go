@@ -12,14 +12,14 @@ func sentencesOf(size int) string {
 
 // Test flow:
 //  1. Build an ASCII prompt of exactly exactBudgetBytes and split it into parts.
-//  2. Take MinimumTokens of it.
-//  3. Assert it is the sum of each part's exact count.
-func TestMinimumTokensIsExactUpToTheBudget(t *testing.T) {
+//  2. Estimate it.
+//  3. Assert it is not sampled and both its count and its Minimum are the sum of each part's exact count.
+func TestEstimateTokensIsExactUpToTheBudget(t *testing.T) {
 	counter := loadTestdata(t, "isolated")
 	text := sentencesOf(exactBudgetBytes)
 	prompt := []string{text[:exactBudgetBytes/3], text[exactBudgetBytes/3:]}
 
-	got, err := counter.MinimumTokens(prompt)
+	estimate, err := counter.EstimateTokens(prompt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,24 +32,20 @@ func TestMinimumTokensIsExactUpToTheBudget(t *testing.T) {
 		}
 		want += counted
 	}
-	if got != uint64(want) {
-		t.Fatalf("MinimumTokens = %d, want the exact %d", got, want)
+	if estimate.Sampled || estimate.Tokens != uint64(want) || estimate.Minimum() != uint64(want) {
+		t.Fatalf("EstimateTokens = %+v with Minimum %d, want the exact %d, not sampled", estimate, estimate.Minimum(), want)
 	}
 }
 
 // Test flow:
 //  1. Build a prompt one byte past exactBudgetBytes, so it is sampled.
-//  2. Take MinimumTokens of it, its sampled estimate and its exact count.
-//  3. Assert MinimumTokens is the estimate less sampledOvercountPercent, and below the exact count.
-func TestMinimumTokensPastTheBudgetIsTheSampledEstimateLessItsWorstOvercount(t *testing.T) {
+//  2. Estimate it and count it exactly.
+//  3. Assert it is sampled, its Minimum is the estimate less sampledOvercountPercent, and the Minimum is below the exact count.
+func TestTheMinimumPastTheBudgetIsTheSampledEstimateLessItsWorstOvercount(t *testing.T) {
 	counter := loadTestdata(t, "isolated")
 	prompt := []string{sentencesOf(exactBudgetBytes + 1)}
 
-	got, err := counter.MinimumTokens(prompt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	estimate, sampled, err := counter.estimate(prompt)
+	estimate, err := counter.EstimateTokens(prompt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,42 +54,11 @@ func TestMinimumTokensPastTheBudgetIsTheSampledEstimateLessItsWorstOvercount(t *
 		t.Fatal(err)
 	}
 
-	if !sampled || got != estimate*wholePercent/(wholePercent+sampledOvercountPercent) {
-		t.Fatalf("MinimumTokens = %d (sampled %v), want the estimate %d less %d%%", got, sampled, estimate, sampledOvercountPercent)
+	if !estimate.Sampled || estimate.Minimum() != estimate.Tokens*wholePercent/(wholePercent+sampledOvercountPercent) {
+		t.Fatalf("Minimum = %d (sampled %v), want the estimate %d less %d%%", estimate.Minimum(), estimate.Sampled, estimate.Tokens, sampledOvercountPercent)
 	}
-	if got >= uint64(exact) {
-		t.Fatalf("MinimumTokens = %d, want below the exact %d", got, exact)
-	}
-}
-
-// Test flow:
-//  1. Build a prompt of exactly exactBudgetBytes and one a byte past it.
-//  2. Take EstimateTokens and MinimumTokens of each.
-//  3. Assert the first is its exact count, not sampled, the second the unbiased sampled estimate, and both Minimums are what MinimumTokens returns.
-func TestEstimateTokensIsTheUnbiasedCountMinimumTokensLowers(t *testing.T) {
-	counter := loadTestdata(t, "isolated")
-	for _, size := range []int{exactBudgetBytes, exactBudgetBytes + 1} {
-		prompt := []string{sentencesOf(size)}
-
-		estimate, err := counter.EstimateTokens(prompt)
-		if err != nil {
-			t.Fatal(err)
-		}
-		minimum, err := counter.MinimumTokens(prompt)
-		if err != nil {
-			t.Fatal(err)
-		}
-		tokens, sampled, err := counter.estimate(prompt)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		if estimate != (Estimate{Tokens: tokens, Sampled: sampled}) || sampled != (size > exactBudgetBytes) {
-			t.Fatalf("%d bytes: EstimateTokens = %+v, want %d tokens, sampled %v", size, estimate, tokens, size > exactBudgetBytes)
-		}
-		if estimate.Minimum() != minimum || (sampled && minimum >= estimate.Tokens) {
-			t.Fatalf("%d bytes: Minimum = %d, MinimumTokens = %d, estimate %d", size, estimate.Minimum(), minimum, estimate.Tokens)
-		}
+	if estimate.Minimum() >= uint64(exact) {
+		t.Fatalf("Minimum = %d, want below the exact %d", estimate.Minimum(), exact)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"devshard/cmd/gateway/engine"
+	"devshard/cmd/gateway/filters"
 	"devshard/cmd/gateway/internal/logcapture"
 	"devshard/cmd/gateway/limits"
 )
@@ -94,7 +95,7 @@ func TestAStreamThatFailedMidAnswerWritesItsRecordAtWarn(t *testing.T) {
 
 // Test flow:
 //  1. Start a harness and send the same chat completion twice from the same caller.
-//  2. Assert the second, replayed request's flushed "request finished" line carries the cache_hit outcome and the replayed body's byte count.
+//  2. Assert the second, replayed request's flushed "request finished" line carries the body's byte estimate with its source, the cache_hit outcome and the replayed body's byte count.
 func TestACacheHitWritesTheShortRecord(t *testing.T) {
 	logged := logcapture.Install(t)
 	live := newHarness(t)
@@ -105,6 +106,7 @@ func TestACacheHitWritesTheShortRecord(t *testing.T) {
 
 	logged.RequireLine(t, logcapture.Entry{Level: "info", Msg: "request finished", Fields: []any{
 		"request", "request-1", "model", "qwen", "escrow", "7", "stream", false,
+		"input_tokens", filters.EstimatedPromptTokens(int(live.inference.raced.Load().InputBytes)), "input_tokens_source", "bytes_estimate",
 		"outcome", "cache_hit", "bytes", int64(replay.Body.Len()),
 	}})
 }

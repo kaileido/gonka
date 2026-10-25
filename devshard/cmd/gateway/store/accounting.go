@@ -8,6 +8,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"devshard/cmd/gateway/filters"
 )
 
 // Fixed-width where RFC3339Nano is not, because retention orders timestamps as text. See README.md, "Timestamps".
@@ -35,7 +37,7 @@ type RequestRecord struct {
 	WinnerHostIdx      int
 	Attempts           int
 	InputTokens        uint64
-	InputTokensSource  string
+	InputTokensSource  filters.InputTokensSource
 	PromptTokens       int64
 	WinnerOutputTokens int64
 	TotalOutputTokens  int64

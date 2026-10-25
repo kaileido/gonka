@@ -8,22 +8,13 @@ import (
 	"testing"
 
 	"devshard/cmd/gateway/config"
-	"devshard/cmd/gateway/filters"
 	"devshard/cmd/gateway/tokenizer"
 )
 
 type counterPromptTokens struct{ counter *tokenizer.Counter }
 
-func (c counterPromptTokens) Count(_ string, body []byte) (TokenizedPrompt, bool) {
-	parts, err := filters.PromptText(body)
-	if err != nil {
-		return TokenizedPrompt{}, false
-	}
-	estimate, err := c.counter.EstimateTokens(parts)
-	if err != nil {
-		return TokenizedPrompt{}, false
-	}
-	return TokenizedPrompt{Tokens: estimate.Tokens, MinimumTokens: estimate.Minimum(), Sampled: estimate.Sampled}, true
+func (c counterPromptTokens) Prompt(_ string, body []byte) (PromptText, bool) {
+	return TokenizerPrompt(c.counter, body)
 }
 
 var benchPromptSizes = []struct {
@@ -91,7 +82,11 @@ func BenchmarkPromptCountCost(b *testing.B) {
 			b.Run(size.name+"/"+name, func(b *testing.B) {
 				b.ReportAllocs()
 				for b.Loop() {
-					if _, known := prompts.Count("qwen", body); !known {
+					text, known := prompts.Prompt("qwen", body)
+					if !known {
+						b.Fatal("the prompt has no text")
+					}
+					if _, known := text.Count(); !known {
 						b.Fatal("the prompt could not be tokenized")
 					}
 				}

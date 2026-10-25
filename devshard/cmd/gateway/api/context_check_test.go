@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"golang.org/x/text/unicode/norm"
@@ -21,17 +22,24 @@ import (
 type fakePromptTokens struct {
 	tokens     uint64
 	shortfall  uint64
+	slack      uint64
 	sampled    bool
 	known      bool
 	model      string
 	body       string
-	tokenizing int
+	tokenizing atomic.Int64
 }
 
-func (f *fakePromptTokens) Count(model string, body []byte) (TokenizedPrompt, bool) {
+func (f *fakePromptTokens) Prompt(model string, body []byte) (PromptText, bool) {
 	f.model, f.body = model, string(body)
-	f.tokenizing++
-	return TokenizedPrompt{Tokens: f.tokens, MinimumTokens: f.tokens - f.shortfall, Sampled: f.sampled}, f.known
+	return f, f.known
+}
+
+func (f *fakePromptTokens) MaximumTokens() uint64 { return f.tokens + f.slack }
+
+func (f *fakePromptTokens) Count() (TokenizedPrompt, bool) {
+	f.tokenizing.Add(1)
+	return TokenizedPrompt{Tokens: f.tokens, MinimumTokens: f.tokens - f.shortfall, Sampled: f.sampled}, true
 }
 
 func loadTestTokenizer(t *testing.T, name string) *tokenizer.Counter {
@@ -215,26 +223,31 @@ func TestTheCheckReadsTheGovernedContextLengthBeforeThePin(t *testing.T) {
 }
 
 // Test flow:
-//  1. Pin qwen's context length at 20 000 tokens and define a prompt count that fits it and one a token past it.
+//  1. Pin qwen's context length at 20 000 tokens and define a prompt count that fits it under a byte bound that does too, one that fits it under a byte bound past it, and one a token past it.
 //  2. Send a chat request with each.
-//  3. Assert each was tokenized exactly once, the first served and the second refused.
-//  4. Assert the served one handed the limiter and the race that same count, marked as the tokenizer's exact count.
+//  3. Assert each was tokenized exactly once, the first two served and the third refused.
+//  4. Assert the served ones handed the limiter and the race that same count, marked as the tokenizer's exact count.
 func TestThePromptIsTokenizedOnceAndThatCountIsWhatTheLimiterAndTheRaceGet(t *testing.T) {
 	fits := uint64(20_000) - filters.DefaultRequestMaxTokens - chatTemplateMinimumTokens
 	for _, step := range []struct {
 		name   string
 		tokens uint64
+		slack  uint64
 		status int
-	}{{"count fits", fits, http.StatusOK}, {"count over", fits + 1, http.StatusBadRequest}} {
+	}{
+		{"count and bound fit", fits, 0, http.StatusOK},
+		{"count fits, bound over", fits, 1, http.StatusOK},
+		{"count over", fits + 1, 0, http.StatusBadRequest},
+	} {
 		t.Run(step.name, func(t *testing.T) {
 			live := newHarness(t, pinContextLength(20_000))
-			count := &fakePromptTokens{tokens: step.tokens, known: true}
+			count := &fakePromptTokens{tokens: step.tokens, slack: step.slack, known: true}
 			live.server.promptTokens = count
 
 			recorder := live.request(t, http.MethodPost, "/v1/chat/completions", chatBody, nil)
 
-			if recorder.Code != step.status || count.tokenizing != 1 {
-				t.Fatalf("status = %d, tokenized %d times, want %d after once", recorder.Code, count.tokenizing, step.status)
+			if recorder.Code != step.status || count.tokenizing.Load() != 1 {
+				t.Fatalf("status = %d, tokenized %d times, want %d after once", recorder.Code, count.tokenizing.Load(), step.status)
 			}
 			if step.status != http.StatusOK {
 				return
@@ -258,8 +271,8 @@ func TestASampledCountIsCheckedByItsMinimumAndRacedWhole(t *testing.T) {
 	count := &fakePromptTokens{tokens: fits + shortfall, shortfall: shortfall, sampled: true, known: true}
 	live.server.promptTokens = count
 
-	if recorder := live.request(t, http.MethodPost, "/v1/chat/completions", chatBody, nil); recorder.Code != http.StatusOK || count.tokenizing != 1 {
-		t.Fatalf("status = %d (%s), tokenized %d times, want served after one count", recorder.Code, recorder.Body.String(), count.tokenizing)
+	if recorder := live.request(t, http.MethodPost, "/v1/chat/completions", chatBody, nil); recorder.Code != http.StatusOK || count.tokenizing.Load() != 1 {
+		t.Fatalf("status = %d (%s), tokenized %d times, want served after one count", recorder.Code, recorder.Body.String(), count.tokenizing.Load())
 	}
 	raced := live.inference.raced.Load()
 	if raced.InputTokens != fits+shortfall || raced.InputTokensSource != filters.InputTokensTokenizerSampled {
@@ -304,8 +317,8 @@ func TestWithoutATokenizerCountTheRequestCarriesTheByteEstimate(t *testing.T) {
 
 // Test flow:
 //  1. Load the NFC and a plain testdata tokenizer, and build chat bodies of random ASCII, Cyrillic, CJK, emoji, special-token spellings, decomposed and NFC-expanding text, as written and decomposed, from empty to past 64 KiB.
-//  2. For each, take the tokenizer's MinimumTokens of the prompt text and context lengths around it with the template allowance and max_tokens.
-//  3. Assert the check, counting the body once, refuses exactly the requests MinimumTokens leaves no room for, sampled past 64 KiB included.
+//  2. For each, take the Minimum of the tokenizer's estimate of the prompt text and context lengths around it with the template allowance and max_tokens.
+//  3. Assert the check refuses exactly the requests that Minimum leaves no room for, sampled past 64 KiB included.
 func TestTheCheckJudgesByTheTokenizersMinimum(t *testing.T) {
 	live := newHarness(t)
 	rng := rand.New(rand.NewPCG(3, 4))
@@ -323,18 +336,18 @@ func TestTheCheckJudgesByTheTokenizersMinimum(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				minimum, err := counter.MinimumTokens(parts)
+				estimate, err := counter.EstimateTokens(parts)
 				if err != nil {
 					t.Fatal(err)
 				}
+				minimum := estimate.Minimum()
 				for _, maxTokens := range []uint64{1, filters.DefaultRequestMaxTokens} {
 					normalized := filters.Result{Model: "qwen", Body: body, MaxTokens: maxTokens}
-					prompt := live.server.countPrompt(normalized)
 					for _, length := range []uint64{minimum + chatTemplateMinimumTokens + maxTokens - 1, minimum + chatTemplateMinimumTokens + maxTokens} {
 						pinned := int64(length)
 						limits := config.Limits{ModelLimits: map[string]config.ModelLimits{"qwen": {MaxModelLen: &pinned}}}
 
-						err := live.server.fitsContext(limits, normalized, prompt)
+						_, err := live.server.checkContext(limits, normalized)
 
 						if fits := minimum+chatTemplateMinimumTokens+maxTokens <= length; fits != (err == nil) {
 							t.Fatalf("%s, %d bytes, max_tokens %d, context %d: minimum %d, check said %v", name, len(text), maxTokens, length, minimum, err)
@@ -343,5 +356,64 @@ func TestTheCheckJudgesByTheTokenizersMinimum(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// Test flow:
+//  1. Wire a prompt count whose byte bound fits qwen's context, and send a chat request twice from one caller, so the second is a cache hit.
+//  2. Start a harness whose snapshot blocks requests for PoC with the gateway's PoC mode off, and send a chat request.
+//  3. Assert the cache miss was tokenized once and the hit not again, and the request admission refused was never tokenized.
+func TestACacheHitAndAnAdmissionRefusalTakeNoCount(t *testing.T) {
+	live := newHarness(t)
+	count := &fakePromptTokens{tokens: 9, known: true}
+	live.server.promptTokens = count
+	for range 2 {
+		if recorder := live.request(t, http.MethodPost, "/v1/chat/completions", chatBody, callerHeaders("caller-a")); recorder.Code != http.StatusOK {
+			t.Fatalf("status = %d (%s), want served", recorder.Code, recorder.Body.String())
+		}
+	}
+	if count.tokenizing.Load() != 1 || live.inference.runs.Load() != 1 {
+		t.Fatalf("tokenized %d times over %d races, want once for the miss and not for the hit", count.tokenizing.Load(), live.inference.runs.Load())
+	}
+
+	refusing := newHarness(t)
+	refused := &fakePromptTokens{tokens: 9, known: true}
+	refusing.server.promptTokens = refused
+	refusing.snapshots.snapshot = chain.PhaseSnapshot{RequestsBlocked: true, BlockReason: chain.BlockReasonPoC, EpochPhase: chain.EpochPhasePoCGenerate}
+	refusing.swapConfig(func(next *config.Config) { next.Modes.PoCMode = config.PoCModeOff })
+	if recorder := refusing.request(t, http.MethodPost, "/v1/chat/completions", chatBody, nil); recorder.Code != http.StatusServiceUnavailable || refused.tokenizing.Load() != 0 {
+		t.Fatalf("status = %d, tokenized %d times, want 503 with no count", recorder.Code, refused.tokenizing.Load())
+	}
+}
+
+// Test flow:
+//  1. Wire a prompt count whose byte bound fits qwen's context, and take every slot of the prompt count gate.
+//  2. Send a chat request, then free one slot and send another.
+//  3. Assert the first was not tokenized and carried the byte estimate marked bytes_estimate to the limiter and the race, and the second carried the tokenizer's count.
+func TestAFullPromptCountGateLeavesTheRequestOnTheByteEstimate(t *testing.T) {
+	live := newHarness(t)
+	count := &fakePromptTokens{tokens: 9, known: true}
+	live.server.promptTokens = count
+	for range cap(live.server.promptCounts) {
+		if !live.server.promptCounts.tryAcquire() {
+			t.Fatal("the gate refused a slot before it was full")
+		}
+	}
+
+	if recorder := live.request(t, http.MethodPost, "/v1/chat/completions", chatBody, nil); recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s), want served", recorder.Code, recorder.Body.String())
+	}
+	raced := live.inference.raced.Load()
+	want := filters.EstimatedPromptTokens(int(raced.InputBytes))
+	if count.tokenizing.Load() != 0 || raced.InputTokens != want || raced.InputTokensSource != filters.InputTokensBytesEstimate || live.limiter.acquired.Load() != int64(want) {
+		t.Fatalf("tokenized %d times, race got %d tokens from %q, limiter %d, want the byte estimate %d untokenized", count.tokenizing.Load(), raced.InputTokens, raced.InputTokensSource, live.limiter.acquired.Load(), want)
+	}
+
+	live.server.promptCounts.release()
+	if recorder := live.request(t, http.MethodPost, "/v1/chat/completions", chatBodyWith("max_tokens", 100), nil); recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s), want served", recorder.Code, recorder.Body.String())
+	}
+	if raced := live.inference.raced.Load(); count.tokenizing.Load() != 1 || raced.InputTokens != 9 || raced.InputTokensSource != filters.InputTokensTokenizerExact {
+		t.Fatalf("tokenized %d times, race got %d tokens from %q, want the tokenizer's 9 once a slot is free", count.tokenizing.Load(), raced.InputTokens, raced.InputTokensSource)
 	}
 }

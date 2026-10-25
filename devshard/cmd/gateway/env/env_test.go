@@ -128,6 +128,7 @@ func TestAnUnusableValueIsIgnoredNotRefused(t *testing.T) {
 		"DEVSHARD_ESCROW_ROTATION_PRE_POC_BLOCKS":          "-300",
 		"GATEWAY_MAX_CONCURRENT_REQUESTS":                  "lots",
 		"DEVSHARD_MAX_CONCURRENT_RUNTIME_BUILDS":           "0",
+		"DEVSHARD_MAX_CONCURRENT_PROMPT_COUNTS":            "0",
 		"DEVSHARD_SESSION_RETENTION_EPOCHS":                "-1",
 		"DEVSHARD_QUIET_SETTLE_DELAY":                      "soon",
 		"DEVSHARD_ENABLE_CONTENTION_PROFILES":              "maybe",
@@ -157,6 +158,7 @@ func TestAnUnusableValueIsIgnoredNotRefused(t *testing.T) {
 		"RotationPrePoCBlocks":                values.RotationPrePoCBlocks != nil,
 		"MaxConcurrentRequests":               values.MaxConcurrentRequests != nil,
 		"MaxConcurrentRuntimeBuilds":          values.MaxConcurrentRuntimeBuilds != nil,
+		"MaxConcurrentPromptCounts":           values.MaxConcurrentPromptCounts != nil,
 		"SessionRetentionEpochs":              values.SessionRetentionEpochs != nil,
 		"HeightSyncQuietSettleDelayMS":        values.HeightSyncQuietSettleDelayMS != nil,
 		"ContentionProfiles":                  values.ContentionProfiles != nil,
@@ -332,7 +334,7 @@ func TestTheChainEndpointsFallBackToTheNodeVariables(t *testing.T) {
 }
 
 // Test flow:
-//  1. Set the transaction, weight-model, input-token and runtime-build variables under their deployed names.
+//  1. Set the transaction, weight-model, input-token, runtime-build and prompt-count variables under their deployed names.
 //  2. Call `Load`.
 //  3. Assert each loads with its set value.
 func TestTheLimitsAndTransactionVariablesAreReadUnderTheirDeployedNames(t *testing.T) {
@@ -343,6 +345,7 @@ func TestTheLimitsAndTransactionVariablesAreReadUnderTheirDeployedNames(t *testi
 	t.Setenv("GATEWAY_POC_MAX_CONCURRENT_REQUESTS_PER_10000_WEIGHT", "12")
 	t.Setenv("GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT", "0")
 	t.Setenv("DEVSHARD_MAX_CONCURRENT_RUNTIME_BUILDS", "4")
+	t.Setenv("DEVSHARD_MAX_CONCURRENT_PROMPT_COUNTS", "3")
 
 	values, err := Load()
 	if err != nil {
@@ -368,6 +371,9 @@ func TestTheLimitsAndTransactionVariablesAreReadUnderTheirDeployedNames(t *testi
 	}
 	if values.MaxConcurrentRuntimeBuilds == nil || *values.MaxConcurrentRuntimeBuilds != 4 {
 		t.Errorf("MaxConcurrentRuntimeBuilds = %v, want 4", values.MaxConcurrentRuntimeBuilds)
+	}
+	if values.MaxConcurrentPromptCounts == nil || *values.MaxConcurrentPromptCounts != 3 {
+		t.Errorf("MaxConcurrentPromptCounts = %v, want 3", values.MaxConcurrentPromptCounts)
 	}
 }
 

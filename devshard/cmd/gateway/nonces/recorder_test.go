@@ -10,6 +10,7 @@ import (
 	"devshard/cmd/gateway/config"
 	"devshard/cmd/gateway/engine"
 	"devshard/cmd/gateway/filters"
+	"devshard/cmd/gateway/scheduler"
 	"devshard/types"
 )
 
@@ -448,5 +449,45 @@ func TestEveryAttemptOfARaceCarriesTheRequestsTokenizerCountIntoTheLedger(t *tes
 	}
 	if estimated != 2*21 || tokenized != 2*21 {
 		t.Fatalf("estimated %d, tokenized %d, want both nonces at the race's 21 tokenizer tokens", estimated, tokenized)
+	}
+}
+
+// Test flow:
+//  1. Assign a nonce to a request that carries a tokenizer count, then sweep the escrow with the nonce finished and again with it sealed, before its race reports.
+//  2. Report the race, with the sealed nonce as its loser.
+//  3. Assert the sealed nonce was estimated by the count it was assigned with, marked tokenized, and no input count is left behind.
+func TestALoserSealedBeforeItsRaceReportsKeepsTheCountItWasAssignedWith(t *testing.T) {
+	ledger := newLedgerForTest(t)
+	sent := time.Unix(100, 0)
+
+	ledger.NonceAssigned("escrow-1", 5, scheduler.RequestProfile{RequestID: "request-1", InputTokens: 21, InputTokensSource: filters.InputTokensTokenizerExact})
+	for _, inferences := range []map[uint64]*types.InferenceRecord{{5: {Status: types.StatusFinished, InputLength: 4_000}}, {}} {
+		ledger.observeEscrowState("escrow-1", types.EscrowState{LatestNonce: 5, Inferences: inferences})
+	}
+	ledger.RecordRace(engine.RaceOutcome{
+		EscrowID:          "escrow-1",
+		RequestID:         "request-1",
+		Succeeded:         true,
+		WinnerNonce:       6,
+		InputTokens:       21,
+		InputTokensSource: filters.InputTokensTokenizerExact,
+		Attempts: []engine.AttemptOutcome{
+			{Nonce: 5, SendTime: sent, NonceFinished: true, Terminal: engine.TerminalLost},
+			{Nonce: 6, SendTime: sent, Terminal: engine.TerminalWon},
+		},
+	})
+
+	var estimated, tokenized uint64
+	for _, record := range ledger.service.Book.Query(accounting.QueryFilter{}) {
+		estimated += record.EstimatedInput
+		tokenized += record.TokenizedInput
+	}
+	if estimated != 21 || tokenized != 21 {
+		t.Fatalf("estimated %d, tokenized %d, want the sealed loser at its 21 tokenizer tokens", estimated, tokenized)
+	}
+	for _, escrow := range ledger.service.Book.Snapshot().Escrows {
+		if counts := escrow.InputCounts; len(counts) != 1 || counts[0].Nonce != 6 {
+			t.Fatalf("input counts = %+v, want only the unsealed winner's", counts)
+		}
 	}
 }

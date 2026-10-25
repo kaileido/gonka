@@ -220,8 +220,8 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 		s.writeErrorFor(w, err)
 		return
 	}
-	prompt := s.countPrompt(normalized)
-	if err := s.fitsContext(configuration.Limits, normalized, prompt); err != nil {
+	prompt, err := s.checkContext(configuration.Limits, normalized)
+	if err != nil {
 		s.writeErrorFor(w, err)
 		return
 	}
@@ -236,9 +236,11 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 		key = cacheKeyFor(r, normalized)
 		if entry, hit := s.cache.get(key, s.now()); hit {
 			written := serveCached(w, requestID, entry)
+			hitCount := prompt.countSoFar()
 			s.events.RequestFinished(journal.RequestLine{
 				RequestID: requestID, Model: normalized.Model, EscrowID: entry.escrowID,
 				ClientStream: entry.stream, Bytes: written, CacheHit: true,
+				Outcome: engine.RaceOutcome{InputTokens: hitCount.tokens, InputTokensSource: hitCount.source},
 			})
 			return
 		}
@@ -248,7 +250,8 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 		return
 	}
 
-	if err := s.limiter.AcquireForModel(r.Context(), normalized.Model, int64(prompt.tokens), s.capacity.ForModel(normalized.Model)); err != nil {
+	counted := s.countPrompt(prompt)
+	if err := s.limiter.AcquireForModel(r.Context(), normalized.Model, int64(counted.tokens), s.capacity.ForModel(normalized.Model)); err != nil {
 		if throttled, ours := rateLimited(err); ours && s.rejections != nil {
 			s.rejections.Rejected(normalized.Model, throttled.Label())
 			s.events.RequestThrottled(journal.RequestLine{
@@ -258,7 +261,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 		s.writeErrorFor(w, err)
 		return
 	}
-	defer s.limiter.ReleaseForModel(normalized.Model, int64(prompt.tokens))
+	defer s.limiter.ReleaseForModel(normalized.Model, int64(counted.tokens))
 	// The limiter can hold a request for minutes: a block that began meanwhile refuses it before any nonce is spent.
 	afterWait := s.config.Load()
 	if refusal := admission(s.snapshots.Snapshot(), afterWait.Modes, s.now(), afterWait.Chain.SnapshotMaxAgeSeconds); refusal != nil {
@@ -268,12 +271,12 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 
 	if s.cache == nil {
 		// Nothing to store, so the outcome and the hidden failure the cache path reads are both moot.
-		_, _ = s.race(w, r, requestID, normalized, prompt, escrowPin, configuration.Limits.LogprobsOptimization)
+		_, _ = s.race(w, r, requestID, normalized, counted, escrowPin, configuration.Limits.LogprobsOptimization)
 		return
 	}
 	recorder := newCacheRecorder(w, s.cache.entryLimit(), normalized.ClientStream, s.buffers)
 	defer recorder.releaseBudget()
-	outcome, hiddenFailure := s.race(recorder, r, requestID, normalized, prompt, escrowPin, configuration.Limits.LogprobsOptimization)
+	outcome, hiddenFailure := s.race(recorder, r, requestID, normalized, counted, escrowPin, configuration.Limits.LogprobsOptimization)
 	unstorable := cmp.Or(r.Context().Err(), hiddenFailure)
 	entry, storable := recorder.entry(outcome.EscrowID, normalized.ClientStream, unstorable)
 	if !storable {
@@ -349,6 +352,7 @@ func (s *Server) race(w http.ResponseWriter, r *http.Request, requestID string, 
 		Escrow:                  escrowPin,
 		InputTokens:             prompt.tokens,
 		InputTokensSource:       prompt.source,
+		InputTokensFromBytes:    filters.EstimatedPromptTokens(len(normalized.Body)),
 		InputBytes:              uint64(len(normalized.Body)),
 		OutputTokens:            outputTokens,
 		ClientStream:            normalized.ClientStream,

@@ -32,7 +32,7 @@ func TestTheRequestRowCarriesTheEstimateAndTheMeasuredPromptApart(t *testing.T) 
 
 	record := requestRecord(outcome)
 
-	if record.InputTokens != 50_791 || record.InputTokensSource != string(filters.InputTokensTokenizerSampled) {
+	if record.InputTokens != 50_791 || record.InputTokensSource != filters.InputTokensTokenizerSampled {
 		t.Fatalf("input_tokens = %d from %q, want the gateway's own count from the tokenizer", record.InputTokens, record.InputTokensSource)
 	}
 	if record.PromptTokens != 27_438 {
@@ -73,9 +73,9 @@ func TestAHostThatReportedNoUsageStillHasItsOutputCounted(t *testing.T) {
 }
 
 // Test flow:
-//  1. Build a race outcome with a gateway input-token estimate whose winning attempt reports no usage.
+//  1. Build a race outcome with a gateway input-token estimate and no source, whose winning attempt reports no usage.
 //  2. Call requestRecord on it.
-//  3. Assert PromptTokens stays zero rather than borrowing the estimate, and InputTokens still reports the estimate.
+//  3. Assert PromptTokens stays zero rather than borrowing the estimate, and InputTokens still reports the estimate, marked bytes_estimate.
 func TestAnUnreportedPromptIsNotFilledInFromTheEstimate(t *testing.T) {
 	t.Parallel()
 	outcome := engine.RaceOutcome{
@@ -92,7 +92,7 @@ func TestAnUnreportedPromptIsNotFilledInFromTheEstimate(t *testing.T) {
 	if record.PromptTokens != 0 {
 		t.Fatalf("prompt_tokens = %d, want 0 when the host reported none", record.PromptTokens)
 	}
-	if record.InputTokens != 50_791 {
-		t.Fatalf("input_tokens = %d, want the estimate to stand on its own", record.InputTokens)
+	if record.InputTokens != 50_791 || record.InputTokensSource != filters.InputTokensBytesEstimate {
+		t.Fatalf("input_tokens = %d from %q, want the estimate to stand on its own as %q", record.InputTokens, record.InputTokensSource, filters.InputTokensBytesEstimate)
 	}
 }

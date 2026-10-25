@@ -385,6 +385,7 @@ func (s *simulator) profile() Request {
 		Model:                   s.model,
 		EmptyAnswerCountsTokens: s.emptyAnswerCountsTokens,
 		InputTokens:             1_000,
+		InputTokensFromBytes:    1_000,
 		OutputTokens:            256,
 		Params:                  simDispatchParams{prompt: "hello"},
 	}

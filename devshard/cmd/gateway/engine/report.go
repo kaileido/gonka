@@ -21,7 +21,7 @@ func (c *raceCoordinator) apply(event AttemptEvent) {
 	case AttemptDispatched:
 		attempt.sendTime = event.At
 		if c.feedsFleet(attempt) {
-			c.deps.Fleet.recordDispatch(attempt, attempt.clockStart(), c.request.InputTokens)
+			c.deps.Fleet.recordDispatch(attempt, attempt.clockStart(), c.request.InputTokensFromBytes)
 		}
 	case AttemptCatchUpFaulted:
 		if attempt.catchUpFault.IsZero() {
@@ -64,7 +64,7 @@ func (c *raceCoordinator) complete(attempt *liveAttempt, event AttemptEvent) {
 		RecordCapability(c.deps.Perf, attempt.participant, c.request.Model, signal)
 		c.exclude(attempt.participant)
 	}
-	if rulesOutRetry(*attempt.outcome, c.deps.ModelContextLength, c.request.InputTokens+c.request.OutputTokens) {
+	if rulesOutRetry(*attempt.outcome, c.deps.ModelContextLength, c.request.InputTokensFromBytes+c.request.OutputTokens) {
 		c.retryRuledOut = true
 		c.stopPicking()
 	}
@@ -236,16 +236,17 @@ func (c *raceCoordinator) outcome() RaceOutcome {
 
 func (c *raceCoordinator) raceFacts() RaceOutcome {
 	return RaceOutcome{
-		RequestID:         c.request.RequestID,
-		EscrowID:          c.escrowID,
-		Model:             c.request.Model,
-		InputTokens:       c.request.InputTokens,
-		InputTokensSource: c.request.InputTokensSource,
-		OutputTokens:      c.request.OutputTokens,
-		ClientStream:      c.request.ClientStream,
-		Decision:          c.decision,
-		PoCBypassActive:   c.pocBypass,
-		Lifecycle:         Lifecycle{BalanceExhausted: c.balanceExhausted, ClientGone: !c.clientGoneAt.IsZero()},
+		RequestID:            c.request.RequestID,
+		EscrowID:             c.escrowID,
+		Model:                c.request.Model,
+		InputTokens:          c.request.InputTokens,
+		InputTokensSource:    c.request.InputTokensSource,
+		InputTokensFromBytes: c.request.InputTokensFromBytes,
+		OutputTokens:         c.request.OutputTokens,
+		ClientStream:         c.request.ClientStream,
+		Decision:             c.decision,
+		PoCBypassActive:      c.pocBypass,
+		Lifecycle:            Lifecycle{BalanceExhausted: c.balanceExhausted, ClientGone: !c.clientGoneAt.IsZero()},
 
 		ModelContextLength: c.deps.ModelContextLength,
 	}

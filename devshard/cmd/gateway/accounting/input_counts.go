@@ -19,19 +19,32 @@ type PersistedInputCount struct {
 	Source filters.InputTokensSource `json:"source"`
 }
 
-func (e *escrowLedger) recordInputCount(attempt Attempt) {
-	if !attempt.InputTokensSource.Tokenized() || e.isGhost(attempt.Nonce) {
+// RecordInputCount files the gateway's count of an assigned nonce's prompt, kept only when a tokenizer made it. See docs/accounting.md, "Money and tokens".
+func (b *Book) RecordInputCount(escrowID string, nonce, tokens uint64, source filters.InputTokensSource) error {
+	return b.withEscrow(escrowID, func(escrow *escrowLedger) error {
+		escrow.recordInputCount(nonce, tokens, source)
+		return nil
+	})
+}
+
+func (e *escrowLedger) recordInputCount(nonce, tokens uint64, source filters.InputTokensSource) {
+	if !source.Tokenized() || e.isGhost(nonce) || e.sealedBySweep(nonce) {
 		return
 	}
-	e.inputCounts[attempt.Nonce] = inputCount{tokens: attempt.InputTokens, source: attempt.InputTokensSource}
+	e.inputCounts[nonce] = inputCount{tokens: tokens, source: source}
 }
 
 func (e *escrowLedger) dropSealedInputCounts() {
 	for nonce := range e.inputCounts {
-		if _, live := e.costs[nonce]; !live {
+		if e.sealedBySweep(nonce) {
 			delete(e.inputCounts, nonce)
 		}
 	}
+}
+
+func (e *escrowLedger) sealedBySweep(nonce uint64) bool {
+	_, live := e.costs[nonce]
+	return !live && nonce <= e.sweptLatest
 }
 
 func (e *escrowLedger) estimatedInput(nonce uint64, cost nonceCost) (tokens uint64, tokenized bool) {

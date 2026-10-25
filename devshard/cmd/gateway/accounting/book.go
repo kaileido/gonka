@@ -24,6 +24,7 @@ type Book struct {
 type escrowLedger struct {
 	metadata      EscrowMetadata
 	latest        uint64
+	sweptLatest   uint64
 	hostStats     map[uint32]types.HostStats
 	challenged    map[uint32]uint64
 	validations   map[uint32]uint64
@@ -190,6 +191,7 @@ func (b *Book) TakeRestoredWatermark(escrowID string) (latestNonce uint64, resto
 func (b *Book) ObserveLatestNonce(escrowID string, nonce uint64) error {
 	return b.withEscrow(escrowID, func(escrow *escrowLedger) error {
 		escrow.raiseLatest(nonce)
+		escrow.sweptLatest = max(escrow.sweptLatest, nonce)
 		return nil
 	})
 }
@@ -330,7 +332,7 @@ func (b *Book) RecordRace(escrowID string, attempts []Attempt) error {
 			record.slowDecode = attempt.SlowDecode
 			record.logprobsDecoded = attempt.LogprobsDecoded
 			record.raced = true
-			escrow.recordInputCount(attempt)
+			escrow.recordInputCount(attempt.Nonce, attempt.InputTokens, attempt.InputTokensSource)
 			escrow.addProduced(attempt.Nonce, record, attempt.OutputTokens)
 			escrow.reclassify(attempt.Nonce, record)
 			if record.sealed {

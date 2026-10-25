@@ -259,10 +259,10 @@ func (o *recordingObserver) waits() []time.Duration {
 	return append([]time.Duration(nil), o.queueWaits...)
 }
 
-func (o *recordingObserver) NonceAssigned(_ string, nonce uint64, requestID string) {
+func (o *recordingObserver) NonceAssigned(_ string, nonce uint64, profile RequestProfile) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	o.assigned = append(o.assigned, assignedNonce{nonce: nonce, requestID: requestID})
+	o.assigned = append(o.assigned, assignedNonce{nonce: nonce, requestID: profile.RequestID})
 }
 
 func (o *recordingObserver) ExcludedHostServed(_ string, participant string) {

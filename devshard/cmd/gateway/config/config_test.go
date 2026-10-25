@@ -2,6 +2,7 @@ package config
 
 import (
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -61,6 +62,7 @@ func TestDefaultsMatchSpec(t *testing.T) {
 		{"Rotation.PrePoCBlocks", configuration.Rotation.PrePoCBlocks, int64(300)},
 		{"Cache.ChatCacheMaxBytes", configuration.Cache.ChatCacheMaxBytes, int64(268_435_456)},
 		{"Server.MaxConcurrentRuntimeBuilds", configuration.Server.MaxConcurrentRuntimeBuilds, int64(16)},
+		{"Server.MaxConcurrentPromptCounts", configuration.Server.MaxConcurrentPromptCounts, max(int64(runtime.GOMAXPROCS(0))/2, 1)},
 		{"Server.SessionRetentionEpochs", configuration.Server.SessionRetentionEpochs, int64(2)},
 		{"Stream.DrainTimeoutSeconds", configuration.Stream.DrainTimeoutSeconds, int64(2_400)},
 		{"Stream.ClassifyMaxAttemptBytes", configuration.Stream.ClassifyMaxAttemptBytes, int64(1_048_576)},
@@ -138,6 +140,7 @@ func TestValidateCatchesEveryRuleBreach(t *testing.T) {
 		{"port too low", func(c *Config) { c.Server.Port = 0 }, "port"},
 		{"port too high", func(c *Config) { c.Server.Port = 65536 }, "port"},
 		{"max_concurrent_runtime_builds too low", func(c *Config) { c.Server.MaxConcurrentRuntimeBuilds = 0 }, "max_concurrent_runtime_builds"},
+		{"max_concurrent_prompt_counts too low", func(c *Config) { c.Server.MaxConcurrentPromptCounts = 0 }, "max_concurrent_prompt_counts"},
 		{"session_retention_epochs negative", func(c *Config) { c.Server.SessionRetentionEpochs = -1 }, "session_retention_epochs"},
 		{"quiet_settle_delay_ms too low", func(c *Config) { c.HeightSync.QuietSettleDelayMS = 0 }, "quiet_settle_delay_ms"},
 		{"public_api not a url", func(c *Config) { c.Chain.PublicAPIBaseURL = "://not-a-url" }, "public_api"},

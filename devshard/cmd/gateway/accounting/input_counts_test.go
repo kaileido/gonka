@@ -29,17 +29,25 @@ func recordCountedRace(t *testing.T, book *Book) {
 	}
 }
 
+func sweep(t *testing.T, book *Book, latestNonce uint64, inferences map[uint64]*types.InferenceRecord) {
+	t.Helper()
+	if err := book.ObserveLatestNonce(testEscrow, latestNonce); err != nil {
+		t.Fatalf("ObserveLatestNonce(): %v", err)
+	}
+	if err := book.ObserveInferences(testEscrow, inferences); err != nil {
+		t.Fatalf("ObserveInferences(): %v", err)
+	}
+}
+
 // Test flow:
 //  1. Record a race whose nonces carry an exact tokenizer count, no count, and a sampled count, and observe them finished, finished and timed out.
 //  2. Read the slot money live, after a save and reload, after the chain seals them, and after one more save and reload.
 //  3. Assert each time the counted nonces are estimated by their tokenizer count, marked tokenized, and the uncounted one by its bytes.
 //  4. Assert no input count is kept once their costs are sealed.
 func TestARacedNonceIsEstimatedByItsTokenizerCountAndTheRestByTheirBytes(t *testing.T) {
-	book := newTestBook(t, 4)
-	recordCountedRace(t, book)
-	if err := book.ObserveInferences(testEscrow, countedRaceInferences()); err != nil {
-		t.Fatalf("ObserveInferences(): %v", err)
-	}
+	live := newTestBook(t, 4)
+	recordCountedRace(t, live)
+	sweep(t, live, 7, countedRaceInferences())
 	expected := map[string]SlotMoney{
 		participantFor(0): {},
 		participantFor(1): {Input: 100, EstimatedInput: 37, TokenizedInput: 37, CountedNonces: 1},
@@ -47,16 +55,18 @@ func TestARacedNonceIsEstimatedByItsTokenizerCountAndTheRestByTheirBytes(t *test
 		participantFor(3): {Reserved: 700, Refunded: 700, EstimatedError: 290, TokenizedError: 290},
 	}
 	store := openTestStore(t)
-	restored := saveAndReload(t, book, store)
-	if err := restored.ObserveInferences(testEscrow, map[uint64]*types.InferenceRecord{}); err != nil {
-		t.Fatalf("ObserveInferences(): %v", err)
-	}
+	totals := map[string]map[string]SlotMoney{"live": slotTotals(live.Query(QueryFilter{}))}
+	restored := saveAndReload(t, live, store)
+	totals["reloaded"] = slotTotals(restored.Query(QueryFilter{}))
+	sweep(t, restored, 7, map[uint64]*types.InferenceRecord{})
+	totals["sealed"] = slotTotals(restored.Query(QueryFilter{}))
 	sealed := saveAndReload(t, restored, store)
+	totals["sealed and reloaded"] = slotTotals(sealed.Query(QueryFilter{}))
 
-	for name, book := range map[string]*Book{"live": book, "reloaded": restored, "sealed and reloaded": sealed} {
-		for participant, money := range slotTotals(book.Query(QueryFilter{})) {
-			if money != expected[participant] {
-				t.Fatalf("%s: %s holds %+v, want %+v", name, participant, money, expected[participant])
+	for name, money := range totals {
+		for participant, slot := range money {
+			if slot != expected[participant] {
+				t.Fatalf("%s: %s holds %+v, want %+v", name, participant, slot, expected[participant])
 			}
 		}
 	}
@@ -137,17 +147,13 @@ func stripInputCounts(t *testing.T, path string) {
 func TestARaceReportedAfterItsNonceWasSealedKeepsNoCount(t *testing.T) {
 	book := newTestBook(t, 4)
 	for _, inferences := range []map[uint64]*types.InferenceRecord{{5: {Status: types.StatusFinished, InputLength: 400}}, {}} {
-		if err := book.ObserveInferences(testEscrow, inferences); err != nil {
-			t.Fatalf("ObserveInferences(): %v", err)
-		}
+		sweep(t, book, 5, inferences)
 	}
 
 	if err := book.RecordRace(testEscrow, []Attempt{{Nonce: 5, Sent: true, InputTokens: 37, InputTokensSource: filters.InputTokensTokenizerExact}}); err != nil {
 		t.Fatalf("RecordRace(): %v", err)
 	}
-	if err := book.ObserveInferences(testEscrow, map[uint64]*types.InferenceRecord{}); err != nil {
-		t.Fatalf("ObserveInferences(): %v", err)
-	}
+	sweep(t, book, 5, map[uint64]*types.InferenceRecord{})
 
 	money := moneyOf(t, book)
 	if money.EstimatedInput != filters.EstimatedPromptTokens(400) || money.TokenizedInput != 0 {
@@ -155,5 +161,28 @@ func TestARaceReportedAfterItsNonceWasSealedKeepsNoCount(t *testing.T) {
 	}
 	if counts := book.Snapshot().Escrows[0].InputCounts; len(counts) != 0 {
 		t.Fatalf("input counts = %+v, want none for a sealed nonce", counts)
+	}
+}
+
+// Test flow:
+//  1. Record a tokenizer count for a nonce the escrow's sweeps have not seen yet.
+//  2. Sweep the escrow at a watermark below that nonce, then at one that holds it finished, then once more with it sealed.
+//  3. Assert the nonce was folded with its tokenizer count and no input count is left behind.
+func TestACountRecordedBeforeTheSweepSeesItsNonceOutlivesThatSweep(t *testing.T) {
+	book := newTestBook(t, 4)
+	if err := book.RecordRace(testEscrow, []Attempt{{Nonce: 6, Sent: true, InputTokens: 37, InputTokensSource: filters.InputTokensTokenizerExact}}); err != nil {
+		t.Fatalf("RecordRace(): %v", err)
+	}
+	finished := &types.InferenceRecord{Status: types.StatusFinished, InputLength: 400}
+	sweep(t, book, 5, map[uint64]*types.InferenceRecord{5: finished})
+	sweep(t, book, 6, map[uint64]*types.InferenceRecord{5: finished, 6: {Status: types.StatusFinished, InputLength: 4_000}})
+	sweep(t, book, 6, map[uint64]*types.InferenceRecord{})
+
+	money := moneyOf(t, book)
+	if money.EstimatedInput != filters.EstimatedPromptTokens(400)+37 || money.TokenizedInput != 37 {
+		t.Fatalf("money = %+v, want nonce 6 folded at its 37 tokenizer tokens", money)
+	}
+	if counts := book.Snapshot().Escrows[0].InputCounts; len(counts) != 0 {
+		t.Fatalf("input counts = %+v, want none once both nonces are sealed", counts)
 	}
 }

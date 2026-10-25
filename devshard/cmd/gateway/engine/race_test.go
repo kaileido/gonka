@@ -543,9 +543,10 @@ func newRaceFixture(policy EscalationPolicy, hosts int) *raceFixture {
 	}
 	fixture.request = raceRequest{
 		Request: Request{
-			RequestID:   "request-1",
-			Model:       testModel,
-			InputTokens: 1_000,
+			RequestID:            "request-1",
+			Model:                testModel,
+			InputTokens:          1_000,
+			InputTokensFromBytes: 1_000,
 		},
 		Client: fixture.client,
 	}
