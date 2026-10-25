@@ -342,7 +342,7 @@ func (attempt *liveAttempt) clockStart() time.Time {
 }
 
 func (c *raceCoordinator) escalationRequest() EscalationRequest {
-	return EscalationRequest{InputTokens: c.request.InputTokens}
+	return EscalationRequest{InputTokens: c.request.InputTokensFromBytes}
 }
 
 func (c *raceCoordinator) abandonCancelled() {

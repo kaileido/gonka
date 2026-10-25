@@ -1,18 +1,24 @@
 package config
 
 import (
+	"runtime"
+
 	"devshard/cmd/gateway/chain"
 	"devshard/cmd/gateway/filters"
 )
 
-// fallbackMaxModelLen prices a model no context length has been named for. See capacity.md, "The participant limiter: IOCW".
-const fallbackMaxModelLen = 1_000_000
+// fallbackMaxModelLen prices a model no context length has been named for, and processorsPerPromptCount leaves half the processors to requests that are not counting. See capacity.md, "The participant limiter: IOCW", and request.md, "The prompt token count".
+const (
+	fallbackMaxModelLen      = 1_000_000
+	processorsPerPromptCount = 2
+)
 
 func Defaults() Config {
 	return Config{
 		Server: Server{
 			Port:                       8080,
 			MaxConcurrentRuntimeBuilds: 16,
+			MaxConcurrentPromptCounts:  max(int64(runtime.GOMAXPROCS(0))/processorsPerPromptCount, 1),
 			SessionRetentionEpochs:     2,
 		},
 		Chain: Chain{

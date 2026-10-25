@@ -25,6 +25,8 @@ type Values struct {
 	AdminAPIKey                *string
 	DevshardsJSON              *string
 	MaxConcurrentRuntimeBuilds *int64
+	MaxConcurrentPromptCounts  *int64
+	StatsTokenizerEnabled      *bool
 	SessionRetentionEpochs     *int64
 
 	ChainGRPC        *string
@@ -282,6 +284,8 @@ func Load() (Values, error) {
 	readString("DEVSHARD_ADMIN_API_KEY", &values.AdminAPIKey)
 	readString("DEVSHARDS_JSON", &values.DevshardsJSON)
 	readLenientInt("DEVSHARD_MAX_CONCURRENT_RUNTIME_BUILDS", 1, &values.MaxConcurrentRuntimeBuilds)
+	readLenientInt("DEVSHARD_MAX_CONCURRENT_PROMPT_COUNTS", 1, &values.MaxConcurrentPromptCounts)
+	readLenientBool("DEVSHARD_STATS_TOKENIZER", &values.StatsTokenizerEnabled)
 	readLenientInt("DEVSHARD_SESSION_RETENTION_EPOCHS", 0, &values.SessionRetentionEpochs)
 
 	readString("DEVSHARD_CHAIN_GRPC", &values.ChainGRPC, "NODE_GRPC_URL")

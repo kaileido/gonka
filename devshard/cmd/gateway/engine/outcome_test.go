@@ -129,13 +129,14 @@ func failedAttempt(terminal Terminal) AttemptOutcome {
 
 func race(attempt AttemptOutcome) RaceOutcome {
 	return RaceOutcome{
-		RequestID:   "req-1",
-		EscrowID:    "escrow-1",
-		Model:       testModel,
-		InputTokens: 1024,
-		WinnerNonce: 7,
-		Succeeded:   true,
-		Attempts:    []AttemptOutcome{attempt},
+		RequestID:            "req-1",
+		EscrowID:             "escrow-1",
+		Model:                testModel,
+		InputTokens:          1024,
+		InputTokensFromBytes: 1024,
+		WinnerNonce:          7,
+		Succeeded:            true,
+		Attempts:             []AttemptOutcome{attempt},
 	}
 }
 

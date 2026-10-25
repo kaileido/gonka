@@ -108,6 +108,7 @@ var migrations = []string{
 		filters_json TEXT NOT NULL,
 		updated_at TEXT NOT NULL
 	);`,
+	`ALTER TABLE request_accounting ADD COLUMN input_tokens_source TEXT NOT NULL DEFAULT 'bytes_estimate'`,
 }
 
 // ErrLegacyDatabase reports a gateway.db this gateway did not create, and legacyOnlyTables are the tables that prove it; both are kept out of the migrations block. See README.md, "The devshardctl-database guard".

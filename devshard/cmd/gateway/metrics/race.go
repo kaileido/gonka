@@ -136,7 +136,7 @@ func NewRaceRecorder(telemetry *Metrics, now func() time.Time, staleness func() 
 		}, []string{"participant_key", "model"}),
 		outputTokens: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "devshard_gateway_participant_output_tokens_total",
-			Help: "Output tokens a participant generated on a model, as the host itself reported them.",
+			Help: "Output tokens a participant generated on a model: the host's usage completion_tokens, else the logprob entries it streamed.",
 		}, []string{"participant_key", "model"}),
 		maxChunkGap: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "devshard_gateway_participant_max_inter_chunk_seconds",

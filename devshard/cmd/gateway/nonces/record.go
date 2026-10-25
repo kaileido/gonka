@@ -5,13 +5,18 @@ import (
 
 	"devshard/cmd/gateway/accounting"
 	"devshard/cmd/gateway/engine"
+	"devshard/cmd/gateway/scheduler"
 )
 
-func (n *Recorder) NonceAssigned(escrowID string, nonce uint64, requestID string) {
+// NonceAssigned files the nonce and its request's prompt count at once, so an attempt sealed before its race reports keeps the count.
+func (n *Recorder) NonceAssigned(escrowID string, nonce uint64, profile scheduler.RequestProfile) {
 	if n == nil || nonce == 0 {
 		return
 	}
-	n.reportFact(n.service.Book.RecordAssigned(escrowID, nonce, requestID))
+	n.reportFact(n.service.Book.RecordAssigned(escrowID, nonce, profile.RequestID))
+	if profile.InputTokensSource.Tokenized() {
+		n.reportFact(n.service.Book.RecordInputCount(escrowID, nonce, uint64(max(profile.InputTokens, 0)), profile.InputTokensSource))
+	}
 }
 
 func (n *Recorder) RecordGhost(escrowID string, nonce uint64, reason string) {
@@ -46,6 +51,9 @@ func (n *Recorder) RecordRace(outcome engine.RaceOutcome) {
 			ClockDrifted:      clockDrifted(attempt),
 			SlowDecode:        engine.TimePerOutputToken(attempt) > accounting.SlowDecode,
 			LogprobsDecoded:   attempt.LogprobsDecoded,
+
+			InputTokens:       outcome.InputTokens,
+			InputTokensSource: outcome.InputTokensSource,
 		})
 	}
 	n.reportFact(n.service.Book.RecordRace(outcome.EscrowID, attempts))

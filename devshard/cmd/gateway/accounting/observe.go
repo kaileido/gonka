@@ -9,6 +9,7 @@ import (
 
 func (b *Book) ObserveLatestNonce(escrowID string, nonce uint64) error {
 	return b.observeEscrow(escrowID, func(escrow *escrowLedger) bool {
+		escrow.pendingSweepWatermark = max(escrow.pendingSweepWatermark, nonce)
 		return escrow.raiseLatest(nonce)
 	})
 }
@@ -59,6 +60,10 @@ func (b *Book) ObserveInferences(escrowID string, inferences map[uint64]*types.I
 			escrow.inFlightReserved != inFlight || escrow.challengedCost != challengedCost
 		escrow.challenged = challenged
 		escrow.inFlightReserved, escrow.challengedCost = inFlight, challengedCost
+		escrow.appliedSweepWatermark = escrow.pendingSweepWatermark
+		if escrow.dropSealedInputCounts() {
+			changed = true
+		}
 		if folded && escrow.retired {
 			escrow.shrinkPerNonceMaps()
 		}
@@ -92,6 +97,7 @@ func (b *Book) observeEscrow(escrowID string, observe func(*escrowLedger) bool) 
 func (e *escrowLedger) shrinkPerNonceMaps() {
 	e.costs = shrinkToFit(e.costs)
 	e.nonces = shrinkToFit(e.nonces)
+	e.inputCounts = shrinkToFit(e.inputCounts)
 }
 
 func shrinkToFit[Key comparable, Value any](source map[Key]Value) map[Key]Value {

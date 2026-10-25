@@ -32,8 +32,8 @@ func (t tracedDispatches) BurnBudgetExhausted(escrowID string) {
 	t.events.BurnBudgetExhausted(escrowID)
 }
 
-func (t tracedDispatches) NonceAssigned(escrowID string, nonce uint64, requestID string) {
-	t.ledger.NonceAssigned(escrowID, nonce, requestID)
+func (t tracedDispatches) NonceAssigned(escrowID string, nonce uint64, profile scheduler.RequestProfile) {
+	t.ledger.NonceAssigned(escrowID, nonce, profile)
 }
 
 func (t tracedDispatches) NonceQueued(_ string, waited time.Duration) {

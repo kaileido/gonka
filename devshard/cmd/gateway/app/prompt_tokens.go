@@ -5,7 +5,6 @@ import (
 
 	"devshard/cmd/gateway/api"
 	"devshard/cmd/gateway/chain"
-	"devshard/cmd/gateway/filters"
 	"devshard/cmd/gateway/tokenizer"
 )
 
@@ -13,28 +12,8 @@ type pinnedPromptTokens struct {
 	library *tokenizer.Library
 }
 
-type countedPrompt struct {
-	counter *tokenizer.Counter
-	parts   []string
-}
-
-func (p pinnedPromptTokens) Prompt(model string, body []byte) (api.PromptCount, bool) {
-	counter := p.library.Counter(model)
-	if counter == nil {
-		return nil, false
-	}
-	parts, err := filters.PromptText(body)
-	if err != nil {
-		return nil, false
-	}
-	return countedPrompt{counter: counter, parts: parts}, true
-}
-
-func (c countedPrompt) MaximumTokens() uint64 { return c.counter.MaximumTokens(c.parts) }
-
-func (c countedPrompt) MinimumTokens() (uint64, bool) {
-	tokens, err := c.counter.MinimumTokens(c.parts)
-	return tokens, err == nil
+func (p pinnedPromptTokens) Prompt(model string, body []byte) (api.PromptText, bool) {
+	return api.TokenizerPrompt(p.library.Counter(model), body)
 }
 
 func knownEpoch(snapshots phaseSnapshots) func() (uint64, bool) {

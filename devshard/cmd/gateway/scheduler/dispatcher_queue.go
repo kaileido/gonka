@@ -300,7 +300,7 @@ func (d *dispatcher) handOff(served *waiter, taken reservation, prepared Prepare
 	}
 	assignment := Assignment{Escrow: d.escrowID, Host: taken.participant, Nonce: prepared, EscrowHold: taken.escrowHold, HostSlot: taken.hostSlot}
 	if served.deliver(pickResult{assignment: assignment}) {
-		d.recordAssigned(prepared.Nonce(), served.profile.RequestID, served.enqueued)
+		d.recordAssigned(prepared.Nonce(), served.profile, served.enqueued)
 		return true
 	}
 	d.giveBack(taken)

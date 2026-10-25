@@ -2,19 +2,21 @@ package scheduler
 
 import (
 	"devshard/cmd/gateway/chain"
+	"devshard/cmd/gateway/filters"
 	"devshard/cmd/gateway/limits"
 )
 
 // RequestProfile is one request as routing reads it; RequestID only names it on the burns it causes, and Params must be exactly devshard/user.InferenceParams. See README, "The boundary types".
 type RequestProfile struct {
-	RequestID    string
-	Model        string
-	Escrow       string
-	InputTokens  int
-	InputBytes   int
-	OutputTokens int
-	Exclude      []string
-	Params       any
+	RequestID         string
+	Model             string
+	Escrow            string
+	InputTokens       int
+	InputTokensSource filters.InputTokensSource
+	InputBytes        int
+	OutputTokens      int
+	Exclude           []string
+	Params            any
 	// Escalation marks a speculative attempt of a race that already holds Escrow. See routing.md, "Picking an escrow".
 	Escalation bool
 }

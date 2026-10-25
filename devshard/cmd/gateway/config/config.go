@@ -18,6 +18,8 @@ type Server struct {
 	AdminAPIKey                string
 	DevshardsJSON              string
 	MaxConcurrentRuntimeBuilds int64
+	MaxConcurrentPromptCounts  int64
+	StatsTokenizerEnabled      bool
 	SessionRetentionEpochs     int64
 }
 

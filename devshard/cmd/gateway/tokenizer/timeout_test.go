@@ -9,7 +9,7 @@ const backtrackingRunes = 40
 
 // Test flow:
 //  1. Load a tokenizer whose only split pattern has no scanner and backtracks exponentially on a run of letters that ends in a mismatch.
-//  2. Count such a run, and take MinimumTokens of it.
+//  2. Count such a run, and estimate it.
 //  3. Assert both return an error once the match timeout passes, not a count.
 func TestSplitTimeoutIsAnErrorNotACount(t *testing.T) {
 	preTokenizer := map[string]any{"type": stepSequence, "pretokenizers": []any{
@@ -25,7 +25,7 @@ func TestSplitTimeoutIsAnErrorNotACount(t *testing.T) {
 	if got, err := counter.Count(text); err == nil {
 		t.Errorf("Count = %d, want a timeout error", got)
 	}
-	if got, err := counter.MinimumTokens([]string{text}); err == nil {
-		t.Errorf("MinimumTokens = %d, want a timeout error", got)
+	if got, err := counter.EstimateTokens([]string{text}); err == nil {
+		t.Errorf("EstimateTokens = %+v, want a timeout error", got)
 	}
 }

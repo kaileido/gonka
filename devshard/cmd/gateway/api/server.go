@@ -166,15 +166,28 @@ type LimitRejections interface {
 	Rejected(model, reason string)
 }
 
-// PromptTokens reads a normalized chat body's messages for the model's pinned tokenizer, known false while there is none; app's pinned tokenizer library satisfies it.
-type PromptTokens interface {
-	Prompt(model string, body []byte) (prompt PromptCount, known bool)
+// StatsTokenizerFallbacks counts the requests that found the prompt count gate full and carried the byte estimate; *metrics.StatsTokenizerRecorder satisfies it.
+type StatsTokenizerFallbacks interface {
+	GateFull(model string)
 }
 
-// PromptCount bounds a prompt's tokens: MaximumTokens from its bytes alone, MinimumTokens, never above it, by tokenizing.
-type PromptCount interface {
+// PromptTokens reads a normalized chat body's messages for the model's pinned tokenizer, known false while there is none; app's pinned tokenizer library satisfies it.
+type PromptTokens interface {
+	Prompt(model string, body []byte) (prompt PromptText, known bool)
+}
+
+// PromptText is a prompt read for one tokenizer: MaximumTokens bounds its count from its bytes alone, Count tokenizes it, and CountWithPieceCap tokenizes it with each long pre-token estimated from its start, known false when the tokenizer fails.
+type PromptText interface {
 	MaximumTokens() uint64
-	MinimumTokens() (tokens uint64, known bool)
+	Count() (count TokenizedPrompt, known bool)
+	CountWithPieceCap() (count TokenizedPrompt, known bool)
+}
+
+// TokenizedPrompt is one tokenizer pass over a prompt: Tokens the count, Sampled when it is estimated, and MinimumTokens, from Count, never above the prompt's real count.
+type TokenizedPrompt struct {
+	Tokens        uint64
+	MinimumTokens uint64
+	Sampled       bool
 }
 
 // RequestJournal is satisfied by *journal.Journal; each method returns without waiting on a log handler.
@@ -186,30 +199,31 @@ type RequestJournal interface {
 
 // Deps is everything the HTTP boundary reads or calls. See README.md, "What the server is given".
 type Deps struct {
-	Config              *config.Holder
-	Escrows             EscrowRegistry
-	Inference           InferenceEngine
-	Limiter             GatewayLimiter
-	Capacity            CapacityReader
-	Snapshots           SnapshotSource
-	Control             ControlStore
-	Accounting          RequestLedger
-	Operations          Operations
-	Suspicious          SuspiciousHosts
-	ModelFilters        ModelFilters
-	HostStates          HostStates
-	HostWindows         HostWindows
-	Telemetry           Telemetry
-	Buffers             *BufferBudget
-	Rejections          LimitRejections
-	CacheResults        CacheResults
-	Journal             RequestJournal
-	StorageDir          string
-	Version             string
-	Now                 func() time.Time
-	RequestIDs          func() string
-	StopTokenVocabulary func(model string) int
-	PromptTokens        PromptTokens
+	Config                  *config.Holder
+	Escrows                 EscrowRegistry
+	Inference               InferenceEngine
+	Limiter                 GatewayLimiter
+	Capacity                CapacityReader
+	Snapshots               SnapshotSource
+	Control                 ControlStore
+	Accounting              RequestLedger
+	Operations              Operations
+	Suspicious              SuspiciousHosts
+	ModelFilters            ModelFilters
+	HostStates              HostStates
+	HostWindows             HostWindows
+	Telemetry               Telemetry
+	Buffers                 *BufferBudget
+	Rejections              LimitRejections
+	CacheResults            CacheResults
+	StatsTokenizerFallbacks StatsTokenizerFallbacks
+	Journal                 RequestJournal
+	StorageDir              string
+	Version                 string
+	Now                     func() time.Time
+	RequestIDs              func() string
+	StopTokenVocabulary     func(model string) int
+	PromptTokens            PromptTokens
 }
 
 type Server struct {
@@ -238,9 +252,12 @@ type Server struct {
 	cache        *responseCache
 	capture      *requestCapture
 
-	stopTokenVocabulary func(model string) int
-	promptTokens        PromptTokens
-	settingsWrites      sync.Mutex
+	stopTokenVocabulary     func(model string) int
+	promptTokens            PromptTokens
+	promptCounts            promptCountGate
+	statsTokenizerFallbacks StatsTokenizerFallbacks
+	statsTokenizerEnabled   bool
+	settingsWrites          sync.Mutex
 
 	gates   atomic.Pointer[keyGates]
 	verify  func(authorization string) credentials
@@ -304,14 +321,17 @@ func New(deps Deps) (*Server, error) {
 		now:          deps.Now,
 		requestIDs:   deps.RequestIDs,
 
-		stopTokenVocabulary: deps.StopTokenVocabulary,
-		promptTokens:        deps.PromptTokens,
+		stopTokenVocabulary:     deps.StopTokenVocabulary,
+		promptTokens:            deps.PromptTokens,
+		statsTokenizerFallbacks: deps.StatsTokenizerFallbacks,
 	}
 	if server.requestIDs == nil {
 		server.requestIDs = randomRequestID
 	}
 	configuration := deps.Config.Load()
 	server.cache = newResponseCache(configuration.Cache.ChatCacheMaxBytes)
+	server.promptCounts = newPromptCountGate(configuration.Server.MaxConcurrentPromptCounts)
+	server.statsTokenizerEnabled = configuration.Server.StatsTokenizerEnabled
 	capture, err := newRequestCapture(configuration.Capture, deps.StorageDir, server.now)
 	if err != nil {
 		return nil, err

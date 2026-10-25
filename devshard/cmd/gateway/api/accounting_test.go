@@ -14,6 +14,7 @@ import (
 
 	"devshard/cmd/gateway/config"
 	"devshard/cmd/gateway/engine"
+	"devshard/cmd/gateway/filters"
 	"devshard/cmd/gateway/store"
 )
 
@@ -81,6 +82,7 @@ func TestACompletedRaceIsAccountedWithTheOutcomesOwnNumbers(t *testing.T) {
 		WinnerHostIdx:      3,
 		Attempts:           2,
 		InputTokens:        128,
+		InputTokensSource:  filters.InputTokensBytesEstimate,
 		WinnerOutputTokens: 256,
 		TotalOutputTokens:  381,
 		StartedAt:          sendTime().Add(-500 * time.Millisecond),
@@ -116,24 +118,26 @@ func TestAFailedRaceAndARaceWithoutAnEscrowAreBothAccounted(t *testing.T) {
 				Lifecycle: engine.Lifecycle{BalanceExhausted: true},
 			},
 			expected: store.RequestRecord{
-				RequestID:        "request-2",
-				EscrowID:         "escrow-7",
-				Model:            "qwen",
-				Outcome:          store.RequestFailed,
-				Decision:         "escalated",
-				Attempts:         1,
-				BalanceExhausted: true,
-				StartedAt:        sendTime(),
-				CompletedAt:      sendTime().Add(time.Second),
+				RequestID:         "request-2",
+				EscrowID:          "escrow-7",
+				Model:             "qwen",
+				Outcome:           store.RequestFailed,
+				Decision:          "escalated",
+				Attempts:          1,
+				InputTokensSource: filters.InputTokensBytesEstimate,
+				BalanceExhausted:  true,
+				StartedAt:         sendTime(),
+				CompletedAt:       sendTime().Add(time.Second),
 			},
 		},
 		{
 			name:    "no escrow was ever picked",
 			outcome: engine.RaceOutcome{RequestID: "request-3", Model: "qwen"},
 			expected: store.RequestRecord{
-				RequestID: "request-3",
-				Model:     "qwen",
-				Outcome:   store.RequestNoEscrow,
+				RequestID:         "request-3",
+				Model:             "qwen",
+				Outcome:           store.RequestNoEscrow,
+				InputTokensSource: filters.InputTokensBytesEstimate,
 			},
 		},
 	}
@@ -172,24 +176,25 @@ func TestTheLookupReturnsTheRecordedRow(t *testing.T) {
 		t.Fatalf("decoding body: %v", err)
 	}
 	expected := requestAccountingResponse{
-		RequestID:          "request-1",
-		EscrowID:           "escrow-7",
-		Model:              "qwen",
-		Outcome:            string(store.RequestSettled),
-		Decision:           "hedged",
-		Stream:             true,
-		WinnerNonce:        42,
-		WinnerParticipant:  "gonka1winner",
-		WinnerHost:         "host-3",
-		WinnerHostIdx:      3,
-		Attempts:           2,
-		EstimatedInput:     128,
-		WinnerOutputTokens: 256,
-		TotalOutputTokens:  381,
-		StartedAt:          "2023-11-14T22:13:19.500000000Z",
-		CompletedAt:        "2023-11-14T22:13:24.000000000Z",
-		FirstTokenMS:       450,
-		DurationMS:         4_000,
+		RequestID:            "request-1",
+		EscrowID:             "escrow-7",
+		Model:                "qwen",
+		Outcome:              string(store.RequestSettled),
+		Decision:             "hedged",
+		Stream:               true,
+		WinnerNonce:          42,
+		WinnerParticipant:    "gonka1winner",
+		WinnerHost:           "host-3",
+		WinnerHostIdx:        3,
+		Attempts:             2,
+		EstimatedInput:       128,
+		EstimatedInputSource: filters.InputTokensBytesEstimate,
+		WinnerOutputTokens:   256,
+		TotalOutputTokens:    381,
+		StartedAt:            "2023-11-14T22:13:19.500000000Z",
+		CompletedAt:          "2023-11-14T22:13:24.000000000Z",
+		FirstTokenMS:         450,
+		DurationMS:           4_000,
 	}
 	if body != expected {
 		t.Fatalf("body = %+v, want %+v", body, expected)

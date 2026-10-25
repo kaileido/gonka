@@ -29,6 +29,8 @@ func moneyOf(t *testing.T, book *Book) SlotMoney {
 			Refunded:       record.RefundedCost,
 			EstimatedInput: record.EstimatedInput,
 			EstimatedError: record.EstimatedError,
+			TokenizedInput: record.TokenizedInput,
+			TokenizedError: record.TokenizedError,
 			MaxTokens:      record.MaxTokens,
 			Input:          record.InputTokens,
 			CountedNonces:  record.CountedNonces,
@@ -167,6 +169,7 @@ func slotTotals(records []ParticipantRecord) map[string]SlotMoney {
 			totals[record.Participant] = SlotMoney{
 				Reserved: slot.ReservedCost, Actual: slot.ActualCost, Refunded: slot.RefundedCost,
 				EstimatedInput: slot.EstimatedInput, EstimatedError: slot.EstimatedError,
+				TokenizedInput: slot.TokenizedInput, TokenizedError: slot.TokenizedError,
 				MaxTokens: slot.MaxTokens, Input: slot.InputTokens,
 				CountedNonces: slot.CountedNonces,
 			}

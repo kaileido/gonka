@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"devshard/cmd/gateway/engine"
+	"devshard/cmd/gateway/filters"
 	"devshard/cmd/gateway/scheduler"
 	"devshard/types"
 )
@@ -103,6 +104,8 @@ func recordWonRace(book *Book, escrowID string, nonce uint64) {
 	_ = book.RecordRace(escrowID, []Attempt{{
 		Nonce: nonce, RequestID: fmt.Sprintf("request-%d", nonce), Sent: true, Acknowledged: true, OutputTokens: 250,
 		Usage: UsageWinner, Terminal: engine.TerminalWon.String(), Phase: PhaseNormal,
+		InputTokens: 37 + nonce, InputTokensSource: filters.InputTokensTokenizerExact,
+		FirstContentDelay: time.Duration(nonce) * 100 * time.Millisecond,
 	}})
 }
 
@@ -204,6 +207,26 @@ func ledgerScript() []func(*Book) {
 		func(book *Book) {
 			sweepEscrow(book, testEscrow, 11, 960, liveInferences(11, 11, types.StatusFinished))
 		},
+		func(book *Book) {
+			_ = book.ObserveLatestNonce(testEscrow, 20)
+		},
+		func(book *Book) {
+			_ = book.RecordInputCount(testEscrow, 20, 55, filters.InputTokensTokenizerExact)
+			_ = book.RecordInputCount(testEscrow, 21, 56, filters.InputTokensTokenizerExact)
+			_ = book.RecordInputCount(otherEscrow, 4, 57, filters.InputTokensTokenizerExact)
+		},
+		func(book *Book) {
+			sweepEscrow(book, testEscrow, 20, 960, liveInferences(11, 11, types.StatusFinished))
+		},
+		func(book *Book) {
+			_ = book.RecordGhost(otherEscrow, 4, scheduler.GhostReasonWindowFull)
+		},
+		func(book *Book) {
+			sweepEscrow(book, testEscrow, 21, 960, liveInferences(11, 11, types.StatusFinished))
+		},
+		func(book *Book) {
+			sweepEscrow(book, testEscrow, 21, 960, liveInferences(11, 11, types.StatusFinished))
+		},
 	}
 }
 
@@ -217,7 +240,7 @@ func newScriptBook(t *testing.T) *Book {
 }
 
 // Test flow:
-//  1. Drive two books through the same script of facts, sweeps, sweeps that change nothing, a retirement alone after a sweep that changed nothing, and late facts.
+//  1. Drive two books through the same script of facts carrying tokenizer counts and first-content delays, sweeps, sweeps that change nothing, a retirement alone after a sweep that changed nothing, late facts, counts filed above the watermark, a sweep whose only change is dropping a count, and a ghost that drops one.
 //  2. After each step, save the first book as it marks itself and the second with every escrow marked, each into its own store.
 //  3. Assert both stores hold the same rows after every step, the stored updated_at included.
 func TestASaveOfTheEscrowsMarkedChangedStoresWhatAWholeWriteStores(t *testing.T) {

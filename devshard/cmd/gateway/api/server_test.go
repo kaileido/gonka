@@ -137,6 +137,7 @@ type countingLimiter struct {
 	acquires  atomic.Int64
 	releases  atomic.Int64
 	tokens    atomic.Int64
+	acquired  atomic.Int64
 	err       error
 	onAcquire func()
 }
@@ -150,6 +151,7 @@ func (l *countingLimiter) AcquireForModel(_ context.Context, _ string, inputToke
 	}
 	l.acquires.Add(1)
 	l.tokens.Add(inputTokens)
+	l.acquired.Add(inputTokens)
 	return nil
 }
 
