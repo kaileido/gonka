@@ -83,7 +83,7 @@ func TestEstimateSamplesTheWholeOfEachEighth(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, sampled, err := counter.estimate([]string{text})
+	got, sampled, err := counter.estimate([]string{text}, uncappedPieceBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestEstimateScalesSampledWindowsToTheWholePrompt(t *testing.T) {
 	}
 
 	for name, prompt := range map[string][]string{"one part": {text}, "many parts": parts} {
-		got, sampled, err := counter.estimate(prompt)
+		got, sampled, err := counter.estimate(prompt, uncappedPieceBytes)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -140,5 +140,37 @@ func TestWindowsSpreadAcrossTheirEighths(t *testing.T) {
 		if lastEnd := windowStart(sampleWindows-1, span) + windowBytes; lastEnd != sampleWindows*span {
 			t.Errorf("total %d: last window ends at %d, want its eighth's end %d", total, lastEnd, sampleWindows*span)
 		}
+	}
+}
+
+// Test flow:
+//  1. On a testdata tokenizer, whose merges keep a run's tokens per byte constant, build prompts whose one long pre-token is past pieceCapBytes: a run of spaces, a run of three-byte characters the cap falls inside, and a run of two letters; and a prompt of short words.
+//  2. Estimate each with the piece cap and count it exactly.
+//  3. Assert each long-piece prompt is marked sampled and equals its exact count, which a cut inside a character would miss, and the short-word prompt is its exact count, not sampled.
+func TestThePieceCapEstimatesOnlyAPieceLongerThanIt(t *testing.T) {
+	counter := loadTestdata(t, "isolated")
+	for _, testCase := range []struct {
+		name    string
+		text    string
+		sampled bool
+	}{
+		{"spaces", "x" + strings.Repeat(" ", 4*pieceCapBytes), true},
+		{"three-byte characters", strings.Repeat("中", pieceCapBytes), true},
+		{"two letters", strings.Repeat("ab", pieceCapBytes), true},
+		{"short words", sentencesOf(8 << 10), false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			estimate, err := counter.EstimateTokensWithPieceCap([]string{testCase.text})
+			if err != nil {
+				t.Fatal(err)
+			}
+			exact, err := counter.Count(testCase.text)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if estimate.Sampled != testCase.sampled || estimate.Tokens != uint64(exact) {
+				t.Fatalf("EstimateTokensWithPieceCap = %+v, want %d tokens, sampled %v", estimate, exact, testCase.sampled)
+			}
+		})
 	}
 }

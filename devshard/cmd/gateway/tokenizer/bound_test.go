@@ -36,9 +36,9 @@ func splitIntoParts(text string, parts int) []string {
 }
 
 // Test flow:
-//  1. Load every testdata tokenizer, NFC and not, with added tokens and without, and build prompts of random ASCII, Cyrillic, CJK, emoji, special-token and added-token spellings, decomposed accents and characters NFC expands, one of only the character NFC expands most, and one of only a decomposed Hangul syllable, whose leading jamo is an added token NFC would otherwise compose, from empty to past exactBudgetBytes, in one to three parts.
-//  2. Take MaximumTokens and the Minimum of EstimateTokens of each.
-//  3. Assert the Minimum never exceeds MaximumTokens.
+//  1. Load every testdata tokenizer, NFC and not, with added tokens and without, and build prompts of random ASCII, Cyrillic, CJK, emoji, special-token and added-token spellings, decomposed accents and characters NFC expands, one of only the character NFC expands most, and one of only a decomposed Hangul syllable, whose leading jamo is an added token NFC would otherwise compose, and one of only spaces, one pre-token past pieceCapBytes, from empty to past exactBudgetBytes, in one to three parts.
+//  2. Take MaximumTokens and the Minimum of EstimateTokens and of EstimateTokensWithPieceCap of each.
+//  3. Assert neither Minimum ever exceeds MaximumTokens.
 func TestMaximumTokensBoundsTheMinimumOnEveryText(t *testing.T) {
 	rng := rand.New(rand.NewPCG(1, 2))
 	sizes := []int{0, 1, 200, 4 << 10, exactBudgetBytes, exactBudgetBytes + 1, 200 << 10}
@@ -47,6 +47,7 @@ func TestMaximumTokensBoundsTheMinimumOnEveryText(t *testing.T) {
 		func(size int) string { return strings.Repeat("\U0001d160", size/len("\U0001d160")) },
 		func(size int) string { return strings.Repeat(decomposedSyllable, size/len(decomposedSyllable)) },
 		func(size int) string { return norm.NFD.String(randomBoundText(size, rng)) },
+		func(size int) string { return strings.Repeat(" ", size) },
 	}
 	texts := make([]string, 0, len(sizes)*len(builders))
 	for _, size := range sizes {
@@ -59,14 +60,16 @@ func TestMaximumTokensBoundsTheMinimumOnEveryText(t *testing.T) {
 		for index, text := range texts {
 			prompt := splitIntoParts(text, 1+index%3)
 
-			estimate, err := counter.EstimateTokens(prompt)
-			if err != nil {
-				t.Fatal(err)
-			}
 			maximum := counter.MaximumTokens(prompt)
+			for _, estimateTokens := range []func([]string) (Estimate, error){counter.EstimateTokens, counter.EstimateTokensWithPieceCap} {
+				estimate, err := estimateTokens(prompt)
+				if err != nil {
+					t.Fatal(err)
+				}
 
-			if estimate.Minimum() > maximum {
-				t.Errorf("%s, text %d (%d bytes in %d parts): Minimum = %d, past MaximumTokens = %d", name, index, len(text), len(prompt), estimate.Minimum(), maximum)
+				if estimate.Minimum() > maximum {
+					t.Errorf("%s, text %d (%d bytes in %d parts): Minimum = %d (sampled %v), past MaximumTokens = %d", name, index, len(text), len(prompt), estimate.Minimum(), estimate.Sampled, maximum)
+				}
 			}
 		}
 	}

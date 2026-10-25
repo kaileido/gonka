@@ -186,3 +186,26 @@ func TestACountRecordedBeforeTheSweepSeesItsNonceOutlivesThatSweep(t *testing.T)
 		t.Fatalf("input counts = %+v, want none once both nonces are sealed", counts)
 	}
 }
+
+// Test flow:
+//  1. Start a sweep that reads a watermark holding a just-assigned nonce, before it observes the nonce's cost.
+//  2. File the nonce's tokenizer count at assignment in between, then let the sweep observe the nonce pending and a later sweep observe it sealed.
+//  3. Assert the nonce was folded with its tokenizer count.
+func TestACountFiledWhileASweepIsBetweenItsWatermarkAndItsCostsIsKept(t *testing.T) {
+	book := newTestBook(t, 4)
+	if err := book.ObserveLatestNonce(testEscrow, 6); err != nil {
+		t.Fatalf("ObserveLatestNonce(): %v", err)
+	}
+	if err := book.RecordInputCount(testEscrow, 6, 37, filters.InputTokensTokenizerExact); err != nil {
+		t.Fatalf("RecordInputCount(): %v", err)
+	}
+	if err := book.ObserveInferences(testEscrow, map[uint64]*types.InferenceRecord{6: {Status: types.StatusPending, InputLength: 4_000}}); err != nil {
+		t.Fatalf("ObserveInferences(): %v", err)
+	}
+	sweep(t, book, 6, map[uint64]*types.InferenceRecord{6: {Status: types.StatusFinished, InputLength: 4_000}})
+	sweep(t, book, 6, map[uint64]*types.InferenceRecord{})
+
+	if money := moneyOf(t, book); money.EstimatedInput != 37 || money.TokenizedInput != 37 {
+		t.Fatalf("money = %+v, want nonce 6 folded at its 37 tokenizer tokens", money)
+	}
+}

@@ -515,7 +515,7 @@ func TestTheByteEstimateHasAFloorOfOne(t *testing.T) {
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			if got := (&Server{}).countPrompt(requestPrompt{bodyBytes: len(testCase.body)}).tokens; got != testCase.want {
+			if got := (&Server{}).countPrompt("qwen", requestPrompt{bodyBytes: len(testCase.body)}).tokens; got != testCase.want {
 				t.Fatalf("got %d, want %d", got, testCase.want)
 			}
 		})

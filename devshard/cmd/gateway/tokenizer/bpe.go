@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"hash/maphash"
 	"io"
+	"math"
 	"math/bits"
 	"strings"
 	"sync"
@@ -31,6 +32,7 @@ const (
 	maxMemoSlots       = 1 << 16
 	memoPiecesPerSlot  = 2
 	splitMatchTimeout  = 500 * time.Millisecond
+	uncappedPieceBytes = math.MaxInt
 )
 
 var memoSeed = maphash.MakeSeed()
@@ -290,30 +292,39 @@ func pairKey(left, right uint32) uint64 { return uint64(left)<<pairKeyShift | ui
 
 // Count returns text's exact token count, without the special tokens a chat template adds; an added token's content in text is one token.
 func (c *Counter) Count(text string) (int, error) {
-	pieces, added, err := c.preTokens(text)
-	if err != nil {
-		return 0, err
-	}
-	return added + c.countPieces(pieces), nil
+	tokens, _, err := c.count(text, uncappedPieceBytes)
+	return tokens, err
 }
 
-func (c *Counter) countPieces(pieces []string) int {
+func (c *Counter) count(text string, pieceCap int) (tokens int, capped bool, err error) {
+	pieces, added, err := c.preTokens(text)
+	if err != nil {
+		return 0, false, err
+	}
+	tokens, capped = c.countPieces(pieces, pieceCap)
+	return added + tokens, capped, nil
+}
+
+func (c *Counter) countPieces(pieces []string, pieceCap int) (tokens int, capped bool) {
 	var scratch mergeScratch
 	memo := takeMemo(memoSlots(len(pieces)))
 	defer giveMemo(memo)
-	tokens := 0
 	for _, piece := range pieces {
-		if len(piece) > maxRememberedPiece {
+		switch {
+		case len(piece) > pieceCap:
+			tokens += c.countCappedPiece(piece, pieceCap, &scratch)
+			capped = true
+		case len(piece) > maxRememberedPiece:
 			tokens += c.countPiece(piece, &scratch)
-			continue
+		default:
+			slot := &memo.slots[maphash.String(memoSeed, piece)&uint64(len(memo.slots)-1)]
+			if slot.piece != piece {
+				slot.piece, slot.tokens = piece, c.countPiece(piece, &scratch)
+			}
+			tokens += slot.tokens
 		}
-		slot := &memo.slots[maphash.String(memoSeed, piece)&uint64(len(memo.slots)-1)]
-		if slot.piece != piece {
-			slot.piece, slot.tokens = piece, c.countPiece(piece, &scratch)
-		}
-		tokens += slot.tokens
 	}
-	return tokens
+	return tokens, capped
 }
 
 // memoTables holds cleared memo tables between calls, so a call does not allocate and zero one anew.
@@ -421,4 +432,12 @@ func (c *Counter) countPiece(piece string, scratch *mergeScratch) int {
 		}
 	}
 	return scratch.merge(c, piece)
+}
+
+func (c *Counter) countCappedPiece(piece string, pieceCap int, scratch *mergeScratch) int {
+	prefix := piece[:runeStartAtOrBefore(piece, pieceCap)]
+	if prefix == "" {
+		prefix = piece[:pieceCap]
+	}
+	return (c.countPiece(prefix, scratch)*len(piece) + len(prefix)/2) / len(prefix)
 }

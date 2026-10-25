@@ -50,7 +50,14 @@ type tokenizerPrompt struct {
 func (p tokenizerPrompt) MaximumTokens() uint64 { return p.counter.MaximumTokens(p.parts) }
 
 func (p tokenizerPrompt) Count() (TokenizedPrompt, bool) {
-	estimate, err := p.counter.EstimateTokens(p.parts)
+	return tokenizedPrompt(p.counter.EstimateTokens(p.parts))
+}
+
+func (p tokenizerPrompt) CountWithPieceCap() (TokenizedPrompt, bool) {
+	return tokenizedPrompt(p.counter.EstimateTokensWithPieceCap(p.parts))
+}
+
+func tokenizedPrompt(estimate tokenizer.Estimate, err error) (TokenizedPrompt, bool) {
 	if err != nil {
 		return TokenizedPrompt{}, false
 	}
@@ -75,16 +82,21 @@ func (s *Server) checkContext(configured config.Limits, normalized filters.Resul
 	if s.promptTokens == nil {
 		return prompt, nil
 	}
+	contextLength := configured.ContextLength(normalized.Model, s.snapshots.Snapshot().Models[normalized.Model].MaxModelLen)
+	if contextLength == config.NoContextLength && !s.countsEveryPrompt {
+		return prompt, nil
+	}
 	text, known := s.promptTokens.Prompt(normalized.Model, normalized.Body)
 	if !known {
 		return prompt, nil
 	}
-	prompt.text = text
-	contextLength := configured.ContextLength(normalized.Model, s.snapshots.Snapshot().Models[normalized.Model].MaxModelLen)
+	if s.countsEveryPrompt {
+		prompt.text = text
+	}
 	if contextLength == config.NoContextLength || text.MaximumTokens()+chatTemplateMinimumTokens+normalized.MaxTokens <= contextLength {
 		return prompt, nil
 	}
-	prompt.count, prompt.counted = countPromptText(text, prompt.bodyBytes), true
+	prompt.count, prompt.counted = prompt.countWith(text.Count), true
 	if !prompt.count.source.Tokenized() {
 		return prompt, nil
 	}
@@ -95,15 +107,21 @@ func (s *Server) checkContext(configured config.Limits, normalized filters.Resul
 	return prompt, &ContextLengthError{ContextLength: contextLength, PromptTokens: promptTokens, MaxTokens: normalized.MaxTokens}
 }
 
-func (s *Server) countPrompt(prompt requestPrompt) promptCount {
+func (s *Server) countPrompt(model string, prompt requestPrompt) promptCount {
 	if prompt.counted {
 		return prompt.count
 	}
-	if prompt.text == nil || !s.promptCounts.tryAcquire() {
+	if prompt.text == nil {
+		return byteEstimate(prompt.bodyBytes)
+	}
+	if !s.promptCounts.tryAcquire() {
+		if s.promptFallbacks != nil {
+			s.promptFallbacks.GateFull(model)
+		}
 		return byteEstimate(prompt.bodyBytes)
 	}
 	defer s.promptCounts.release()
-	return countPromptText(prompt.text, prompt.bodyBytes)
+	return prompt.countWith(prompt.text.CountWithPieceCap)
 }
 
 func (prompt requestPrompt) countSoFar() promptCount {
@@ -113,10 +131,10 @@ func (prompt requestPrompt) countSoFar() promptCount {
 	return byteEstimate(prompt.bodyBytes)
 }
 
-func countPromptText(text PromptText, bodyBytes int) promptCount {
-	counted, known := text.Count()
+func (prompt requestPrompt) countWith(count func() (TokenizedPrompt, bool)) promptCount {
+	counted, known := count()
 	if !known {
-		return byteEstimate(bodyBytes)
+		return byteEstimate(prompt.bodyBytes)
 	}
 	source := filters.InputTokensTokenizerExact
 	if counted.Sampled {

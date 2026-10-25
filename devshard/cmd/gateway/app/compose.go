@@ -414,6 +414,7 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 
 		StopTokenVocabulary: stopTokenVocabulary(sources.ModelSnapshots, observer),
 		PromptTokens:        promptTokens(sources.ModelSnapshots, observer),
+		PromptFallbacks:     metrics.NewPromptCountRecorder(telemetry),
 	})
 	if err != nil {
 		return nil, err

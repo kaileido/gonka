@@ -4,11 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"go/build"
+	"io"
 	"math/rand/v2"
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"runtime/metrics"
 	"slices"
 	"strings"
@@ -20,6 +20,7 @@ import (
 	"unicode/utf8"
 
 	"devshard/cmd/gateway/config"
+	"devshard/cmd/gateway/env"
 	"devshard/cmd/gateway/filters"
 	"devshard/cmd/gateway/tokenizer"
 	"devshard/transport"
@@ -527,7 +528,17 @@ func benchModelServer(b *testing.B, model benchModel) *Server {
 	next.Limits.ModelLimits = map[string]config.ModelLimits{"qwen": {MaxModelLen: &pinned}}
 	server.config.Swap(&next)
 	server.promptTokens = model.prompts()
+	server.countsEveryPrompt = statsTokenizerEnabled(b)
 	return server
+}
+
+func statsTokenizerEnabled(b *testing.B) bool {
+	b.Helper()
+	values, err := env.Load()
+	if err != nil {
+		b.Fatal(err)
+	}
+	return values.StatsTokenizerEnabled != nil && *values.StatsTokenizerEnabled
 }
 
 func serveAndReport(b *testing.B, handler http.Handler, body string) {
@@ -537,7 +548,7 @@ func serveAndReport(b *testing.B, handler http.Handler, body string) {
 	serve := func() int {
 		writer.reset()
 		next := *request
-		next.Body = readCloser(body)
+		next.Body = io.NopCloser(strings.NewReader(body))
 		next.ContentLength = int64(len(body))
 		handler.ServeHTTP(writer, &next)
 		return writer.status
@@ -547,7 +558,6 @@ func serveAndReport(b *testing.B, handler http.Handler, body string) {
 		b.Fatalf("warm-up status = %d", want)
 	}
 	b.ReportAllocs()
-	b.ResetTimer()
 	started := processCPU()
 	for b.Loop() {
 		if status := serve(); status != want {
@@ -565,12 +575,6 @@ func processCPU() int64 {
 	}
 	return usage.Utime.Nano() + usage.Stime.Nano()
 }
-
-type stringReadCloser struct{ *strings.Reader }
-
-func (stringReadCloser) Close() error { return nil }
-
-func readCloser(body string) stringReadCloser { return stringReadCloser{strings.NewReader(body)} }
 
 // Test flow:
 //  1. Load every tokenizer.json in GATEWAY_TOKENIZER_DIR as a model, add kimi without one, and skip when the directory is unset.
@@ -642,7 +646,7 @@ func BenchmarkModelChatParallel(b *testing.B) {
 					for pb.Next() {
 						writer.reset()
 						next := *request
-						next.Body = readCloser(body)
+						next.Body = io.NopCloser(strings.NewReader(body))
 						next.ContentLength = int64(len(body))
 						handler.ServeHTTP(writer, &next)
 						if writer.status != http.StatusOK && writer.status != http.StatusBadRequest {
@@ -714,52 +718,6 @@ func BenchmarkModelChatCacheHit(b *testing.B) {
 
 // Test flow:
 //  1. Load every tokenizer.json in GATEWAY_TOKENIZER_DIR as a model, add kimi without one, and skip when the directory is unset.
-//  2. Serve 2,000 requests of mixed kinds and sizes per model, then collect garbage twice.
-//  3. Report the heap still held after the requests against before them, so a memo or pool that grows with traffic shows.
-func BenchmarkModelChatRetainedHeap(b *testing.B) {
-	for _, model := range benchModels(b) {
-		sizes := []int{200, 4 << 10, 32 << 10, 64 << 10, 256 << 10}
-		bodies := make([]string, 0, len(sizes)*len(benchModelKinds))
-		for _, kind := range benchModelKinds {
-			for _, size := range sizes {
-				bodies = append(bodies, benchKindChatBody(kind, size))
-			}
-		}
-		b.Run(model.name, func(b *testing.B) {
-			handler := benchModelServer(b, model).Handler()
-			var retained float64
-			for b.Loop() {
-				before := settledHeap()
-				var group sync.WaitGroup
-				for worker := range runtime.GOMAXPROCS(0) {
-					group.Go(func() {
-						writer := newSinkWriter()
-						for index := worker; index < 2000; index += runtime.GOMAXPROCS(0) {
-							writer.reset()
-							body := bodies[index%len(bodies)]
-							request := benchRequest("/v1/chat/completions", body)
-							handler.ServeHTTP(writer, request)
-						}
-					})
-				}
-				group.Wait()
-				retained = (float64(settledHeap()) - float64(before)) / (1 << 20)
-			}
-			b.ReportMetric(retained, "retained-MiB")
-		})
-	}
-}
-
-func settledHeap() uint64 {
-	runtime.GC()
-	runtime.GC()
-	var stats runtime.MemStats
-	runtime.ReadMemStats(&stats)
-	return stats.HeapAlloc
-}
-
-// Test flow:
-//  1. Load every tokenizer.json in GATEWAY_TOKENIZER_DIR as a model, add kimi without one, and skip when the directory is unset.
 //  2. Serve one chat body per content kind and size and read the input tokens the route handed the race and the limiter, none when the context check refused it.
 //  3. Report that number, the body's bytes over four, and for a tokenizer the exact count of the prompt text, with the carried number's error against it in percent.
 func BenchmarkModelPromptCarried(b *testing.B) {
@@ -812,6 +770,7 @@ func BenchmarkModelPromptCarried(b *testing.B) {
 //  2. Normalize each realistic chat body and each 64 KiB unsplittable body as the chat route does.
 //  3. Time only the route's prompt step, the context check and the count it takes, reporting its time, process CPU and allocations.
 func BenchmarkModelPromptStep(b *testing.B) {
+	models := benchModels(b)
 	bodies := map[string]string{}
 	names := make([]string, 0, len(benchModelSizes)*len(benchModelKinds)+len(benchWorstCases))
 	for _, kind := range benchModelKinds {
@@ -826,7 +785,7 @@ func BenchmarkModelPromptStep(b *testing.B) {
 		bodies[key] = singleMessageBody(worstCaseText(name, 64<<10))
 		names = append(names, key)
 	}
-	for _, model := range benchModels(b) {
+	for _, model := range models {
 		server := benchModelServer(b, model)
 		configuration := server.config.Load()
 		for _, name := range names {
@@ -840,7 +799,6 @@ func BenchmarkModelPromptStep(b *testing.B) {
 					refused = 1
 				}
 				b.ReportAllocs()
-				b.ResetTimer()
 				started := processCPU()
 				for b.Loop() {
 					_ = benchContextStep(server, configuration.Limits, normalized)
@@ -850,4 +808,12 @@ func BenchmarkModelPromptStep(b *testing.B) {
 			})
 		}
 	}
+}
+
+func benchContextStep(server *Server, configured config.Limits, normalized filters.Result) error {
+	prompt, err := server.checkContext(configured, normalized)
+	if err == nil {
+		server.countPrompt(normalized.Model, prompt)
+	}
+	return err
 }

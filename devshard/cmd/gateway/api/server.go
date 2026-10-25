@@ -166,18 +166,24 @@ type LimitRejections interface {
 	Rejected(model, reason string)
 }
 
+// PromptCountFallbacks counts the requests that found the prompt count gate full and carried the byte estimate; *metrics.PromptCountRecorder satisfies it.
+type PromptCountFallbacks interface {
+	GateFull(model string)
+}
+
 // PromptTokens reads a normalized chat body's messages for the model's pinned tokenizer, known false while there is none; app's pinned tokenizer library satisfies it.
 type PromptTokens interface {
 	Prompt(model string, body []byte) (prompt PromptText, known bool)
 }
 
-// PromptText is a prompt read for one tokenizer: MaximumTokens bounds its count from its bytes alone, and Count tokenizes it, known false when the tokenizer fails.
+// PromptText is a prompt read for one tokenizer: MaximumTokens bounds its count from its bytes alone, Count tokenizes it, and CountWithPieceCap tokenizes it with each long pre-token estimated from its start, known false when the tokenizer fails.
 type PromptText interface {
 	MaximumTokens() uint64
 	Count() (count TokenizedPrompt, known bool)
+	CountWithPieceCap() (count TokenizedPrompt, known bool)
 }
 
-// TokenizedPrompt is one tokenizer pass over a prompt: Tokens the count, sampled past the exact budget, and MinimumTokens never above the prompt's real count.
+// TokenizedPrompt is one tokenizer pass over a prompt: Tokens the count, Sampled when it is estimated, and MinimumTokens, from Count, never above the prompt's real count.
 type TokenizedPrompt struct {
 	Tokens        uint64
 	MinimumTokens uint64
@@ -210,6 +216,7 @@ type Deps struct {
 	Buffers             *BufferBudget
 	Rejections          LimitRejections
 	CacheResults        CacheResults
+	PromptFallbacks     PromptCountFallbacks
 	Journal             RequestJournal
 	StorageDir          string
 	Version             string
@@ -248,6 +255,8 @@ type Server struct {
 	stopTokenVocabulary func(model string) int
 	promptTokens        PromptTokens
 	promptCounts        promptCountGate
+	promptFallbacks     PromptCountFallbacks
+	countsEveryPrompt   bool
 	settingsWrites      sync.Mutex
 
 	gates   atomic.Pointer[keyGates]
@@ -314,6 +323,7 @@ func New(deps Deps) (*Server, error) {
 
 		stopTokenVocabulary: deps.StopTokenVocabulary,
 		promptTokens:        deps.PromptTokens,
+		promptFallbacks:     deps.PromptFallbacks,
 	}
 	if server.requestIDs == nil {
 		server.requestIDs = randomRequestID
@@ -321,6 +331,7 @@ func New(deps Deps) (*Server, error) {
 	configuration := deps.Config.Load()
 	server.cache = newResponseCache(configuration.Cache.ChatCacheMaxBytes)
 	server.promptCounts = newPromptCountGate(configuration.Server.MaxConcurrentPromptCounts)
+	server.countsEveryPrompt = configuration.Server.StatsTokenizerEnabled
 	capture, err := newRequestCapture(configuration.Capture, deps.StorageDir, server.now)
 	if err != nil {
 		return nil, err

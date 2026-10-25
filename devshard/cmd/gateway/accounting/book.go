@@ -25,6 +25,7 @@ type escrowLedger struct {
 	metadata      EscrowMetadata
 	latest        uint64
 	sweptLatest   uint64
+	sweepLatest   uint64
 	hostStats     map[uint32]types.HostStats
 	challenged    map[uint32]uint64
 	validations   map[uint32]uint64
@@ -191,7 +192,7 @@ func (b *Book) TakeRestoredWatermark(escrowID string) (latestNonce uint64, resto
 func (b *Book) ObserveLatestNonce(escrowID string, nonce uint64) error {
 	return b.withEscrow(escrowID, func(escrow *escrowLedger) error {
 		escrow.raiseLatest(nonce)
-		escrow.sweptLatest = max(escrow.sweptLatest, nonce)
+		escrow.sweepLatest = max(escrow.sweepLatest, nonce)
 		return nil
 	})
 }
@@ -240,6 +241,7 @@ func (b *Book) ObserveInferences(escrowID string, inferences map[uint64]*types.I
 		}
 		escrow.challenged = challenged
 		escrow.inFlightReserved, escrow.challengedCost = inFlight, challengedCost
+		escrow.sweptLatest = escrow.sweepLatest
 		escrow.dropSealedInputCounts()
 		return nil
 	})

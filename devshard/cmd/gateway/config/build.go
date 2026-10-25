@@ -23,6 +23,7 @@ func Build(values env.Values, overrides Overrides) (*Config, error) {
 	overrideIfSet(&configuration.Server.DevshardsJSON, values.DevshardsJSON)
 	overrideIfSet(&configuration.Server.MaxConcurrentRuntimeBuilds, values.MaxConcurrentRuntimeBuilds)
 	overrideIfSet(&configuration.Server.MaxConcurrentPromptCounts, values.MaxConcurrentPromptCounts)
+	overrideIfSet(&configuration.Server.StatsTokenizerEnabled, values.StatsTokenizerEnabled)
 	overrideIfSet(&configuration.Server.SessionRetentionEpochs, values.SessionRetentionEpochs)
 
 	overrideIfSet(&configuration.Chain.GRPCEndpoint, values.ChainGRPC)

@@ -1,6 +1,6 @@
 # `tokenizer` — a prompt's tokens, before anything is sent
 
-Counts a chat prompt's tokens with the tokenizer the chain pins for the model, once per request, so the boundary can refuse a prompt the model's context cannot hold before a nonce exists and carry the same count to the limiter and the ledgers ([`docs/request.md`](../docs/request.md), "Step 6 in detail").
+Counts a chat prompt's tokens with the tokenizer the chain pins for the model, at most once per request, so the boundary can refuse a prompt the model's context cannot hold before a nonce exists and carry the same count to the limiter and the ledgers ([`docs/request.md`](../docs/request.md), "Step 6 in detail").
 
 ## What it owns
 
@@ -9,7 +9,7 @@ Counts a chat prompt's tokens with the tokenizer the chain pins for the model, o
 - `merge.go` — the merge loop: lowest rank first, leftmost on a tie, as Hugging Face BPE applies merges. A piece of up to `scanMergeBytes` (24) bytes is merged by scanning its few symbols, a longer one with a heap of candidate pairs.
 - `pairs.go` — `pairTable`: the merge of a pair of tokens, in an open-addressed table with a bit filter in front of it.
 - `pretokenize.go` — hand-written scanners for the split patterns the pinned tokenizers use, found by the pattern's `canonicalPattern` spelling (raw CR and LF as `\r` and `\n`, `\"` as `"`), so DeepSeek-V4's raw line breaks select the same scanner as the escaped form. A rule with a scanner keeps its compiled regexp2 pattern too, as the fallback and the tests' reference.
-- `estimate.go` — `Counter.EstimateTokens`: a prompt's tokens, exact up to a budget and estimated from samples beyond it; `Estimate.Minimum`: the fewest tokens it holds, the exact count or a lower bound from the samples; `Counter.MaximumTokens`: a bound the minimum never exceeds, read from the prompt's bytes without tokenizing.
+- `estimate.go` — `Counter.EstimateTokens`: a prompt's tokens, exact up to a budget and estimated from samples beyond it; `Counter.EstimateTokensWithPieceCap`: the same with each long pre-token's merge capped; `Estimate.Minimum`: the fewest tokens it holds, the exact count or a lower bound from the samples; `Counter.MaximumTokens`: a bound the minimum never exceeds, read from the prompt's bytes without tokenizing.
 - `library.go` — `Library.Counter`: the counter for each model, loaded in the background and fetched again when the revision the chain pins moves.
 - `vocabulary.go` — the `tokenizer.json` names `Load` reads and the hub address.
 
@@ -56,6 +56,16 @@ The sampled estimate is what it costs to stay bounded, and it misses on a prompt
 
 The estimate is the count a request carries to the limiter and the ledgers, which sum it over many requests, so it is left as measured rather than shifted toward either side. `Estimate.Minimum` answers the check that refuses a prompt, and an over-count refuses a request a host would serve, so past the budget it divides the estimate by 1 + `sampledOvercountPercent` (7%), the worst over-count measured rounded up (+6.3% with the windows spread, +6.9% before). What it returns is then at most the prompt's real count on every text measured; an under-count is left as it is, because it only leaves a request unchecked.
 
+## Capping a piece's merge
+
+`EstimateTokensWithPieceCap` is `EstimateTokens` with the cost of one pre-token bounded. The merge loop's work grows faster than a piece's length: a 64 KiB run the pre-tokenizer cannot split takes 55–75 ms to merge, while the same bytes of prose, in pieces of a few bytes, take 2–6 ms. A pre-token longer than `pieceCapBytes` (512) is not merged whole: its first `pieceCapBytes`, cut back to a character boundary, are merged, and their count is scaled to the piece's length, rounded to nearest. The estimate is then `Sampled`, so a request counted this way carries `tokenizer_sampled`.
+
+- **Where it applies.** Only to the count the gateway files for a request's statistics after the cache lookup ([`docs/request.md`](../docs/request.md), "The prompt token count"). The context check counts with `EstimateTokens`, so who it refuses does not depend on the cap.
+- **Threshold.** The longest pre-token in the `BenchmarkModel*` corpora (English, Russian, Chinese, code, JSON and tool calls, 200 B to 1 MiB, on the pinned DeepSeek-V4-Flash and MiniMax-M2.7 tokenizers) is 135 bytes, a run of Chinese characters. 512 is the smallest power of two at least twice that, so those corpora count exactly as without the cap. Merging 512 bytes costs at most about 0.3 ms, for a run of spaces, the most expensive text per byte measured.
+- **Accuracy.** On the 64 KiB unsplittable texts of `BenchmarkModelChatWorstCase` the capped count is within 3.1% of the exact one, except MiniMax's run of one repeated letter, which it over-counts by 9.3%: the prefix ends in a partial token, which the scaling multiplies with the rest.
+- **Bound.** The prefix's tokens are at most its bytes, so scaled they are at most the piece's bytes, and `MaximumTokens` bounds the capped estimate as it bounds the exact one.
+- **What it does not bound.** A prompt of many pieces just under the cap is merged whole, piece by piece: 64 KiB of 510-byte runs of spaces or newlines, each closed by a letter, takes 24–46 ms. The 64 KiB budget bounds that per call, and the gate on concurrent counts bounds how many such counts run at once.
+
 ## The byte bound
 
 `MaximumTokens` is what a prompt's tokens can be at most, from its length alone, so the context check tokenizes only a prompt that bound does not clear. A pre-token is a stretch of the text, pre-tokens do not overlap, and the merge loop starts from one symbol per byte and only joins symbols, so `Count` of a text is at most the UTF-8 length of what it tokenizes: the text itself, or its NFC form for a tokenizer that normalizes. An added token is one token of at least one byte, so the bound holds for it too; the chat template's own tokens are not part of either count.
@@ -67,7 +77,7 @@ The bound is loose, since a token usually covers several bytes, and costs one pa
 
 ## Bounds
 
-- **Work per call is bounded by the budget**, whatever the prompt's length: at most 64 KiB reach the pre-tokenizer and the merge loop. The worst case measured is a 64 KiB run the pre-tokenizer cannot split (64 KiB of spaces, one pre-token), 30–75 ms on a loaded Apple M4; mixed prose, code and CJK of the same size take 2–5 ms. Finding added tokens walks the trie from each byte that starts one, as deep as the text follows an entry; its worst measured cost is 64 KiB of an unclosed DeepSeek placeholder prefix, 2.0 ms without added tokens and 4.5 ms with them.
+- **Work per call is bounded by the budget**, whatever the prompt's length: at most 64 KiB reach the pre-tokenizer and the merge loop. The worst case measured is a 64 KiB run the pre-tokenizer cannot split (64 KiB of spaces, one pre-token), 30–75 ms on a loaded Apple M4, and 1–3 ms with the piece cap; mixed prose, code and CJK of the same size take 2–5 ms. Finding added tokens walks the trie from each byte that starts one, as deep as the text follows an entry; its worst measured cost is 64 KiB of an unclosed DeepSeek placeholder prefix, 2.0 ms without added tokens and 4.5 ms with them.
 - **Nothing outlives a call.** A pre-token of up to `maxRememberedPiece` (64) bytes is remembered in a direct-mapped table of at most `maxMemoSlots` (65,536) slots, so a word that repeats within a text is usually merged once, and one that collides with another forgets it and is merged again; longer pre-tokens rarely repeat and are not remembered. The table is cleared when the call returns and pooled for the next call, so no prompt's words are retained.
 - **A `Counter` is immutable once loaded** and is shared by every request.
 - **`maxTokenizerBytes`** (64 MiB) bounds one `tokenizer.json` read; the largest pinned today is about 20 MB.
@@ -81,6 +91,6 @@ GATEWAY_TOKENIZER_DIR=/path/to/tokenizers go test ./cmd/gateway/tokenizer/ -run 
 GATEWAY_TOKENIZER_DIR=/path/to/tokenizers go test ./cmd/gateway/api/ -run '^$' -bench 'ChatPromptCount|PromptCountCost' -benchtime 20x
 ```
 
-`BenchmarkEstimate` reports each estimate's error against the exact count of the same text as `%err`.
+`BenchmarkEstimate` reports each estimate's error against the exact count of the same text as `%err`. The `BenchmarkModel*` suite reads `DEVSHARD_STATS_TOKENIZER` as the gateway does, so `DEVSHARD_STATS_TOKENIZER=on` runs it with every request counted after the cache; `BenchmarkModelPromptCarried` reports the count a request carries against the exact count as `%err`, and `BenchmarkModelPromptStep` times the context check and the count alone.
 
 `BenchmarkCount` times `Count` on Qwen2.5 (`qwen.json` in `GATEWAY_TOKENIZER_DIR`) from 200 B to 1 MiB. `TestIDsMatchTheOriginal` and `FuzzIDsMatchTheOriginal` compare the pre-tokens and full token IDs with the original implementation frozen in `reference_test.go` (regexp2 split, heap merge) on every testdata tokenizer and every one in `GATEWAY_TOKENIZER_DIR`, plus windows of the `.txt` files in `GATEWAY_BENCH_CORPUS_DIR`. `GATEWAY_TOKENIZER_SWEEP=1` adds the sweep over every Unicode scalar value, which takes minutes. `TestConcurrentCountsMatchSequentialOnes` counts every testdata tokenizer and text from eight goroutines at once, so the pooled memo tables pass between calls, and compares with a single-threaded run; it passes under `go test -race`.

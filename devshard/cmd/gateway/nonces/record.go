@@ -14,7 +14,9 @@ func (n *Recorder) NonceAssigned(escrowID string, nonce uint64, profile schedule
 		return
 	}
 	n.reportFact(n.service.Book.RecordAssigned(escrowID, nonce, profile.RequestID))
-	n.reportFact(n.service.Book.RecordInputCount(escrowID, nonce, uint64(max(profile.InputTokens, 0)), profile.InputTokensSource))
+	if profile.InputTokensSource.Tokenized() {
+		n.reportFact(n.service.Book.RecordInputCount(escrowID, nonce, uint64(max(profile.InputTokens, 0)), profile.InputTokensSource))
+	}
 }
 
 func (n *Recorder) RecordGhost(escrowID string, nonce uint64, reason string) {
