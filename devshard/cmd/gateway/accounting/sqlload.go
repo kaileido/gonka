@@ -32,8 +32,8 @@ func (s *Store) Load(ctx context.Context) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	for _, read := range []func(context.Context, map[string]*EscrowSnapshot) error{
-		s.readSlots, s.readHostStats, s.readSlotActivity, s.readServiceNonces, s.readMoney, s.readCounters, s.readNonces,
-		s.readCosts,
+		s.readSlots, s.readHostStats, s.readSlotActivity, s.readServiceNonces, s.readMoney, s.readFirstContent,
+		s.readFirstContentBuckets, s.readCounters, s.readNonces, s.readCosts,
 	} {
 		if err := read(ctx, escrows); err != nil {
 			return Snapshot{}, err
@@ -85,6 +85,8 @@ func (s *Store) readEscrows(ctx context.Context) (map[string]*EscrowSnapshot, []
 			stored.SlotActivity = make(map[uint32]SlotActivity)
 			stored.Money = make(map[uint32]SlotMoney)
 			stored.Produced = make(map[uint32]uint64)
+			stored.FirstContent = make(map[uint32]FirstContentTiming)
+			stored.FirstContentBuckets = make(FirstContentBuckets)
 			escrows[stored.Metadata.EscrowID] = &stored
 			order = append(order, stored.Metadata.EscrowID)
 			return nil
@@ -186,6 +188,39 @@ func (s *Store) readMoney(ctx context.Context, escrows map[string]*EscrowSnapsho
 				if produced > 0 {
 					escrow.Produced[slotID] = produced
 				}
+			}
+			return nil
+		})
+}
+
+func (s *Store) readFirstContent(ctx context.Context, escrows map[string]*EscrowSnapshot) error {
+	return s.eachRow(ctx,
+		`SELECT escrow_id, slot_id, total_milliseconds, attempts FROM accounting_first_content`, "first-content timing",
+		func(rows *sql.Rows) error {
+			var escrowID string
+			var slotID uint32
+			var timing FirstContentTiming
+			if err := rows.Scan(&escrowID, &slotID, &timing.FirstContentMillisecondsTotal, &timing.FirstContentAttempts); err != nil {
+				return err
+			}
+			if escrow, known := escrows[escrowID]; known {
+				escrow.FirstContent[slotID] = timing
+			}
+			return nil
+		})
+}
+
+func (s *Store) readFirstContentBuckets(ctx context.Context, escrows map[string]*EscrowSnapshot) error {
+	return s.eachRow(ctx,
+		`SELECT escrow_id, bucket, attempts FROM accounting_first_content_distribution`, "first-content buckets",
+		func(rows *sql.Rows) error {
+			var escrowID string
+			var bucket, attempts uint64
+			if err := rows.Scan(&escrowID, &bucket, &attempts); err != nil {
+				return err
+			}
+			if escrow, known := escrows[escrowID]; known && bucket <= uint64(firstContentOverflow) {
+				escrow.FirstContentBuckets[FirstContentBucket(bucket)] = attempts
 			}
 			return nil
 		})

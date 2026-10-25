@@ -29,6 +29,9 @@ func OpenStore(path string) (*Store, error) {
 	if _, err := db.Exec(schema); err != nil {
 		return nil, errors.Join(fmt.Errorf("creating accounting schema: %w", err), db.Close())
 	}
+	if err := discardUntrustedFirstContent(db); err != nil {
+		return nil, errors.Join(err, db.Close())
+	}
 	return &Store{db: db}, nil
 }
 

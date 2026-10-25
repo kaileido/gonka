@@ -18,18 +18,20 @@ type Snapshot struct {
 }
 
 type EscrowSnapshot struct {
-	Metadata      EscrowMetadata             `json:"metadata"`
-	LatestNonce   uint64                     `json:"latest_nonce"`
-	FeePerNonce   uint64                     `json:"fee_per_nonce,omitempty"`
-	Retired       bool                       `json:"retired"`
-	HostStats     map[uint32]types.HostStats `json:"host_stats,omitempty"`
-	SlotActivity  map[uint32]SlotActivity    `json:"slot_activity,omitempty"`
-	Money         map[uint32]SlotMoney       `json:"money,omitempty"`
-	Produced      map[uint32]uint64          `json:"produced_tokens,omitempty"`
-	Counters      []PersistedCounter         `json:"counters,omitempty"`
-	Nonces        []PersistedNonce           `json:"nonces,omitempty"`
-	ServiceNonces []PersistedServiceCount    `json:"service_nonces,omitempty"`
-	LiveCosts     []PersistedCost            `json:"live_costs,omitempty"`
+	Metadata            EscrowMetadata                `json:"metadata"`
+	LatestNonce         uint64                        `json:"latest_nonce"`
+	FeePerNonce         uint64                        `json:"fee_per_nonce,omitempty"`
+	Retired             bool                          `json:"retired"`
+	HostStats           map[uint32]types.HostStats    `json:"host_stats,omitempty"`
+	SlotActivity        map[uint32]SlotActivity       `json:"slot_activity,omitempty"`
+	Money               map[uint32]SlotMoney          `json:"money,omitempty"`
+	Produced            map[uint32]uint64             `json:"produced_tokens,omitempty"`
+	FirstContent        map[uint32]FirstContentTiming `json:"first_content,omitempty"`
+	FirstContentBuckets FirstContentBuckets           `json:"first_content_buckets,omitempty"`
+	Counters            []PersistedCounter            `json:"counters,omitempty"`
+	Nonces              []PersistedNonce              `json:"nonces,omitempty"`
+	ServiceNonces       []PersistedServiceCount       `json:"service_nonces,omitempty"`
+	LiveCosts           []PersistedCost               `json:"live_costs,omitempty"`
 }
 
 // PersistedCost is the money of one nonce the chain still holds; a sealed nonce lives in Money instead.
@@ -179,6 +181,8 @@ func snapshotEscrow(escrow *escrowLedger) EscrowSnapshot {
 	}
 	slices.SortFunc(stored.LiveCosts, func(left, right PersistedCost) int { return cmp.Compare(left.Nonce, right.Nonce) })
 	stored.Produced = maps.Clone(escrow.produced)
+	stored.FirstContent = maps.Clone(escrow.firstContent)
+	stored.FirstContentBuckets = maps.Clone(escrow.firstContentBuckets)
 	for key, count := range escrow.serviceNonces {
 		stored.ServiceNonces = append(stored.ServiceNonces, PersistedServiceCount{SlotID: key.slotID, Purpose: key.purpose, Count: count})
 	}
@@ -245,6 +249,8 @@ func (b *Book) Restore(snapshot Snapshot) error {
 			}
 		}
 		maps.Copy(escrow.produced, stored.Produced)
+		maps.Copy(escrow.firstContent, stored.FirstContent)
+		maps.Copy(escrow.firstContentBuckets, stored.FirstContentBuckets)
 		for slotID, activity := range stored.SlotActivity {
 			escrow.challenged[slotID] = activity.Challenged
 			escrow.validations[slotID] = activity.Validations

@@ -92,6 +92,9 @@ const (
 	SeverityCritical Severity = "critical"
 )
 
+// FirstContentOverflowBound keys the first-content bucket past the largest bound. See docs/accounting.md, "Time to first content".
+const FirstContentOverflowBound = "+Inf"
+
 // ghostReasonThrottledBeforeTheSplit is what the scheduler wrote before a full window and an open cut-off
 // were told apart. Ledger rows outlive a deploy, so the finding still has to count them.
 const ghostReasonThrottledBeforeTheSplit = "participant_throttled_no_send"
