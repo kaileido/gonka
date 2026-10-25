@@ -91,3 +91,47 @@ func (e *escrowLedger) foldCost(money *SlotMoney, nonce uint64, cost nonceCost) 
 	money.EstimatedInput += filters.EstimatedPromptTokens(int(cost.inputLength))
 	money.MaxTokens += cost.maxTokens
 }
+
+func costOf(record *types.InferenceRecord) nonceCost {
+	return nonceCost{
+		reserved:    record.ReservedCost,
+		actual:      record.ActualCost,
+		inputLength: record.InputLength,
+		maxTokens:   record.MaxTokens,
+		input:       record.InputTokens,
+		output:      record.OutputTokens,
+		status:      record.Status,
+	}
+}
+
+// NoncesToFold lists the nonces whose cost an earlier reading left and the escrow no longer holds live: the ones the next reading folds.
+func (b *Book) NoncesToFold(escrowID string, inferences map[uint64]*types.InferenceRecord) []uint64 {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	escrow, known := b.escrows[escrowID]
+	if !known {
+		return nil
+	}
+	var leaving []uint64
+	for nonce := range escrow.costs {
+		if _, live := inferences[nonce]; !live {
+			leaving = append(leaving, nonce)
+		}
+	}
+	return leaving
+}
+
+// ObserveSealedRecords replaces each cost still held with the record its escrow kept at seal, and adds none. See docs/accounting.md, "Money and tokens".
+func (b *Book) ObserveSealedRecords(escrowID string, records map[uint64]types.InferenceRecord) error {
+	if len(records) == 0 {
+		return nil
+	}
+	return b.withEscrow(escrowID, func(escrow *escrowLedger) error {
+		for nonce, record := range records {
+			if _, held := escrow.costs[nonce]; held {
+				escrow.costs[nonce] = costOf(&record)
+			}
+		}
+		return nil
+	})
+}

@@ -39,7 +39,6 @@ func awaitSweep(t *testing.T, swept <-chan struct{}, what string) {
 //  3. Assert a second pass runs at once: the ledger opens a new escrow before the facts of its first requests arrive, rather than dropping them until the next interval.
 func TestPublishingAnEscrowWakesTheLedgerSweep(t *testing.T) {
 	ledger := newLedgerForTest(t)
-	ledger.wake = make(chan struct{}, 1)
 	source := countingEscrowSource{swept: make(chan struct{})}
 	ctx, cancel := context.WithCancel(context.Background())
 	var running sync.WaitGroup

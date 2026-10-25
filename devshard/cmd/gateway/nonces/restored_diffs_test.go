@@ -52,7 +52,7 @@ func restoredRecorder(t *testing.T, escrowID string, group []types.SlotAssignmen
 	if err != nil {
 		t.Fatalf("Restore() = %v, want nil", err)
 	}
-	return &Recorder{service: &accounting.Service{Book: book}}
+	return recorderFor(&accounting.Service{Book: book})
 }
 
 // Test flow:

@@ -85,12 +85,27 @@ func (n *Recorder) Start(ctx context.Context, escrows EscrowSource, diffs DiffJo
 	n.StartSweeping(ctx, escrows, diffs)
 }
 
-// StartSweeping sweeps until ctx ends without serving the listener, for a process that must not open a port.
+// StartSweeping sweeps until ctx ends or Stop is called, without serving the listener, for a process that must not open a port.
 func (n *Recorder) StartSweeping(ctx context.Context, escrows EscrowSource, diffs DiffJournal) {
 	if n == nil {
 		return
 	}
-	go n.sweepUntil(ctx, escrows, diffs)
+	sweepCtx, stopSweeping := context.WithCancel(ctx)
+	swept := make(chan struct{})
+	n.stopSweeping, n.swept = stopSweeping, swept
+	go func() {
+		defer close(swept)
+		n.sweepUntil(sweepCtx, escrows, diffs)
+	}()
+}
+
+// Stop ends the sweep and waits out the one in progress, so no sweep reads or retires an escrow once the sessions close. See README.md, "Boundaries".
+func (n *Recorder) Stop() {
+	if n == nil || n.stopSweeping == nil {
+		return
+	}
+	n.stopSweeping()
+	<-n.swept
 }
 
 func (n *Recorder) serve() {
@@ -123,22 +138,15 @@ func (n *Recorder) sweep(ctx context.Context, escrows EscrowSource, diffs DiffJo
 	states := escrows.Snapshot()
 	published := make(map[string]struct{}, len(states))
 	for _, state := range states {
-		session, routable := escrows.RoutableSession(state.ID)
-		if !routable {
+		if _, routable := escrows.RoutableSession(state.ID); !routable {
+			continue
+		}
+		epoch, known := n.epochOf(ctx, state.ID)
+		session, read := n.takeReadingIfRoutable(escrows, state, epoch, known)
+		if !read {
 			continue
 		}
 		published[state.ID] = struct{}{}
-		escrowState := session.SnapshotState()
-		if epoch, known := n.epochOf(ctx, state.ID); known {
-			n.report(n.service.Book.OpenEscrow(accounting.EscrowMetadata{
-				EscrowID:      state.ID,
-				Model:         state.Model,
-				CreationEpoch: epoch,
-				Slots:         escrowState.Group,
-			}))
-		}
-		n.observeEscrowState(state.ID, escrowState)
-		n.closeSealed(state.ID, escrowState, session)
 		n.watchDiffs(state.ID, session, diffs)
 	}
 	for _, escrowID := range n.service.Book.EscrowIDs() {
@@ -147,6 +155,26 @@ func (n *Recorder) sweep(ctx context.Context, escrows EscrowSource, diffs DiffJo
 			n.observing.Delete(escrowID)
 		}
 	}
+}
+
+func (n *Recorder) takeReadingIfRoutable(escrows EscrowSource, state registry.EscrowState, epoch uint64, epochKnown bool) (registry.EscrowSession, bool) {
+	n.readingLock <- struct{}{}
+	defer func() { <-n.readingLock }()
+	session, routable := escrows.RoutableSession(state.ID)
+	if !routable {
+		return nil, false
+	}
+	escrowState := session.SnapshotState()
+	if epochKnown {
+		n.report(n.service.Book.OpenEscrow(accounting.EscrowMetadata{
+			EscrowID:      state.ID,
+			Model:         state.Model,
+			CreationEpoch: epoch,
+			Slots:         escrowState.Group,
+		}))
+	}
+	n.takeReading(state.ID, escrowState, session)
+	return session, true
 }
 
 // What one sweep reads off an escrow: the watermark, what the chain charges per nonce, the chain's per-slot stats, and every nonce's money.
@@ -168,32 +196,84 @@ func (n *Recorder) EscrowRetiring(escrowID string, session registry.EscrowSessio
 		return
 	}
 	if session != nil {
-		snapshot := session.SnapshotState()
-		n.observeEscrowState(escrowID, snapshot)
-		n.closeSealed(escrowID, snapshot, session)
+		n.takeLockedReading(escrowID, session)
 	}
 	n.service.Book.RetireEscrow(escrowID)
 	n.observing.Delete(escrowID)
 	n.service.RequestFlush()
 }
 
-func (n *Recorder) closeSealed(escrowID string, snapshot types.EscrowState, session registry.EscrowSession) {
+// EscrowClosing takes the reading a shutdown would otherwise lose, before the session closes, and leaves the escrow open. See docs/accounting.md, "Storage".
+func (n *Recorder) EscrowClosing(escrowID string, session registry.EscrowSession) {
+	if n == nil || n.service == nil || session == nil {
+		return
+	}
+	n.takeLockedReading(escrowID, session)
+}
+
+func (n *Recorder) takeLockedReading(escrowID string, session registry.EscrowSession) {
+	n.readingLock <- struct{}{}
+	defer func() { <-n.readingLock }()
+	n.takeReading(escrowID, session.SnapshotState(), session)
+}
+
+func (n *Recorder) takeReading(escrowID string, snapshot types.EscrowState, session registry.EscrowSession) {
+	sealed := newSealedRecords(session)
+	n.observeSealedRecords(escrowID, snapshot, sealed)
+	n.observeEscrowState(escrowID, snapshot)
+	n.closeSealed(escrowID, snapshot, sealed)
+}
+
+func (n *Recorder) observeSealedRecords(escrowID string, snapshot types.EscrowState, sealed *sealedRecords) {
+	records := make(map[uint64]types.InferenceRecord)
+	for _, nonce := range n.service.Book.NoncesToFold(escrowID, snapshot.Inferences) {
+		if record, kept := sealed.lookup(nonce); kept {
+			records[nonce] = record
+		}
+	}
+	n.report(n.service.Book.ObserveSealedRecords(escrowID, records))
+}
+
+func (n *Recorder) closeSealed(escrowID string, snapshot types.EscrowState, sealed *sealedRecords) {
 	var finished []uint64
 	for _, nonce := range n.service.Book.UnfinishedNonces(escrowID) {
 		if _, live := snapshot.Inferences[nonce]; live || nonce > snapshot.LatestNonce {
 			continue
 		}
-		if sealedFinished(session, nonce) {
+		if sealed.finished(nonce) {
 			finished = append(finished, nonce)
 		}
 	}
 	n.report(n.service.Book.MarkFinished(escrowID, finished))
 }
 
-func sealedFinished(session registry.EscrowSession, nonce uint64) bool {
-	if record, kept := session.SealedInference(nonce); kept {
+type sealedLookup struct {
+	record types.InferenceRecord
+	kept   bool
+}
+
+type sealedRecords struct {
+	session registry.EscrowSession
+	lookups map[uint64]sealedLookup
+}
+
+func newSealedRecords(session registry.EscrowSession) *sealedRecords {
+	return &sealedRecords{session: session, lookups: make(map[uint64]sealedLookup)}
+}
+
+func (s *sealedRecords) lookup(nonce uint64) (types.InferenceRecord, bool) {
+	if earlier, cached := s.lookups[nonce]; cached {
+		return earlier.record, earlier.kept
+	}
+	record, kept := s.session.SealedInference(nonce)
+	s.lookups[nonce] = sealedLookup{record: record, kept: kept}
+	return record, kept
+}
+
+func (s *sealedRecords) finished(nonce uint64) bool {
+	if record, kept := s.lookup(nonce); kept {
 		return accounting.FinishApplied(record.Status)
 	}
-	underlying := session.UserSession()
+	underlying := s.session.UserSession()
 	return underlying != nil && underlying.IsNonceFinished(nonce)
 }

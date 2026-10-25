@@ -198,7 +198,7 @@ Signing keys are addressed **by the name of the variable that holds them**, neve
 | `GATEWAY_ENGINE_HEDGE_FIRST_TOKEN_FLOOR_MS` | 1 500 | lower bound on the slow-start hedge that starts a second attempt before the judged deadline; `0` turns it off |
 | `GATEWAY_ENGINE_MAX_CONCURRENT_TIMEOUT_VOTES` | 64 | chain votes for unfinished nonces being posted at once, not a bound on settling escrows; one past it waits for a poster rather than being dropped |
 | `DEVSHARD_STATS_ENABLED` | false | the per-nonce ledger and its JSON API on `DEVSHARD_STATS_PORT` (9091) |
-| `DEVSHARD_STATS_SNAPSHOT_SECONDS` | 300 | how often the nonce ledger writes its snapshot to disk; a value below 1 is ignored with a warning |
+| `DEVSHARD_STATS_SNAPSHOT_SECONDS` | 60 | how often the nonce ledger writes its snapshot to disk, and so the most a crash can roll it back; a value below 1 is ignored with a warning |
 | `DEVSHARD_STATS_RETENTION_EPOCHS` | 2 | how many epochs before the current one the nonce ledger keeps retired escrows; `0` keeps every epoch |
 | `GATEWAY_PERF_EWMA_HALFLIFE_SECONDS` | 600 | how fast a host's history forgets |
 | `GATEWAY_TIMEOUT_SWEEP_BUDGET_PER_TICK` | 8 | execution-timeout votes one tick may retry across every escrow, the most overdue first; `0` turns the sweep off |
@@ -277,7 +277,7 @@ These are read the same way and rarely need changing. Where a knob has a longer 
 
 ## Shutdown
 
-`app/lifecycle.go`, `shutdownOrder`. Twelve steps, in this order, bounded by the grace period, with up to one more second from the journal step's floor:
+`app/lifecycle.go`, `shutdownOrder`. Thirteen steps, in this order, bounded by the grace period, with up to one more second from the journal step's floor:
 
 | # | Step | Why here |
 | --- | --- | --- |
@@ -286,19 +286,20 @@ These are read the same way and rarely need changing. Where a knob has a longer 
 | 3 | dispatchers | nothing new reaches a host |
 | 4 | escrow lifecycle | no rotation starts mid-drain |
 | 5 | chain observer | nothing above still needs a snapshot |
-| 6 | escrow sessions | **destroys state** the steps above may still use |
-| 7 | journal | every producer with a shutdown step above has stopped; it drains its queue into the ledger below, waiting for whatever budget remains, or for one second when the steps above leave less, and counts anything later as a late event, such as a line from the warmup, which is only cancelled, or from the republish after a devshard write |
-| 8 | nonce accounting | after every emitter, so the final snapshot holds the counters the run ended with |
-| 9 | runtime params | after the sessions whose schedule it answers for. It cancels the feed and closes the node-manager connection without waiting for an in-flight poll; nothing above it still reads a schedule by then |
-| 10 | height follower | after the sessions that carried its readings; it holds a block subscription and a dialled client |
-| 11 | store | every step above may still write to it |
-| 12 | public API connections | every step above can still reach it; closing earlier just forces a re-dial |
+| 6 | nonce sweep | the nonce ledger's sweep stops and the step waits for the sweep in progress, so no sweep reads a closing session or retires an escrow once the live set is emptied |
+| 7 | escrow sessions | **destroys state** the steps above may still use; the nonce ledger takes its last reading of each escrow just before its session closes |
+| 8 | journal | every producer with a shutdown step above has stopped; it drains its queue into the ledger below, waiting for whatever budget remains, or for one second when the steps above leave less, and counts anything later as a late event, such as a line from the warmup, which is only cancelled, or from the republish after a devshard write |
+| 9 | nonce accounting | after every emitter, so the final snapshot holds the counters the run ended with |
+| 10 | runtime params | after the sessions whose schedule it answers for. It cancels the feed and closes the node-manager connection without waiting for an in-flight poll; nothing above it still reads a schedule by then |
+| 11 | height follower | after the sessions that carried its readings; it holds a block subscription and a dialled client |
+| 12 | store | every step above may still write to it |
+| 13 | public API connections | every step above can still reach it; closing earlier just forces a re-dial |
 
-`stopAll` runs every step **even after one fails**, except a step marked `needsQuiesced` (step 6): if anything above it failed, work may still be running, so closing the sessions would pull storage out from under it. That step is skipped and the skip is reported.
+`stopAll` runs every step **even after one fails**, except a step marked `needsQuiesced` (step 7): if anything above it failed, work may still be running, so closing the sessions would pull storage out from under it. That step is skipped and the skip is reported.
 
 Each drain is bounded by the grace period but **not cancelled** by it — a step that runs out of time is reported as "abandoned with work still running" rather than killed mid-vote.
 
-The `journal` step (7) is bounded the same way, but with a floor: it waits for its queue for whatever budget remains, or for one second whenever the steps above it leave less than one second of the grace period, so its queue can still reach the ledger, and a close that outlasts that wait is reported as "abandoned with events still queued".
+The `journal` step (8) is bounded the same way, but with a floor: it waits for its queue for whatever budget remains, or for one second whenever the steps above it leave less than one second of the grace period, so its queue can still reach the ledger, and a close that outlasts that wait is reported as "abandoned with events still queued".
 
 **Docker's stop timeout.** Docker sends SIGKILL ten seconds after SIGTERM unless the service sets `stop_grace_period`, and ten seconds is the grace period itself, so a gateway with a stream still open would be killed before the journal drains, the final accounting snapshot is written and the store closes. Both compose files that run the gateway (`deploy/docker-compose.devshard-gateway.yml` and the join stack's `deploy/join/docker-compose.devshard-gateway.yml`) set `stop_grace_period: 30s`, which covers the grace period, the journal's one-second floor and the steps after it. A deployment that raises the grace period raises this with it.
 

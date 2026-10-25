@@ -91,7 +91,7 @@ func TestANonceSealedBetweenSweepsIsClosedByTheRecordKeptAtSeal(t *testing.T) {
 		t.Fatalf("NewService(): %v", err)
 	}
 	t.Cleanup(func() { _ = service.Close() })
-	ledger := &Recorder{service: service}
+	ledger := recorderFor(service)
 	escrow := newLiveEscrow(t, 3)
 	snapshot := escrow.machine.SnapshotState()
 	if err := service.Book.OpenEscrow(accounting.EscrowMetadata{EscrowID: tokenEscrowID, Model: "llama", CreationEpoch: 7, Slots: snapshot.Group}); err != nil {
@@ -102,10 +102,10 @@ func TestANonceSealedBetweenSweepsIsClosedByTheRecordKeptAtSeal(t *testing.T) {
 	}
 	snapshot.LatestNonce = 6
 
-	ledger.closeSealed(tokenEscrowID, snapshot, sealedSession{sealed: map[uint64]types.InferenceRecord{
+	ledger.closeSealed(tokenEscrowID, snapshot, newSealedRecords(sealedSession{sealed: map[uint64]types.InferenceRecord{
 		4: {Status: types.StatusValidated},
 		5: {Status: types.StatusTimedOut},
-	}})
+	}}))
 
 	if got := service.Book.UnfinishedNonces(tokenEscrowID); !slices.Equal(got, []uint64{5, 6}) {
 		t.Fatalf("UnfinishedNonces() = %v, want [5 6]: only the nonce sealed with an applied Finish is closed", got)

@@ -215,15 +215,7 @@ func (b *Book) ObserveInferences(escrowID string, inferences map[uint64]*types.I
 			if FinishApplied(record.Status) {
 				escrow.markFinished(nonce)
 			}
-			escrow.costs[nonce] = nonceCost{
-				reserved:    record.ReservedCost,
-				actual:      record.ActualCost,
-				inputLength: record.InputLength,
-				maxTokens:   record.MaxTokens,
-				input:       record.InputTokens,
-				output:      record.OutputTokens,
-				status:      record.Status,
-			}
+			escrow.costs[nonce] = costOf(record)
 			if record.Status == types.StatusChallenged {
 				challenged[record.ExecutorSlot]++
 			}
