@@ -98,7 +98,7 @@ func sweepEscrow(book *Book, escrowID string, latest, cost uint64, inferences ma
 	_ = book.ObserveInferences(escrowID, inferences)
 }
 
-func raceWon(book *Book, escrowID string, nonce uint64) {
+func recordWonRace(book *Book, escrowID string, nonce uint64) {
 	_ = book.RecordAssigned(escrowID, nonce, fmt.Sprintf("request-%d", nonce))
 	_ = book.RecordRace(escrowID, []Attempt{{
 		Nonce: nonce, RequestID: fmt.Sprintf("request-%d", nonce), Sent: true, Acknowledged: true, OutputTokens: 250,
@@ -115,13 +115,13 @@ func ledgerScript() []func(*Book) {
 		},
 		func(book *Book) {
 			for nonce := uint64(1); nonce <= 6; nonce++ {
-				raceWon(book, testEscrow, nonce)
+				recordWonRace(book, testEscrow, nonce)
 			}
 			_ = book.RecordAssigned(testEscrow, 7, "request-7")
 			_ = book.RecordTimeout(testEscrow, 7, engine.TimeoutKindExecution, engine.TimeoutActionCompleted, engine.TimeoutReasonNotApplied)
 			_ = book.RecordGhost(testEscrow, 8, scheduler.GhostReasonWindowFull)
 			sweepEscrow(book, testEscrow, 8, 900, liveInferences(1, 8, types.StatusFinished))
-			raceWon(book, lockTestRetired, 2)
+			recordWonRace(book, lockTestRetired, 2)
 			sweepEscrow(book, lockTestRetired, 2, 900, liveInferences(1, 2, types.StatusStarted))
 		},
 		func(book *Book) {
@@ -131,7 +131,7 @@ func ledgerScript() []func(*Book) {
 		},
 		func(book *Book) {
 			sweepEscrow(book, testEscrow, 8, 900, liveInferences(5, 8, types.StatusFinished))
-			raceWon(book, otherEscrow, 1)
+			recordWonRace(book, otherEscrow, 1)
 			sweepEscrow(book, otherEscrow, 1, 905, liveInferences(1, 1, types.StatusChallenged))
 		},
 		func(book *Book) {
@@ -143,6 +143,11 @@ func ledgerScript() []func(*Book) {
 		func(book *Book) {
 			sweepEscrow(book, lockTestRetired, 2, 900, liveInferences(1, 2, types.StatusFinished))
 			sweepEscrow(book, lockTestRetired, 2, 900, nil)
+		},
+		func(book *Book) {
+			sweepEscrow(book, lockTestRetired, 2, 900, nil)
+		},
+		func(book *Book) {
 			book.RetireEscrow(lockTestRetired)
 		},
 		func(book *Book) {
@@ -151,7 +156,7 @@ func ledgerScript() []func(*Book) {
 			sweepEscrow(book, otherEscrow, 1, 905, liveInferences(1, 1, types.StatusChallenged))
 		},
 		func(book *Book) {
-			raceWon(book, lockTestRetired, 3)
+			recordWonRace(book, lockTestRetired, 3)
 			_ = book.RecordServiceNonce(otherEscrow, 2, ServiceFinalize)
 			_ = book.ObserveCharging(otherEscrow, lockTestFeePerNonce, 2)
 			sweepEscrow(book, testEscrow, 9, 950, nil)
@@ -194,7 +199,7 @@ func ledgerScript() []func(*Book) {
 			sweepEscrow(book, testEscrow, 11, 960, liveInferences(11, 11, types.StatusFinished))
 		},
 		func(book *Book) {
-			raceWon(book, testEscrow, 11)
+			recordWonRace(book, testEscrow, 11)
 		},
 		func(book *Book) {
 			sweepEscrow(book, testEscrow, 11, 960, liveInferences(11, 11, types.StatusFinished))
@@ -212,7 +217,7 @@ func newScriptBook(t *testing.T) *Book {
 }
 
 // Test flow:
-//  1. Drive two books through the same script of facts, sweeps, sweeps that change nothing, a retirement and late facts.
+//  1. Drive two books through the same script of facts, sweeps, sweeps that change nothing, a retirement alone after a sweep that changed nothing, and late facts.
 //  2. After each step, save the first book as it marks itself and the second with every escrow marked, each into its own store.
 //  3. Assert both stores hold the same rows after every step, the stored updated_at included.
 func TestASaveOfTheEscrowsMarkedChangedStoresWhatAWholeWriteStores(t *testing.T) {
@@ -306,8 +311,8 @@ func TestConcurrentSavesReadsAndSweepsStoreWhatAWholeWriteStores(t *testing.T) {
 	})
 	group.Go(func() {
 		for nonce := uint64(1); nonce <= lockTestRounds*lockTestNoncesPerRound; nonce++ {
-			raceWon(book, testEscrow, nonce)
-			raceWon(book, otherEscrow, nonce)
+			recordWonRace(book, testEscrow, nonce)
+			recordWonRace(book, otherEscrow, nonce)
 			if nonce%lockTestNoncesPerRound == 0 {
 				_ = book.RecordTimeout(otherEscrow, nonce, engine.TimeoutKindExecution, engine.TimeoutActionCompleted, engine.TimeoutReasonNotApplied)
 			}

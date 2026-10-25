@@ -13,14 +13,13 @@ import (
 var ErrUnknownEscrow = errors.New("accounting: unknown escrow")
 
 type Book struct {
-	mu            sync.RWMutex
-	escrows       map[string]*escrowLedger
-	unsaved       map[string]struct{}
-	replaceStored bool
-	updatedAt     time.Time
-	now           func() time.Time
-
+	mu               sync.RWMutex
+	escrows          map[string]*escrowLedger
+	unsaved          map[string]struct{}
+	replaceStored    bool
 	updatedAtUnsaved bool
+	updatedAt        time.Time
+	now              func() time.Time
 }
 
 type escrowLedger struct {
@@ -156,7 +155,7 @@ func (b *Book) RetireEscrow(escrowID string) {
 		return
 	}
 	escrow.retired = true
-	escrow.releaseEmptiedMaps()
+	escrow.shrinkPerNonceMaps()
 	b.touchLocked(escrowID)
 }
 

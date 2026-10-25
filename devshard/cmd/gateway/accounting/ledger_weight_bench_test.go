@@ -15,8 +15,6 @@ import (
 const (
 	weightLiveEscrows      = 10
 	weightRetiredEscrows   = 20
-	weightGroupSize        = 16
-	weightParticipants     = 40
 	weightNoncesPerEscrow  = 100_000
 	weightLiveWindow       = 6_400
 	weightUnfinishedEvery  = 20
@@ -41,13 +39,9 @@ func weightEscrowID(epoch uint64, index int) string {
 
 func weightInference(nonce uint64, status types.InferenceStatus) *types.InferenceRecord {
 	return &types.InferenceRecord{
-		Status: status, ExecutorSlot: uint32(nonce % weightGroupSize), InputLength: 6000, MaxTokens: 2048,
+		Status: status, ExecutorSlot: uint32(nonce % benchGroupSize), InputLength: 6000, MaxTokens: 2048,
 		InputTokens: 1500, OutputTokens: 400, ReservedCost: 120000, ActualCost: 90000,
 	}
-}
-
-func weightHostStats() types.HostStats {
-	return types.HostStats{Missed: 3, Invalid: 1, Cost: 900000, RequiredValidations: 12, CompletedValidations: 11}
 }
 
 func weightRecordNonce(book *Book, escrow *weightEscrow, nonce uint64) {
@@ -78,7 +72,7 @@ func weightRecordNonce(book *Book, escrow *weightEscrow, nonce uint64) {
 		_ = book.RecordRace(escrow.escrowID, []Attempt{attempt})
 	}
 	if nonce%10 == 0 {
-		_ = book.RecordValidation(escrow.escrowID, uint32(nonce%weightGroupSize))
+		_ = book.RecordValidation(escrow.escrowID, uint32(nonce%benchGroupSize))
 	}
 	escrow.live[nonce] = weightInference(nonce, status)
 	if nonce > weightLiveWindow {
@@ -90,8 +84,8 @@ func weightRecordNonce(book *Book, escrow *weightEscrow, nonce uint64) {
 func weightSweep(book *Book, escrow *weightEscrow) {
 	_ = book.ObserveLatestNonce(escrow.escrowID, escrow.latest)
 	_ = book.ObserveCharging(escrow.escrowID, weightFeePerNonce, 0)
-	for slotID := range uint32(weightGroupSize) {
-		_ = book.ObserveHostStats(escrow.escrowID, slotID, weightHostStats())
+	for slotID := range uint32(benchGroupSize) {
+		_ = book.ObserveHostStats(escrow.escrowID, slotID, benchHostStats())
 	}
 	_ = book.ObserveInferences(escrow.escrowID, escrow.live)
 }
@@ -99,9 +93,9 @@ func weightSweep(book *Book, escrow *weightEscrow) {
 func weightFill(b *testing.B, book *Book, epoch uint64, index int, retired bool) *weightEscrow {
 	b.Helper()
 	escrow := &weightEscrow{escrowID: weightEscrowID(epoch, index), live: make(map[uint64]*types.InferenceRecord, weightLiveWindow)}
-	slots := make([]types.SlotAssignment, 0, weightGroupSize)
-	for slotID := range weightGroupSize {
-		slots = append(slots, types.SlotAssignment{SlotID: uint32(slotID), ValidatorAddress: benchParticipant((index*5 + slotID) % weightParticipants)})
+	slots := make([]types.SlotAssignment, 0, benchGroupSize)
+	for slotID := range benchGroupSize {
+		slots = append(slots, types.SlotAssignment{SlotID: uint32(slotID), ValidatorAddress: benchParticipant((index*5 + slotID) % benchParticipants)})
 	}
 	if err := book.OpenEscrow(EscrowMetadata{EscrowID: escrow.escrowID, Model: "model-a", CreationEpoch: epoch, Slots: slots}); err != nil {
 		b.Fatalf("OpenEscrow(): %v", err)

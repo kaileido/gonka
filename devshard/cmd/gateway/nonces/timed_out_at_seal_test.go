@@ -6,24 +6,8 @@ import (
 	"time"
 
 	"devshard/cmd/gateway/accounting"
-	"devshard/cmd/gateway/registry"
 	"devshard/types"
-	"devshard/user"
 )
-
-type countingSealedSession struct {
-	registry.EscrowSession
-	sealed  map[uint64]types.InferenceRecord
-	lookups map[uint64]int
-}
-
-func (s countingSealedSession) SealedInference(id uint64) (types.InferenceRecord, bool) {
-	s.lookups[id]++
-	record, kept := s.sealed[id]
-	return record, kept
-}
-
-func (s countingSealedSession) UserSession() *user.Session { return nil }
 
 // Test flow:
 //  1. Report the races of nonces 4, 5 and 6 as won while the sweep never read any of them live.
@@ -37,7 +21,7 @@ func TestANonceSealedTimedOutIsReadOnceAcrossReadings(t *testing.T) {
 		t.Fatalf("NewService(): %v", err)
 	}
 	t.Cleanup(func() { _ = service.Close() })
-	ledger := newRecorder(service, nil)
+	ledger := recorderFor(service)
 	escrow := newLiveEscrow(t, 3)
 	snapshot := escrow.machine.SnapshotState()
 	if err := service.Book.OpenEscrow(accounting.EscrowMetadata{EscrowID: tokenEscrowID, Model: "llama", CreationEpoch: 7, Slots: snapshot.Group}); err != nil {
@@ -47,7 +31,7 @@ func TestANonceSealedTimedOutIsReadOnceAcrossReadings(t *testing.T) {
 		wonRace(t, nonce)(service.Book)
 	}
 	snapshot.LatestNonce = 6
-	session := countingSealedSession{
+	session := sealedSession{
 		sealed:  map[uint64]types.InferenceRecord{4: {Status: types.StatusValidated}, 5: {Status: types.StatusTimedOut}},
 		lookups: make(map[uint64]int),
 	}

@@ -5,10 +5,8 @@ import (
 
 	"devshard/cmd/gateway/accounting"
 	"devshard/cmd/gateway/engine"
-	"devshard/cmd/gateway/registry"
 	"devshard/storage"
 	"devshard/types"
-	"devshard/user"
 )
 
 const (
@@ -19,13 +17,12 @@ const (
 )
 
 type storedSealedSession struct {
-	registry.EscrowSession
+	sealedSession
 	store *storage.SQLite
-	reads *int
 }
 
 func (s storedSealedSession) SealedInference(id uint64) (types.InferenceRecord, bool) {
-	*s.reads++
+	s.lookups[id]++
 	row, kept, err := s.store.GetSealedInference(benchEscrow, id)
 	if err != nil || !kept || !row.ObsPresent {
 		return types.InferenceRecord{}, false
@@ -33,7 +30,13 @@ func (s storedSealedSession) SealedInference(id uint64) (types.InferenceRecord, 
 	return types.InferenceRecord{Status: types.InferenceStatus(row.SealedStatus), ExecutorSlot: row.SealedExecutorSlot}, true
 }
 
-func (s storedSealedSession) UserSession() *user.Session { return nil }
+func (s storedSealedSession) totalLookups() int {
+	total := 0
+	for _, count := range s.lookups {
+		total += count
+	}
+	return total
+}
 
 func benchTimedOutEscrow(b *testing.B, ledger *Recorder) (storedSealedSession, types.EscrowState) {
 	b.Helper()
@@ -72,8 +75,7 @@ func benchTimedOutEscrow(b *testing.B, ledger *Recorder) (storedSealedSession, t
 			rows = rows[:0]
 		}
 	}
-	reads := 0
-	return storedSealedSession{store: store, reads: &reads}, types.EscrowState{EscrowID: benchEscrow, LatestNonce: latest}
+	return storedSealedSession{sealedSession: sealedSession{lookups: make(map[uint64]int, benchTimedOutNonces)}, store: store}, types.EscrowState{EscrowID: benchEscrow, LatestNonce: latest}
 }
 
 // Test flow:
@@ -84,7 +86,7 @@ func BenchmarkCloseSealedTimedOutNonces(b *testing.B) {
 	ledger := benchRecorder(b)
 	session, snapshot := benchTimedOutEscrow(b, ledger)
 	ledger.closeSealed(benchEscrow, snapshot, newSealedRecords(session))
-	firstReads := *session.reads
+	firstReads := session.totalLookups()
 	rounds := 0
 	b.ReportAllocs()
 	for b.Loop() {
@@ -92,5 +94,5 @@ func BenchmarkCloseSealedTimedOutNonces(b *testing.B) {
 		ledger.closeSealed(benchEscrow, snapshot, newSealedRecords(session))
 	}
 	b.ReportMetric(float64(firstReads), "first-reading-reads")
-	b.ReportMetric(float64(*session.reads-firstReads)/float64(rounds), "sealed-reads/op")
+	b.ReportMetric(float64(session.totalLookups()-firstReads)/float64(rounds), "sealed-reads/op")
 }

@@ -60,7 +60,7 @@ func (b *Book) ObserveInferences(escrowID string, inferences map[uint64]*types.I
 		escrow.challenged = challenged
 		escrow.inFlightReserved, escrow.challengedCost = inFlight, challengedCost
 		if folded && escrow.retired {
-			escrow.releaseEmptiedMaps()
+			escrow.shrinkPerNonceMaps()
 		}
 		return changed
 	})
@@ -89,7 +89,7 @@ func (b *Book) observeEscrow(escrowID string, observe func(*escrowLedger) bool) 
 	return nil
 }
 
-func (e *escrowLedger) releaseEmptiedMaps() {
+func (e *escrowLedger) shrinkPerNonceMaps() {
 	e.costs = shrinkToFit(e.costs)
 	e.nonces = shrinkToFit(e.nonces)
 }
