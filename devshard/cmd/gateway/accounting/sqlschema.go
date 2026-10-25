@@ -2,6 +2,7 @@ package accounting
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -65,8 +66,8 @@ CREATE TABLE IF NOT EXISTS accounting_money (
 	input_tokens     INTEGER NOT NULL,
 	counted_nonces   INTEGER NOT NULL,
 	output_tokens    INTEGER NOT NULL,
-	tokenized_input  INTEGER NOT NULL DEFAULT 0,
-	tokenized_error  INTEGER NOT NULL DEFAULT 0,
+	tokenized_input  INTEGER,
+	tokenized_error  INTEGER,
 	PRIMARY KEY (escrow_id, slot_id)
 );
 CREATE TABLE IF NOT EXISTS accounting_first_content (
@@ -141,9 +142,9 @@ CREATE TABLE IF NOT EXISTS accounting_input_counts (
 `
 
 var (
-	addedColumns = []struct{ table, column, definition string }{
-		{"accounting_money", "tokenized_input", "INTEGER NOT NULL DEFAULT 0"},
-		{"accounting_money", "tokenized_error", "INTEGER NOT NULL DEFAULT 0"},
+	addedColumns = []struct{ table, column, definition, storedRowsValue string }{
+		{"accounting_money", "tokenized_input", "INTEGER", "0"},
+		{"accounting_money", "tokenized_error", "INTEGER", "0"},
 	}
 	escrowTables = []string{
 		"accounting_input_counts",
@@ -213,8 +214,18 @@ func addMissingColumns(db *sql.DB) error {
 		if present {
 			continue
 		}
-		if _, err := db.Exec(`ALTER TABLE ` + added.table + ` ADD COLUMN ` + added.column + ` ` + added.definition); err != nil {
-			return fmt.Errorf("adding column %s.%s: %w", added.table, added.column, err)
+		transaction, err := db.Begin()
+		if err != nil {
+			return fmt.Errorf("beginning to add column %s.%s: %w", added.table, added.column, err)
+		}
+		if _, err := transaction.Exec(`ALTER TABLE ` + added.table + ` ADD COLUMN ` + added.column + ` ` + added.definition); err != nil {
+			return errors.Join(fmt.Errorf("adding column %s.%s: %w", added.table, added.column, err), transaction.Rollback())
+		}
+		if _, err := transaction.Exec(`UPDATE ` + added.table + ` SET ` + added.column + ` = ` + added.storedRowsValue); err != nil {
+			return errors.Join(fmt.Errorf("filling column %s.%s of the stored rows: %w", added.table, added.column, err), transaction.Rollback())
+		}
+		if err := transaction.Commit(); err != nil {
+			return fmt.Errorf("committing column %s.%s: %w", added.table, added.column, err)
 		}
 	}
 	return nil

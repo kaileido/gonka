@@ -176,11 +176,14 @@ func (s *Store) readMoney(ctx context.Context, escrows map[string]*EscrowSnapsho
 			var slotID uint32
 			var money SlotMoney
 			var produced uint64
+			var tokenizedInput, tokenizedError sql.Null[uint64]
 			if err := rows.Scan(&escrowID, &slotID, &money.Reserved, &money.Actual, &money.Refunded,
 				&money.EstimatedInput, &money.EstimatedError, &money.MaxTokens,
-				&money.Input, &money.CountedNonces, &produced, &money.TokenizedInput, &money.TokenizedError); err != nil {
+				&money.Input, &money.CountedNonces, &produced, &tokenizedInput, &tokenizedError); err != nil {
 				return err
 			}
+			money.TokenizedInput, money.TokenizedError = tokenizedInput.V, tokenizedError.V
+			money.TokenizedShareUnknown = (!tokenizedInput.Valid || !tokenizedError.Valid) && money.EstimatedInput+money.EstimatedError > 0
 			if escrow, known := escrows[escrowID]; known {
 				if money != (SlotMoney{}) {
 					escrow.Money[slotID] = money

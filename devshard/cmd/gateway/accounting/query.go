@@ -306,6 +306,10 @@ func (e *escrowLedger) slots(escrowID string) []SlotRecord {
 			},
 			timeoutTally: aggregate.tally,
 		}
+		if money[slotID].TokenizedShareUnknown {
+			slot.TokenizedInput, slot.TokenizedError = 0, 0
+			slot.TokenizedUnknownSlots++
+		}
 		if stats, observed := e.hostStats[slotID]; observed {
 			slot.ChainMissed, slot.ChainInvalid = stats.Missed, stats.Invalid
 			slot.ChainCost = stats.Cost
