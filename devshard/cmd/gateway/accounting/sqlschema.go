@@ -140,12 +140,11 @@ CREATE TABLE IF NOT EXISTS accounting_input_counts (
 );
 `
 
-var addedColumns = []struct{ table, column, definition string }{
-	{"accounting_money", "tokenized_input", "INTEGER NOT NULL DEFAULT 0"},
-	{"accounting_money", "tokenized_error", "INTEGER NOT NULL DEFAULT 0"},
-}
-
 var (
+	addedColumns = []struct{ table, column, definition string }{
+		{"accounting_money", "tokenized_input", "INTEGER NOT NULL DEFAULT 0"},
+		{"accounting_money", "tokenized_error", "INTEGER NOT NULL DEFAULT 0"},
+	}
 	escrowTables = []string{
 		"accounting_input_counts",
 		"accounting_costs",
@@ -205,20 +204,6 @@ func currentSchema(db *sql.DB) bool {
 	return true
 }
 
-func discardUntrustedFirstContent(db *sql.DB) error {
-	trusted := firstContentWrittenWithLastSave(db)
-	for _, table := range firstContentTables {
-		statement := `DELETE FROM ` + table
-		if trusted {
-			statement += ` WHERE escrow_id NOT IN (SELECT escrow_id FROM accounting_escrows)`
-		}
-		if _, err := db.Exec(statement); err != nil {
-			return fmt.Errorf("discarding stale rows of %s: %w", table, err)
-		}
-	}
-	return nil
-}
-
 func addMissingColumns(db *sql.DB) error {
 	for _, added := range addedColumns {
 		var present bool
@@ -230,6 +215,20 @@ func addMissingColumns(db *sql.DB) error {
 		}
 		if _, err := db.Exec(`ALTER TABLE ` + added.table + ` ADD COLUMN ` + added.column + ` ` + added.definition); err != nil {
 			return fmt.Errorf("adding column %s.%s: %w", added.table, added.column, err)
+		}
+	}
+	return nil
+}
+
+func discardUntrustedFirstContent(db *sql.DB) error {
+	trusted := firstContentWrittenWithLastSave(db)
+	for _, table := range firstContentTables {
+		statement := `DELETE FROM ` + table
+		if trusted {
+			statement += ` WHERE escrow_id NOT IN (SELECT escrow_id FROM accounting_escrows)`
+		}
+		if _, err := db.Exec(statement); err != nil {
+			return fmt.Errorf("discarding stale rows of %s: %w", table, err)
 		}
 	}
 	return nil
