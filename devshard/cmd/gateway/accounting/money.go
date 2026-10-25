@@ -17,16 +17,17 @@ type nonceCost struct {
 
 // SlotMoney is one slot's share of the escrow's money. See docs/accounting.md, "Money and tokens".
 type SlotMoney struct {
-	Reserved       uint64 `json:"reserved_cost,omitempty"`
-	Actual         uint64 `json:"actual_cost,omitempty"`
-	Refunded       uint64 `json:"refunded_cost,omitempty"`
-	EstimatedInput uint64 `json:"estimated_input_tokens,omitempty"`
-	EstimatedError uint64 `json:"estimated_error_tokens,omitempty"`
-	TokenizedInput uint64 `json:"tokenized_input_tokens,omitempty"`
-	TokenizedError uint64 `json:"tokenized_error_tokens,omitempty"`
-	MaxTokens      uint64 `json:"max_tokens,omitempty"`
-	Input          uint64 `json:"input_tokens,omitempty"`
-	CountedNonces  uint64 `json:"counted_nonces,omitempty"`
+	Reserved              uint64 `json:"reserved_cost,omitempty"`
+	Actual                uint64 `json:"actual_cost,omitempty"`
+	Refunded              uint64 `json:"refunded_cost,omitempty"`
+	EstimatedInput        uint64 `json:"estimated_input_tokens,omitempty"`
+	EstimatedError        uint64 `json:"estimated_error_tokens,omitempty"`
+	TokenizedInput        uint64 `json:"tokenized_input_tokens,omitempty"`
+	TokenizedError        uint64 `json:"tokenized_error_tokens,omitempty"`
+	TokenizedShareUnknown bool   `json:"tokenized_unknown,omitempty"`
+	MaxTokens             uint64 `json:"max_tokens,omitempty"`
+	Input                 uint64 `json:"input_tokens,omitempty"`
+	CountedNonces         uint64 `json:"counted_nonces,omitempty"`
 }
 
 func (m *SlotMoney) add(other SlotMoney) {
@@ -37,6 +38,7 @@ func (m *SlotMoney) add(other SlotMoney) {
 	m.EstimatedError += other.EstimatedError
 	m.TokenizedInput += other.TokenizedInput
 	m.TokenizedError += other.TokenizedError
+	m.TokenizedShareUnknown = m.TokenizedShareUnknown || other.TokenizedShareUnknown
 	m.MaxTokens += other.MaxTokens
 	m.Input += other.Input
 	m.CountedNonces += other.CountedNonces

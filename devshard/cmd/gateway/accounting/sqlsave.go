@@ -178,10 +178,11 @@ func writeEscrow(ctx context.Context, writers rowWriters, escrow EscrowSnapshot)
 	}
 	for _, slotID := range slices.Sorted(maps.Keys(slotsWithTotals(escrow))) {
 		money := escrow.Money[slotID]
+		tokenizedInput, tokenizedError := tokenizedColumns(money)
 		if _, err := writers.money.ExecContext(ctx,
 			identity, slotID, money.Reserved, money.Actual, money.Refunded, money.EstimatedInput,
 			money.EstimatedError, money.MaxTokens, money.Input, money.CountedNonces,
-			escrow.Produced[slotID], money.TokenizedInput, money.TokenizedError,
+			escrow.Produced[slotID], tokenizedInput, tokenizedError,
 		); err != nil {
 			return fmt.Errorf("writing money for slot %d of %s: %w", slotID, identity, err)
 		}
@@ -244,4 +245,11 @@ func slotsWithTotals(escrow EscrowSnapshot) map[uint32]struct{} {
 		slots[slotID] = struct{}{}
 	}
 	return slots
+}
+
+func tokenizedColumns(money SlotMoney) (input, errorTokens any) {
+	if money.TokenizedShareUnknown {
+		return nil, nil
+	}
+	return money.TokenizedInput, money.TokenizedError
 }

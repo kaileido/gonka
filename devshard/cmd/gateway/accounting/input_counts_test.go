@@ -12,8 +12,12 @@ import (
 )
 
 const (
-	retiredCountedNonces       = 50_000
-	retiredCountsHeapAllowance = 256 * 1024
+	retiredCountedNonces        = 50_000
+	retiredCountsHeapAllowance  = 256 * 1024
+	insertMoneyWithoutTokenized = `INSERT INTO accounting_money
+		 (escrow_id, slot_id, reserved_cost, actual_cost, refunded_cost, estimated_input, estimated_error,
+		  max_tokens, input_tokens, counted_nonces, output_tokens)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 )
 
 func countedRaceInferences() map[uint64]*types.InferenceRecord {
@@ -84,7 +88,7 @@ func TestARacedNonceIsEstimatedByItsTokenizerCountAndTheRestByTheirBytes(t *test
 // Test flow:
 //  1. Save a book with a finished inference and a sealed one, then strip the store to the shape before input counts: no tokenized money columns and no input count table.
 //  2. Reopen the store, load and restore it, record a tokenizer-counted race on a new nonce and save it again.
-//  3. Assert the stored nonces read back as byte estimates with nothing tokenized, and the new nonce's count was saved beside them.
+//  3. Assert the stored nonces read back as byte estimates with nothing tokenized and no tokenizer share unknown, and the new nonce's count was saved beside them.
 func TestAStoreWrittenBeforeInputCountsReadsAsByteEstimates(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "accounting.db")
 	store, err := OpenStore(path)
@@ -123,6 +127,9 @@ func TestAStoreWrittenBeforeInputCountsReadsAsByteEstimates(t *testing.T) {
 	if want := filters.EstimatedPromptTokens(400) + filters.EstimatedPromptTokens(800); money.EstimatedInput != want || money.TokenizedInput != 0 || money.CountedNonces != 2 {
 		t.Fatalf("money = %+v, want %d estimated from bytes over 2 nonces, none tokenized", money, want)
 	}
+	if unknown := tokenizedUnknownSlots(reloaded); unknown != 0 {
+		t.Fatalf("slots with an unknown tokenizer share = %d, want none for a store written before tokenizer counts", unknown)
+	}
 	if counts := reloaded.Snapshot().Escrows[0].InputCounts; len(counts) != 1 || counts[0] != (PersistedInputCount{Nonce: 9, Tokens: 11, Source: filters.InputTokensTokenizerExact}) {
 		t.Fatalf("input counts = %+v, want nonce 9's 11 tokenizer tokens", counts)
 	}
@@ -130,20 +137,189 @@ func TestAStoreWrittenBeforeInputCountsReadsAsByteEstimates(t *testing.T) {
 
 func stripInputCounts(t *testing.T, path string) {
 	t.Helper()
+	alterStore(t, path,
+		`ALTER TABLE accounting_money DROP COLUMN tokenized_input`,
+		`ALTER TABLE accounting_money DROP COLUMN tokenized_error`,
+		`DROP TABLE accounting_input_counts`,
+	)
+}
+
+func alterStore(t *testing.T, path string, statements ...string) {
+	t.Helper()
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatalf("opening the store as the older build left it: %v", err)
 	}
 	defer func() { _ = db.Close() }()
-	for _, statement := range []string{
-		`ALTER TABLE accounting_money DROP COLUMN tokenized_input`,
-		`ALTER TABLE accounting_money DROP COLUMN tokenized_error`,
-		`DROP TABLE accounting_input_counts`,
-	} {
+	for _, statement := range statements {
 		if _, err := db.Exec(statement); err != nil {
 			t.Fatalf("%s: %v", statement, err)
 		}
 	}
+}
+
+// Test flow:
+//  1. Save a book with a folded byte-estimated nonce, strip the store to the shape before input counts, and make every update of its money rows fail.
+//  2. Reopen the store and assert the open fails and leaves neither tokenized column behind.
+//  3. Let the updates through again, then reopen, load and restore the store.
+//  4. Assert the slot reads as byte estimates with nothing tokenized and no tokenizer share unknown.
+func TestAColumnWhoseStoredRowsCannotBeFilledIsNotAdded(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "accounting.db")
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatalf("OpenStore(): %v", err)
+	}
+	book := newTestBook(t, 4)
+	sweep(t, book, 6, map[uint64]*types.InferenceRecord{6: {Status: types.StatusFinished, InputLength: 800}})
+	sweep(t, book, 6, map[uint64]*types.InferenceRecord{})
+	if err := store.Save(context.Background(), book); err != nil {
+		t.Fatalf("Save(): %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close(): %v", err)
+	}
+	stripInputCounts(t, path)
+	alterStore(t, path, `CREATE TRIGGER refuse_money_updates BEFORE UPDATE ON accounting_money BEGIN SELECT RAISE(ABORT, 'refused'); END`)
+
+	if refused, err := OpenStore(path); err == nil {
+		_ = refused.Close()
+		t.Fatal("OpenStore() with the stored money rows refusing updates succeeded, want an error")
+	}
+	if columns := tokenizedColumnCount(t, path); columns != 0 {
+		t.Fatalf("tokenized columns after the failed open = %d, want none so the next open adds and fills them", columns)
+	}
+	alterStore(t, path, `DROP TRIGGER refuse_money_updates`)
+	reopened, err := OpenStore(path)
+	if err != nil {
+		t.Fatalf("OpenStore() once updates are let through: %v", err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	snapshot, err := reopened.Load(t.Context())
+	if err != nil {
+		t.Fatalf("Load(): %v", err)
+	}
+	restored := NewBook(book.now)
+	if err := restored.Restore(snapshot); err != nil {
+		t.Fatalf("Restore(): %v", err)
+	}
+
+	if money := moneyOf(t, restored); money.EstimatedInput != filters.EstimatedPromptTokens(800) || money.TokenizedInput != 0 {
+		t.Fatalf("money = %+v, want %d estimated from bytes, none tokenized", money, filters.EstimatedPromptTokens(800))
+	}
+	if unknown := tokenizedUnknownSlots(restored); unknown != 0 {
+		t.Fatalf("slots with an unknown tokenizer share = %d, want none for a store written before tokenizer counts", unknown)
+	}
+}
+
+func tokenizedColumnCount(t *testing.T, path string) int {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("opening the store: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	var columns int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('accounting_money') WHERE name IN ('tokenized_input', 'tokenized_error')`).Scan(&columns); err != nil {
+		t.Fatalf("inspecting the money columns: %v", err)
+	}
+	return columns
+}
+
+// Test flow:
+//  1. Fold a nonce at its 37 tokenizer tokens and, on another slot, a ghost whose reserve timed out, then save the book.
+//  2. Rewrite the escrow's money rows with the insert of a build that has no tokenized columns.
+//  3. Load and restore the store, fold another nonce of the first slot at its 11 tokenizer tokens, then save and reload.
+//  4. Assert both nonces still count in the estimated input and the ghost's reserve is kept, while only the first slot reports its tokenizer share as unknown rather than as zero.
+func TestASaveByABuildWithoutTokenizedColumnsLeavesTheTokenizerShareUnknown(t *testing.T) {
+	book := newTestBook(t, 4)
+	if err := book.RecordInputCount(testEscrow, 6, 37, filters.InputTokensTokenizerExact); err != nil {
+		t.Fatalf("RecordInputCount(): %v", err)
+	}
+	if err := book.RecordGhost(testEscrow, 7, "participant_window_full_no_send"); err != nil {
+		t.Fatalf("RecordGhost(): %v", err)
+	}
+	sweep(t, book, 7, map[uint64]*types.InferenceRecord{
+		6: {Status: types.StatusFinished, InputLength: 4_000},
+		7: {Status: types.StatusTimedOut, InputLength: 60, ReservedCost: 124},
+	})
+	sweep(t, book, 7, map[uint64]*types.InferenceRecord{})
+	store := openTestStore(t)
+	if err := store.Save(t.Context(), book); err != nil {
+		t.Fatalf("Save(): %v", err)
+	}
+	rewriteMoneyWithoutTokenized(t, store)
+
+	snapshot, err := store.Load(t.Context())
+	if err != nil {
+		t.Fatalf("Load(): %v", err)
+	}
+	restored := NewBook(book.now)
+	if err := restored.Restore(snapshot); err != nil {
+		t.Fatalf("Restore(): %v", err)
+	}
+	if err := restored.RecordInputCount(testEscrow, 10, 11, filters.InputTokensTokenizerExact); err != nil {
+		t.Fatalf("RecordInputCount(): %v", err)
+	}
+	sweep(t, restored, 10, map[uint64]*types.InferenceRecord{10: {Status: types.StatusFinished, InputLength: 400}})
+	sweep(t, restored, 10, map[uint64]*types.InferenceRecord{})
+	reloaded := saveAndReload(t, restored, store)
+
+	if before := moneyOf(t, book); before.EstimatedInput != 37 || before.TokenizedInput != 37 || before.Reserved != 124 {
+		t.Fatalf("money before the rewrite = %+v, want 37 estimated input, all tokenized, and the ghost's 124 reserved", before)
+	}
+	for _, check := range []struct {
+		name string
+		book *Book
+	}{{"restored", restored}, {"reloaded", reloaded}} {
+		money := moneyOf(t, check.book)
+		if money.EstimatedInput != 37+11 || money.TokenizedInput != 0 || money.TokenizedError != 0 || money.Reserved != 124 {
+			t.Fatalf("%s money = %+v, want 48 estimated input, no tokenizer share claimed, and the ghost's 124 reserved", check.name, money)
+		}
+		if unknown := tokenizedUnknownSlots(check.book); unknown != 1 {
+			t.Fatalf("%s slots with an unknown tokenizer share = %d, want only the slot with estimates the rewrite touched", check.name, unknown)
+		}
+	}
+}
+
+func rewriteMoneyWithoutTokenized(t *testing.T, store *Store) {
+	t.Helper()
+	rows, err := store.db.QueryContext(t.Context(), `SELECT escrow_id, slot_id, reserved_cost, actual_cost, refunded_cost,
+		estimated_input, estimated_error, max_tokens, input_tokens, counted_nonces, output_tokens FROM accounting_money`)
+	if err != nil {
+		t.Fatalf("reading the money rows: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var saved [][]any
+	for rows.Next() {
+		values := make([]any, 11)
+		pointers := make([]any, len(values))
+		for index := range values {
+			pointers[index] = &values[index]
+		}
+		if err := rows.Scan(pointers...); err != nil {
+			t.Fatalf("scanning a money row: %v", err)
+		}
+		saved = append(saved, values)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("reading the money rows: %v", err)
+	}
+	if _, err := store.db.ExecContext(t.Context(), `DELETE FROM accounting_money`); err != nil {
+		t.Fatalf("deleting the money rows: %v", err)
+	}
+	for _, values := range saved {
+		if _, err := store.db.ExecContext(t.Context(), insertMoneyWithoutTokenized, values...); err != nil {
+			t.Fatalf("rewriting a money row: %v", err)
+		}
+	}
+}
+
+func tokenizedUnknownSlots(book *Book) uint64 {
+	var unknown uint64
+	for _, record := range book.Query(QueryFilter{}) {
+		unknown += record.TokenizedUnknownSlots
+	}
+	return unknown
 }
 
 // Test flow:
