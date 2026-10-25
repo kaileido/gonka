@@ -73,11 +73,11 @@ func randomPromptText(size int, rng *rand.Rand) string {
 	return builder.String()
 }
 
-type spyPromptFallbacks struct{ models []string }
+type spyStatsTokenizerFallbacks struct{ models []string }
 
-func (s *spyPromptFallbacks) GateFull(model string) { s.models = append(s.models, model) }
+func (s *spyStatsTokenizerFallbacks) GateFull(model string) { s.models = append(s.models, model) }
 
-func countEveryPrompt(c *config.Config) { c.Server.StatsTokenizerEnabled = true }
+func enableStatsTokenizer(c *config.Config) { c.Server.StatsTokenizerEnabled = true }
 
 func pinContextLength(length int64) func(*config.Config) {
 	return func(c *config.Config) {
@@ -255,7 +255,7 @@ func TestThePromptIsTokenizedOnceAndThatCountIsWhatTheLimiterAndTheRaceGet(t *te
 		{"count over", fits + 1, 0, http.StatusBadRequest, 0},
 	} {
 		t.Run(step.name, func(t *testing.T) {
-			live := newHarness(t, pinContextLength(20_000), countEveryPrompt)
+			live := newHarness(t, pinContextLength(20_000), enableStatsTokenizer)
 			count := &fakePromptTokens{tokens: step.tokens, slack: step.slack, known: true}
 			live.server.promptTokens = count
 
@@ -313,7 +313,7 @@ func TestWithoutATokenizerCountTheRequestCarriesTheByteEstimate(t *testing.T) {
 		count *fakePromptTokens
 	}{{name: "no counter"}, {name: "model without a tokenizer", count: &fakePromptTokens{tokens: 7}}} {
 		t.Run(testCase.name, func(t *testing.T) {
-			live := newHarness(t, pinContextLength(20_000), countEveryPrompt)
+			live := newHarness(t, pinContextLength(20_000), enableStatsTokenizer)
 			if testCase.count != nil {
 				live.server.promptTokens = testCase.count
 			}
@@ -379,7 +379,7 @@ func TestTheCheckJudgesByTheTokenizersMinimum(t *testing.T) {
 //  2. Start a harness with the stats tokenizer on whose snapshot blocks requests for PoC with the gateway's PoC mode off, and send a chat request.
 //  3. Assert the cache miss was tokenized once and the hit not again, and the request admission refused was never tokenized.
 func TestACacheHitAndAnAdmissionRefusalTakeNoCount(t *testing.T) {
-	live := newHarness(t, countEveryPrompt)
+	live := newHarness(t, enableStatsTokenizer)
 	count := &fakePromptTokens{tokens: 9, known: true}
 	live.server.promptTokens = count
 	for range 2 {
@@ -391,7 +391,7 @@ func TestACacheHitAndAnAdmissionRefusalTakeNoCount(t *testing.T) {
 		t.Fatalf("tokenized %d times over %d races, want once for the miss and not for the hit", count.tokenizing.Load(), live.inference.runs.Load())
 	}
 
-	refusing := newHarness(t, countEveryPrompt)
+	refusing := newHarness(t, enableStatsTokenizer)
 	refused := &fakePromptTokens{tokens: 9, known: true}
 	refusing.server.promptTokens = refused
 	refusing.snapshots.snapshot = chain.PhaseSnapshot{RequestsBlocked: true, BlockReason: chain.BlockReasonPoC, EpochPhase: chain.EpochPhasePoCGenerate}
@@ -407,11 +407,11 @@ func TestACacheHitAndAnAdmissionRefusalTakeNoCount(t *testing.T) {
 //  3. Assert the first was not tokenized and carried the byte estimate marked bytes_estimate to the limiter and the race, and the second carried the tokenizer's count.
 //  4. Assert the full gate was reported once, for the first request's model.
 func TestAFullPromptCountGateLeavesTheRequestOnTheByteEstimate(t *testing.T) {
-	live := newHarness(t, countEveryPrompt)
+	live := newHarness(t, enableStatsTokenizer)
 	count := &fakePromptTokens{tokens: 9, known: true}
 	live.server.promptTokens = count
-	fallbacks := &spyPromptFallbacks{}
-	live.server.promptFallbacks = fallbacks
+	fallbacks := &spyStatsTokenizerFallbacks{}
+	live.server.statsTokenizerFallbacks = fallbacks
 	for range cap(live.server.promptCounts) {
 		if !live.server.promptCounts.tryAcquire() {
 			t.Fatal("the gate refused a slot before it was full")
@@ -446,12 +446,12 @@ func TestAFullPromptCountGateLeavesTheRequestOnTheByteEstimate(t *testing.T) {
 func TestWithTheStatsTokenizerOffOnlyAPromptThatMayNotFitIsTokenized(t *testing.T) {
 	fits := uint64(20_000) - filters.DefaultRequestMaxTokens - chatTemplateMinimumTokens
 	for _, testCase := range []struct {
-		name       string
-		tune       func(*config.Config)
-		slack      uint64
-		read       bool
-		tokenizing int64
-		source     filters.InputTokensSource
+		name             string
+		tune             func(*config.Config)
+		slack            uint64
+		readForTokenizer bool
+		tokenizing       int64
+		source           filters.InputTokensSource
 	}{
 		{"model without a context length", func(*config.Config) {}, 0, false, 0, filters.InputTokensBytesEstimate},
 		{"byte bound fits", pinContextLength(20_000), 0, true, 0, filters.InputTokensBytesEstimate},
@@ -470,8 +470,8 @@ func TestWithTheStatsTokenizerOffOnlyAPromptThatMayNotFitIsTokenized(t *testing.
 			if testCase.source.Tokenized() {
 				want = fits
 			}
-			if (count.model != "") != testCase.read || count.tokenizing.Load() != testCase.tokenizing || count.cappedCounts.Load() != 0 {
-				t.Fatalf("read %v, tokenized %d times, %d with the piece cap, want read %v, tokenized %d times, none with the cap", count.model != "", count.tokenizing.Load(), count.cappedCounts.Load(), testCase.read, testCase.tokenizing)
+			if (count.model != "") != testCase.readForTokenizer || count.tokenizing.Load() != testCase.tokenizing || count.cappedCounts.Load() != 0 {
+				t.Fatalf("read %v, tokenized %d times, %d with the piece cap, want read %v, tokenized %d times, none with the cap", count.model != "", count.tokenizing.Load(), count.cappedCounts.Load(), testCase.readForTokenizer, testCase.tokenizing)
 			}
 			if raced.InputTokens != want || raced.InputTokensSource != testCase.source || live.limiter.acquired.Load() != int64(want) {
 				t.Fatalf("race got %d tokens from %q, limiter %d, want %d from %q", raced.InputTokens, raced.InputTokensSource, live.limiter.acquired.Load(), want, testCase.source)
@@ -493,8 +493,8 @@ func TestAFailedTokenizerLeavesTheRequestOnTheByteEstimateAtEitherCount(t *testi
 		cappedCounts int64
 	}{
 		{"context check, stats tokenizer off", func(*config.Config) {}, 1, 0},
-		{"context check, stats tokenizer on", countEveryPrompt, 1, 0},
-		{"count after the cache", countEveryPrompt, 0, 1},
+		{"context check, stats tokenizer on", enableStatsTokenizer, 1, 0},
+		{"count after the cache", enableStatsTokenizer, 0, 1},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			live := newHarness(t, pinContextLength(20_000), testCase.tune)

@@ -412,9 +412,9 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 		Version:      Version,
 		Now:          clock,
 
-		StopTokenVocabulary: stopTokenVocabulary(sources.ModelSnapshots, observer),
-		PromptTokens:        promptTokens(sources.ModelSnapshots, observer),
-		PromptFallbacks:     metrics.NewPromptCountRecorder(telemetry),
+		StopTokenVocabulary:     stopTokenVocabulary(sources.ModelSnapshots, observer),
+		PromptTokens:            promptTokens(sources.ModelSnapshots, observer),
+		StatsTokenizerFallbacks: metrics.NewStatsTokenizerRecorder(telemetry),
 	})
 	if err != nil {
 		return nil, err

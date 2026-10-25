@@ -1,6 +1,7 @@
 package tokenizer
 
 import (
+	"math"
 	"unicode/utf8"
 
 	"golang.org/x/text/unicode/norm"
@@ -14,6 +15,7 @@ const (
 	sampledOvercountPercent = 7
 	wholePercent            = 100
 	pieceCapBytes           = 512
+	uncappedPieceBytes      = math.MaxInt
 	nfcMaxExpansion         = 3
 )
 

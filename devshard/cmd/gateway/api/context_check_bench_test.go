@@ -47,7 +47,7 @@ func benchCounters(b *testing.B) map[string]*tokenizer.Counter {
 
 // Test flow:
 //  1. Load every tokenizer.json in GATEWAY_TOKENIZER_DIR, and skip when it names none.
-//  2. Build the benchmark server with qwen pinned to the largest context, so every request is served.
+//  2. Build the benchmark server with qwen pinned to the largest context, so every request is served, and the stats tokenizer on, so every prompt is counted after the cache.
 //  3. Serve a buffered chat request of a 200 B and a 1 MiB prompt, with no tokenizer and with each, and report the handler's time and allocations.
 func BenchmarkChatPromptCount(b *testing.B) {
 	estimators := map[string]PromptTokens{"off": nil}
@@ -64,6 +64,7 @@ func BenchmarkChatPromptCount(b *testing.B) {
 				next.Limits.ModelLimits = map[string]config.ModelLimits{"qwen": {MaxModelLen: &pinned}}
 				server.config.Swap(&next)
 				server.promptTokens = estimator
+				server.statsTokenizerEnabled = true
 				serveRepeatedly(b, server.Handler(), benchRequest("/v1/chat/completions", body), body, http.StatusOK)
 			})
 		}

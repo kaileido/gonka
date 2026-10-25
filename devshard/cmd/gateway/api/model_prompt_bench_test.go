@@ -528,11 +528,11 @@ func benchModelServer(b *testing.B, model benchModel) *Server {
 	next.Limits.ModelLimits = map[string]config.ModelLimits{"qwen": {MaxModelLen: &pinned}}
 	server.config.Swap(&next)
 	server.promptTokens = model.prompts()
-	server.countsEveryPrompt = statsTokenizerEnabled(b)
+	server.statsTokenizerEnabled = readStatsTokenizerSetting(b)
 	return server
 }
 
-func statsTokenizerEnabled(b *testing.B) bool {
+func readStatsTokenizerSetting(b *testing.B) bool {
 	b.Helper()
 	values, err := env.Load()
 	if err != nil {
@@ -577,7 +577,7 @@ func processCPU() int64 {
 }
 
 // Test flow:
-//  1. Load every tokenizer.json in GATEWAY_TOKENIZER_DIR as a model, add kimi without one, and skip when the directory is unset.
+//  1. Load every tokenizer.json in GATEWAY_TOKENIZER_DIR as a model, add kimi without one, read DEVSHARD_STATS_TOKENIZER as the gateway does, and skip when the directory is unset.
 //  2. Pin each model's governed context length and build a realistic chat body per content kind and prompt size.
 //  3. Serve each body through the chat route once to warm it, then time it, reporting the handler's time, allocations and HTTP status.
 func BenchmarkModelChat(b *testing.B) {
@@ -594,7 +594,7 @@ func BenchmarkModelChat(b *testing.B) {
 }
 
 // Test flow:
-//  1. Load every tokenizer.json in GATEWAY_TOKENIZER_DIR as a model, add kimi without one, and skip when the directory is unset.
+//  1. Load every tokenizer.json in GATEWAY_TOKENIZER_DIR as a model, add kimi without one, read DEVSHARD_STATS_TOKENIZER as the gateway does, and skip when the directory is unset.
 //  2. Build a single-message chat body of text the pre-tokenizer cannot split, at 64 KiB and at the largest size the route admits.
 //  3. Serve each through the chat route and report the handler's time and allocations.
 func BenchmarkModelChatWorstCase(b *testing.B) {
@@ -626,7 +626,7 @@ var benchParallelBodies = []struct {
 }
 
 // Test flow:
-//  1. Load every tokenizer.json in GATEWAY_TOKENIZER_DIR as a model, add kimi without one, and skip when the directory is unset.
+//  1. Load every tokenizer.json in GATEWAY_TOKENIZER_DIR as a model, add kimi without one, read DEVSHARD_STATS_TOKENIZER as the gateway does, and skip when the directory is unset.
 //  2. Serve a typical, a long and an unsplittable chat body from GOMAXPROCS goroutines at once through one handler.
 //  3. Report the time per request across all goroutines, the inverse of throughput at saturation, and the peak live heap seen while serving.
 func BenchmarkModelChatParallel(b *testing.B) {
@@ -694,7 +694,7 @@ func watchHeap() func() float64 {
 }
 
 // Test flow:
-//  1. Load every tokenizer.json in GATEWAY_TOKENIZER_DIR as a model, add kimi without one, and skip when the directory is unset.
+//  1. Load every tokenizer.json in GATEWAY_TOKENIZER_DIR as a model, add kimi without one, read DEVSHARD_STATS_TOKENIZER as the gateway does, and skip when the directory is unset.
 //  2. Let the race win with an escrow and a finished stream so the first answer is cached, then serve the same body again and again, every one a cache hit.
 //  3. Report the handler's time and allocations per cache hit.
 func BenchmarkModelChatCacheHit(b *testing.B) {
@@ -717,7 +717,7 @@ func BenchmarkModelChatCacheHit(b *testing.B) {
 }
 
 // Test flow:
-//  1. Load every tokenizer.json in GATEWAY_TOKENIZER_DIR as a model, add kimi without one, and skip when the directory is unset.
+//  1. Load every tokenizer.json in GATEWAY_TOKENIZER_DIR as a model, add kimi without one, read DEVSHARD_STATS_TOKENIZER as the gateway does, and skip when the directory is unset.
 //  2. Serve one chat body per content kind and size and read the input tokens the route handed the race and the limiter, none when the context check refused it.
 //  3. Report that number, the body's bytes over four, and for a tokenizer the exact count of the prompt text, with the carried number's error against it in percent.
 func BenchmarkModelPromptCarried(b *testing.B) {
@@ -766,7 +766,7 @@ func BenchmarkModelPromptCarried(b *testing.B) {
 }
 
 // Test flow:
-//  1. Load every tokenizer.json in GATEWAY_TOKENIZER_DIR as a model, add kimi without one, and skip when the directory is unset.
+//  1. Load every tokenizer.json in GATEWAY_TOKENIZER_DIR as a model, add kimi without one, read DEVSHARD_STATS_TOKENIZER as the gateway does, and skip when the directory is unset.
 //  2. Normalize each realistic chat body and each 64 KiB unsplittable body as the chat route does.
 //  3. Time only the route's prompt step, the context check and the count it takes, reporting its time, process CPU and allocations.
 func BenchmarkModelPromptStep(b *testing.B) {

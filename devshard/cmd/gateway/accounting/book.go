@@ -22,24 +22,24 @@ type Book struct {
 }
 
 type escrowLedger struct {
-	metadata      EscrowMetadata
-	latest        uint64
-	sweptLatest   uint64
-	sweepLatest   uint64
-	hostStats     map[uint32]types.HostStats
-	challenged    map[uint32]uint64
-	validations   map[uint32]uint64
-	serviceNonces map[serviceKey]uint64
-	timeouts      map[uint32]uint64
-	rejected      map[uint32]uint64
-	counters      map[CounterKey]uint64
-	nonces        map[uint64]*nonceRecord
-	costs         map[uint64]nonceCost
-	inputCounts   map[uint64]inputCount
-	folded        map[uint32]SlotMoney
-	produced      map[uint32]uint64
-	events        []protocolEvent
-	retired       bool
+	metadata              EscrowMetadata
+	latest                uint64
+	appliedSweepWatermark uint64
+	pendingSweepWatermark uint64
+	hostStats             map[uint32]types.HostStats
+	challenged            map[uint32]uint64
+	validations           map[uint32]uint64
+	serviceNonces         map[serviceKey]uint64
+	timeouts              map[uint32]uint64
+	rejected              map[uint32]uint64
+	counters              map[CounterKey]uint64
+	nonces                map[uint64]*nonceRecord
+	costs                 map[uint64]nonceCost
+	inputCounts           map[uint64]inputCount
+	folded                map[uint32]SlotMoney
+	produced              map[uint32]uint64
+	events                []protocolEvent
+	retired               bool
 
 	feePerNonce      uint64
 	finalizingFrom   uint64
@@ -192,7 +192,7 @@ func (b *Book) TakeRestoredWatermark(escrowID string) (latestNonce uint64, resto
 func (b *Book) ObserveLatestNonce(escrowID string, nonce uint64) error {
 	return b.withEscrow(escrowID, func(escrow *escrowLedger) error {
 		escrow.raiseLatest(nonce)
-		escrow.sweepLatest = max(escrow.sweepLatest, nonce)
+		escrow.pendingSweepWatermark = max(escrow.pendingSweepWatermark, nonce)
 		return nil
 	})
 }
@@ -241,7 +241,7 @@ func (b *Book) ObserveInferences(escrowID string, inferences map[uint64]*types.I
 		}
 		escrow.challenged = challenged
 		escrow.inFlightReserved, escrow.challengedCost = inFlight, challengedCost
-		escrow.sweptLatest = escrow.sweepLatest
+		escrow.appliedSweepWatermark = escrow.pendingSweepWatermark
 		escrow.dropSealedInputCounts()
 		return nil
 	})

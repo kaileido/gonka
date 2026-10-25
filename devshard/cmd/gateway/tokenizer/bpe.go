@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"hash/maphash"
 	"io"
-	"math"
 	"math/bits"
 	"strings"
 	"sync"
@@ -32,7 +31,6 @@ const (
 	maxMemoSlots       = 1 << 16
 	memoPiecesPerSlot  = 2
 	splitMatchTimeout  = 500 * time.Millisecond
-	uncappedPieceBytes = math.MaxInt
 )
 
 var memoSeed = maphash.MakeSeed()

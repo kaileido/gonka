@@ -50,14 +50,14 @@ type tokenizerPrompt struct {
 func (p tokenizerPrompt) MaximumTokens() uint64 { return p.counter.MaximumTokens(p.parts) }
 
 func (p tokenizerPrompt) Count() (TokenizedPrompt, bool) {
-	return tokenizedPrompt(p.counter.EstimateTokens(p.parts))
+	return toTokenizedPrompt(p.counter.EstimateTokens(p.parts))
 }
 
 func (p tokenizerPrompt) CountWithPieceCap() (TokenizedPrompt, bool) {
-	return tokenizedPrompt(p.counter.EstimateTokensWithPieceCap(p.parts))
+	return toTokenizedPrompt(p.counter.EstimateTokensWithPieceCap(p.parts))
 }
 
-func tokenizedPrompt(estimate tokenizer.Estimate, err error) (TokenizedPrompt, bool) {
+func toTokenizedPrompt(estimate tokenizer.Estimate, err error) (TokenizedPrompt, bool) {
 	if err != nil {
 		return TokenizedPrompt{}, false
 	}
@@ -83,14 +83,14 @@ func (s *Server) checkContext(configured config.Limits, normalized filters.Resul
 		return prompt, nil
 	}
 	contextLength := configured.ContextLength(normalized.Model, s.snapshots.Snapshot().Models[normalized.Model].MaxModelLen)
-	if contextLength == config.NoContextLength && !s.countsEveryPrompt {
+	if contextLength == config.NoContextLength && !s.statsTokenizerEnabled {
 		return prompt, nil
 	}
 	text, known := s.promptTokens.Prompt(normalized.Model, normalized.Body)
 	if !known {
 		return prompt, nil
 	}
-	if s.countsEveryPrompt {
+	if s.statsTokenizerEnabled {
 		prompt.text = text
 	}
 	if contextLength == config.NoContextLength || text.MaximumTokens()+chatTemplateMinimumTokens+normalized.MaxTokens <= contextLength {
@@ -115,8 +115,8 @@ func (s *Server) countPrompt(model string, prompt requestPrompt) promptCount {
 		return byteEstimate(prompt.bodyBytes)
 	}
 	if !s.promptCounts.tryAcquire() {
-		if s.promptFallbacks != nil {
-			s.promptFallbacks.GateFull(model)
+		if s.statsTokenizerFallbacks != nil {
+			s.statsTokenizerFallbacks.GateFull(model)
 		}
 		return byteEstimate(prompt.bodyBytes)
 	}

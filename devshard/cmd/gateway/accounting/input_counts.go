@@ -44,7 +44,7 @@ func (e *escrowLedger) dropSealedInputCounts() {
 
 func (e *escrowLedger) sealedBySweep(nonce uint64) bool {
 	_, live := e.costs[nonce]
-	return !live && nonce <= e.sweptLatest
+	return !live && nonce <= e.appliedSweepWatermark
 }
 
 func (e *escrowLedger) estimatedInput(nonce uint64, cost nonceCost) (tokens uint64, tokenized bool) {
