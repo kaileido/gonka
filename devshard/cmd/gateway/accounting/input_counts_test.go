@@ -4,10 +4,17 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"runtime"
 	"testing"
+	"time"
 
 	"devshard/cmd/gateway/filters"
 	"devshard/types"
+)
+
+const (
+	retiredCountedNonces       = 50_000
+	retiredCountsHeapAllowance = 256 * weightBytesPerKibibyte
 )
 
 func countedRaceInferences() map[uint64]*types.InferenceRecord {
@@ -232,5 +239,29 @@ func TestACountDroppedByASweepLeavesTheStore(t *testing.T) {
 
 	if counts := reloaded.Snapshot().Escrows[0].InputCounts; len(counts) != 0 {
 		t.Fatalf("input counts in the store = %+v, want none once the sweep passed nonce 5", counts)
+	}
+}
+
+// Test flow:
+//  1. Record a tokenizer count for each of 50,000 nonces of one escrow.
+//  2. Sweep the escrow at a watermark holding them all with nothing live, so every count is dropped, and retire it.
+//  3. Assert the retired escrow keeps less than 256 KiB of heap after a collection.
+func TestARetiredEscrowFreesTheCountsItDropped(t *testing.T) {
+	before := heapInUse()
+	book := NewBook(func() time.Time { return time.Unix(1700000000, 0).UTC() })
+	openTestEscrow(t, book, testEscrow, testEpoch, 4)
+	for nonce := uint64(1); nonce <= retiredCountedNonces; nonce++ {
+		if err := book.RecordInputCount(testEscrow, nonce, 37, filters.InputTokensTokenizerExact); err != nil {
+			t.Fatalf("RecordInputCount(): %v", err)
+		}
+	}
+	sweep(t, book, retiredCountedNonces, map[uint64]*types.InferenceRecord{})
+	book.RetireEscrow(testEscrow)
+
+	retained := int64(heapInUse()) - int64(before)
+	runtime.KeepAlive(book)
+
+	if retained >= retiredCountsHeapAllowance {
+		t.Fatalf("retired escrow keeps %d bytes of heap, want under %d once its counts are dropped", retained, retiredCountsHeapAllowance)
 	}
 }

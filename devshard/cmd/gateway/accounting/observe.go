@@ -97,6 +97,7 @@ func (b *Book) observeEscrow(escrowID string, observe func(*escrowLedger) bool) 
 func (e *escrowLedger) shrinkPerNonceMaps() {
 	e.costs = shrinkToFit(e.costs)
 	e.nonces = shrinkToFit(e.nonces)
+	e.inputCounts = shrinkToFit(e.inputCounts)
 }
 
 func shrinkToFit[Key comparable, Value any](source map[Key]Value) map[Key]Value {
