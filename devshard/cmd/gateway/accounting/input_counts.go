@@ -34,12 +34,14 @@ func (e *escrowLedger) recordInputCount(nonce, tokens uint64, source filters.Inp
 	e.inputCounts[nonce] = inputCount{tokens: tokens, source: source}
 }
 
-func (e *escrowLedger) dropSealedInputCounts() {
+func (e *escrowLedger) dropSealedInputCounts() (dropped bool) {
 	for nonce := range e.inputCounts {
 		if e.sealedBySweep(nonce) {
 			delete(e.inputCounts, nonce)
+			dropped = true
 		}
 	}
+	return dropped
 }
 
 func (e *escrowLedger) sealedBySweep(nonce uint64) bool {

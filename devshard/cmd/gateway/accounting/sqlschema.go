@@ -69,6 +69,19 @@ CREATE TABLE IF NOT EXISTS accounting_money (
 	tokenized_error  INTEGER NOT NULL DEFAULT 0,
 	PRIMARY KEY (escrow_id, slot_id)
 );
+CREATE TABLE IF NOT EXISTS accounting_first_content (
+	escrow_id          TEXT    NOT NULL,
+	slot_id            INTEGER NOT NULL,
+	total_milliseconds INTEGER NOT NULL,
+	attempts           INTEGER NOT NULL,
+	PRIMARY KEY (escrow_id, slot_id)
+);
+CREATE TABLE IF NOT EXISTS accounting_first_content_distribution (
+	escrow_id TEXT    NOT NULL,
+	bucket    INTEGER NOT NULL,
+	attempts  INTEGER NOT NULL,
+	PRIMARY KEY (escrow_id, bucket)
+);
 CREATE TABLE IF NOT EXISTS accounting_counters (
 	escrow_id      TEXT    NOT NULL,
 	slot_id        INTEGER NOT NULL,
@@ -132,24 +145,32 @@ var addedColumns = []struct{ table, column, definition string }{
 	{"accounting_money", "tokenized_error", "INTEGER NOT NULL DEFAULT 0"},
 }
 
-var escrowTables = []string{
-	"accounting_input_counts",
-	"accounting_costs",
-	"accounting_nonces",
-	"accounting_counters",
-	"accounting_host_stats",
-	"accounting_slot_activity",
-	"accounting_service_nonces",
-	"accounting_money",
-	"accounting_slots",
-	"accounting_escrows",
-}
-
-var clearedTables = append(slices.Clone(escrowTables), "accounting_meta")
+var (
+	escrowTables = []string{
+		"accounting_input_counts",
+		"accounting_costs",
+		"accounting_nonces",
+		"accounting_counters",
+		"accounting_host_stats",
+		"accounting_slot_activity",
+		"accounting_service_nonces",
+		"accounting_money",
+		firstContentTable,
+		firstContentDistributionTable,
+		"accounting_slots",
+		"accounting_escrows",
+	}
+	clearedTables      = append(slices.Clone(escrowTables), "accounting_meta")
+	firstContentTables = []string{firstContentTable, firstContentDistributionTable}
+)
 
 const (
-	metaSchemaVersion = "schema_version"
-	metaUpdatedAt     = "updated_at"
+	firstContentTable                     = "accounting_first_content"
+	firstContentDistributionTable         = "accounting_first_content_distribution"
+	metaSchemaVersion                     = "schema_version"
+	metaUpdatedAt                         = "updated_at"
+	metaFirstContentDistributionWrittenAt = "first_content_distribution_written_at"
+	selectMeta                            = `SELECT value FROM accounting_meta WHERE key = ?`
 )
 
 func discardOutdatedSchema(db *sql.DB) error {
@@ -167,7 +188,7 @@ func discardOutdatedSchema(db *sql.DB) error {
 // An unreadable version says nothing about the tables beside it, so they are discarded rather than trusted.
 func currentSchema(db *sql.DB) bool {
 	var stored string
-	if err := db.QueryRow(`SELECT value FROM accounting_meta WHERE key = ?`, metaSchemaVersion).Scan(&stored); err != nil {
+	if err := db.QueryRow(selectMeta, metaSchemaVersion).Scan(&stored); err != nil {
 		return false
 	}
 	if stored != strconv.Itoa(SchemaVersion) {
@@ -184,6 +205,20 @@ func currentSchema(db *sql.DB) bool {
 	return true
 }
 
+func discardUntrustedFirstContent(db *sql.DB) error {
+	trusted := firstContentWrittenWithLastSave(db)
+	for _, table := range firstContentTables {
+		statement := `DELETE FROM ` + table
+		if trusted {
+			statement += ` WHERE escrow_id NOT IN (SELECT escrow_id FROM accounting_escrows)`
+		}
+		if _, err := db.Exec(statement); err != nil {
+			return fmt.Errorf("discarding stale rows of %s: %w", table, err)
+		}
+	}
+	return nil
+}
+
 func addMissingColumns(db *sql.DB) error {
 	for _, added := range addedColumns {
 		var present bool
@@ -198,4 +233,13 @@ func addMissingColumns(db *sql.DB) error {
 		}
 	}
 	return nil
+}
+
+func firstContentWrittenWithLastSave(db *sql.DB) bool {
+	var updatedAt, distributionWrittenAt string
+	if db.QueryRow(selectMeta, metaUpdatedAt).Scan(&updatedAt) != nil ||
+		db.QueryRow(selectMeta, metaFirstContentDistributionWrittenAt).Scan(&distributionWrittenAt) != nil {
+		return false
+	}
+	return updatedAt == distributionWrittenAt
 }

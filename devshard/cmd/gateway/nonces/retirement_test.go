@@ -33,7 +33,7 @@ func newOpenedLedger(t *testing.T, escrow *liveEscrow) *Recorder {
 	}); err != nil {
 		t.Fatalf("OpenEscrow(): %v", err)
 	}
-	return &Recorder{service: service}
+	return recorderFor(service)
 }
 
 // Test flow:
@@ -134,7 +134,7 @@ func TestARetirementIsWrittenToTheStoreByTheLedgerItself(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("OpenEscrow() = %v, want nil", err)
 		}
-		ledger := &Recorder{service: service}
+		ledger := recorderFor(service)
 
 		ledger.EscrowRetiring(tokenEscrowID, nil)
 		synctest.Wait()

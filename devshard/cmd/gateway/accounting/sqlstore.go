@@ -32,6 +32,9 @@ func OpenStore(path string) (*Store, error) {
 	if err := addMissingColumns(db); err != nil {
 		return nil, errors.Join(err, db.Close())
 	}
+	if err := discardUntrustedFirstContent(db); err != nil {
+		return nil, errors.Join(err, db.Close())
+	}
 	return &Store{db: db}, nil
 }
 

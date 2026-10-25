@@ -10,7 +10,7 @@ import (
 
 const (
 	pruneInterval           = time.Minute
-	defaultSnapshotInterval = 5 * time.Minute
+	defaultSnapshotInterval = time.Minute
 )
 
 type Service struct {

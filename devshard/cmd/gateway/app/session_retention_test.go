@@ -9,6 +9,7 @@ import (
 	"testing/synctest"
 
 	"devshard/cmd/gateway/chain"
+	"devshard/cmd/gateway/nonces"
 	"devshard/cmd/gateway/registry"
 )
 
@@ -137,7 +138,8 @@ func TestSessionRetentionLeavesWhatItCannotDate(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(storageDir, "captured-requests"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(storageDir, "accounting.db"), []byte("ledger"), 0o600); err != nil {
+	ledgerPath := nonces.DatabasePath(storageDir)
+	if err := os.WriteFile(ledgerPath, []byte("ledger"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	retention := newSessionRetention(storageDir, 2, rowLister{}, registeredEscrows{})
@@ -150,7 +152,7 @@ func TestSessionRetentionLeavesWhatItCannotDate(t *testing.T) {
 	if len(removed) != 0 {
 		t.Fatalf("removed = %v, want nothing", removed)
 	}
-	want := []string{"accounting.db", "captured-requests", "escrow-opening", "escrow-stray"}
+	want := []string{filepath.Base(ledgerPath), "captured-requests", "escrow-opening", "escrow-stray"}
 	if got := remainingEscrows(t, storageDir); !slices.Equal(got, want) {
 		t.Fatalf("remaining = %v, want %v", got, want)
 	}

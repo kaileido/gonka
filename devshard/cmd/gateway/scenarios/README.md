@@ -244,6 +244,7 @@ Checked after every step by `invariants_test.go`. A test that legitimately break
 | `TestARestartAcrossTheEpochSwitchKeepsTheDeadline` | a restart inside the margin must not lose the deadline | a temp of chain epoch 7 that nothing else can retire is settled by the restarted gateway while the effective epoch is still 8, and the run crosses into epoch 9 |
 | `TestNoSurplusRetireBeforeTheDemandWindowFills` | after a restart demand is unknown; surplus must wait for the window | nothing retires before the window fills, and surplus retires after |
 | `TestAColdStartWithoutAnEpochCreatesNothing` | without an epoch no deadline or create decision is sound | with no epoch index, and with epoch 8 named but no block height while the escrow of chain epoch 7 would sit inside its margin, nothing is parked, settled, narrated or created and the escrow keeps serving |
+| `TestARestartKeepsTheLedgersTokenCounts` | the nonce ledger's token counts are history the tracker reads; a restart must neither lose nor repeat them | with finishes no sweep read when the restart begins, the ledger the shutdown saved counts them, and the restarted ledger holds the same input tokens, output tokens, counted nonces and estimated error after its first sweep and thirty seconds later |
 
 ### Seeds — `seeds_test.go`
 

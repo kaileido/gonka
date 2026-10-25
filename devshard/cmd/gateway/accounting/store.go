@@ -18,19 +18,21 @@ type Snapshot struct {
 }
 
 type EscrowSnapshot struct {
-	Metadata      EscrowMetadata             `json:"metadata"`
-	LatestNonce   uint64                     `json:"latest_nonce"`
-	FeePerNonce   uint64                     `json:"fee_per_nonce,omitempty"`
-	Retired       bool                       `json:"retired"`
-	HostStats     map[uint32]types.HostStats `json:"host_stats,omitempty"`
-	SlotActivity  map[uint32]SlotActivity    `json:"slot_activity,omitempty"`
-	Money         map[uint32]SlotMoney       `json:"money,omitempty"`
-	Produced      map[uint32]uint64          `json:"produced_tokens,omitempty"`
-	Counters      []PersistedCounter         `json:"counters,omitempty"`
-	Nonces        []PersistedNonce           `json:"nonces,omitempty"`
-	ServiceNonces []PersistedServiceCount    `json:"service_nonces,omitempty"`
-	LiveCosts     []PersistedCost            `json:"live_costs,omitempty"`
-	InputCounts   []PersistedInputCount      `json:"input_counts,omitempty"`
+	Metadata            EscrowMetadata                `json:"metadata"`
+	LatestNonce         uint64                        `json:"latest_nonce"`
+	FeePerNonce         uint64                        `json:"fee_per_nonce,omitempty"`
+	Retired             bool                          `json:"retired"`
+	HostStats           map[uint32]types.HostStats    `json:"host_stats,omitempty"`
+	SlotActivity        map[uint32]SlotActivity       `json:"slot_activity,omitempty"`
+	Money               map[uint32]SlotMoney          `json:"money,omitempty"`
+	Produced            map[uint32]uint64             `json:"produced_tokens,omitempty"`
+	FirstContent        map[uint32]FirstContentTiming `json:"first_content,omitempty"`
+	FirstContentBuckets FirstContentBuckets           `json:"first_content_buckets,omitempty"`
+	Counters            []PersistedCounter            `json:"counters,omitempty"`
+	Nonces              []PersistedNonce              `json:"nonces,omitempty"`
+	ServiceNonces       []PersistedServiceCount       `json:"service_nonces,omitempty"`
+	LiveCosts           []PersistedCost               `json:"live_costs,omitempty"`
+	InputCounts         []PersistedInputCount         `json:"input_counts,omitempty"`
 }
 
 // PersistedCost is the money of one nonce the chain still holds; a sealed nonce lives in Money instead.
@@ -97,16 +99,25 @@ func (b *Book) Snapshot() Snapshot {
 }
 
 type unsavedChanges struct {
-	snapshot      Snapshot
-	escrowIDs     []string
-	replaceStored bool
+	snapshot         Snapshot
+	escrowIDs        []string
+	replaceStored    bool
+	updatedAtUnsaved bool
 }
 
 func (changes unsavedChanges) empty() bool {
-	return len(changes.escrowIDs) == 0 && !changes.replaceStored
+	return len(changes.escrowIDs) == 0 && !changes.replaceStored && !changes.updatedAtUnsaved
 }
 
 func (b *Book) takeUnsaved() unsavedChanges {
+	changes := b.takeUnsavedEscrowIDs()
+	for _, escrowID := range changes.escrowIDs {
+		b.snapshotUnsaved(&changes, escrowID)
+	}
+	return changes
+}
+
+func (b *Book) takeUnsavedEscrowIDs() unsavedChanges {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.replaceStored {
@@ -115,18 +126,23 @@ func (b *Book) takeUnsaved() unsavedChanges {
 		}
 	}
 	changes := unsavedChanges{
-		snapshot:      Snapshot{SchemaVersion: SchemaVersion, UpdatedAt: b.updatedAt},
-		escrowIDs:     slices.Sorted(maps.Keys(b.unsaved)),
-		replaceStored: b.replaceStored,
+		snapshot:         Snapshot{SchemaVersion: SchemaVersion, UpdatedAt: b.updatedAt},
+		escrowIDs:        slices.Sorted(maps.Keys(b.unsaved)),
+		replaceStored:    b.replaceStored,
+		updatedAtUnsaved: b.updatedAtUnsaved,
 	}
 	clear(b.unsaved)
-	b.replaceStored = false
-	for _, escrowID := range changes.escrowIDs {
-		if escrow, known := b.escrows[escrowID]; known {
-			changes.snapshot.Escrows = append(changes.snapshot.Escrows, snapshotEscrow(escrow))
-		}
-	}
+	b.replaceStored, b.updatedAtUnsaved = false, false
 	return changes
+}
+
+func (b *Book) snapshotUnsaved(changes *unsavedChanges, escrowID string) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	changes.snapshot.UpdatedAt = b.updatedAt
+	if escrow, known := b.escrows[escrowID]; known {
+		changes.snapshot.Escrows = append(changes.snapshot.Escrows, snapshotEscrow(escrow))
+	}
 }
 
 func (b *Book) requeueUnsaved(changes unsavedChanges) {
@@ -136,6 +152,7 @@ func (b *Book) requeueUnsaved(changes unsavedChanges) {
 		b.unsaved[escrowID] = struct{}{}
 	}
 	b.replaceStored = b.replaceStored || changes.replaceStored
+	b.updatedAtUnsaved = b.updatedAtUnsaved || changes.updatedAtUnsaved
 }
 
 func (b *Book) replaceStoredOnNextSave() {
@@ -166,6 +183,8 @@ func snapshotEscrow(escrow *escrowLedger) EscrowSnapshot {
 	slices.SortFunc(stored.LiveCosts, func(left, right PersistedCost) int { return cmp.Compare(left.Nonce, right.Nonce) })
 	stored.InputCounts = escrow.persistedInputCounts()
 	stored.Produced = maps.Clone(escrow.produced)
+	stored.FirstContent = maps.Clone(escrow.firstContent)
+	stored.FirstContentBuckets = maps.Clone(escrow.firstContentBuckets)
 	for key, count := range escrow.serviceNonces {
 		stored.ServiceNonces = append(stored.ServiceNonces, PersistedServiceCount{SlotID: key.slotID, Purpose: key.purpose, Count: count})
 	}
@@ -233,6 +252,8 @@ func (b *Book) Restore(snapshot Snapshot) error {
 		}
 		escrow.restoreInputCounts(stored.InputCounts)
 		maps.Copy(escrow.produced, stored.Produced)
+		maps.Copy(escrow.firstContent, stored.FirstContent)
+		maps.Copy(escrow.firstContentBuckets, stored.FirstContentBuckets)
 		for slotID, activity := range stored.SlotActivity {
 			escrow.challenged[slotID] = activity.Challenged
 			escrow.validations[slotID] = activity.Validations
