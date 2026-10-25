@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
-	"time"
 
 	"devshard/cmd/gateway/filters"
 	"devshard/types"
@@ -14,7 +13,7 @@ import (
 
 const (
 	retiredCountedNonces       = 50_000
-	retiredCountsHeapAllowance = 256 * weightBytesPerKibibyte
+	retiredCountsHeapAllowance = 256 * 1024
 )
 
 func countedRaceInferences() map[uint64]*types.InferenceRecord {
@@ -248,8 +247,7 @@ func TestACountDroppedByASweepLeavesTheStore(t *testing.T) {
 //  3. Assert the retired escrow keeps less than 256 KiB of heap after a collection.
 func TestARetiredEscrowFreesTheCountsItDropped(t *testing.T) {
 	before := heapInUse()
-	book := NewBook(func() time.Time { return time.Unix(1700000000, 0).UTC() })
-	openTestEscrow(t, book, testEscrow, testEpoch, 4)
+	book := newTestBook(t, 4)
 	for nonce := uint64(1); nonce <= retiredCountedNonces; nonce++ {
 		if err := book.RecordInputCount(testEscrow, nonce, 37, filters.InputTokensTokenizerExact); err != nil {
 			t.Fatalf("RecordInputCount(): %v", err)
