@@ -152,7 +152,7 @@ func (n *Recorder) sweep(ctx context.Context, escrows EscrowSource, diffs DiffJo
 	for _, escrowID := range n.service.Book.EscrowIDs() {
 		if _, still := published[escrowID]; !still {
 			n.service.Book.RetireEscrow(escrowID)
-			n.observing.Delete(escrowID)
+			n.forgetEscrow(escrowID)
 		}
 	}
 }
@@ -199,8 +199,15 @@ func (n *Recorder) EscrowRetiring(escrowID string, session registry.EscrowSessio
 		n.takeLockedReading(escrowID, session)
 	}
 	n.service.Book.RetireEscrow(escrowID)
-	n.observing.Delete(escrowID)
+	n.forgetEscrow(escrowID)
 	n.service.RequestFlush()
+}
+
+func (n *Recorder) forgetEscrow(escrowID string) {
+	n.observing.Delete(escrowID)
+	n.readingLock <- struct{}{}
+	defer func() { <-n.readingLock }()
+	delete(n.timedOutAtSeal, escrowID)
 }
 
 // EscrowClosing takes the reading a shutdown would otherwise lose, before the session closes, and leaves the escrow open. See docs/accounting.md, "Storage".
@@ -235,16 +242,32 @@ func (n *Recorder) observeSealedRecords(escrowID string, snapshot types.EscrowSt
 }
 
 func (n *Recorder) closeSealed(escrowID string, snapshot types.EscrowState, sealed *sealedRecords) {
+	timedOutNonces := n.timedOutAtSealOf(escrowID)
 	var finished []uint64
 	for _, nonce := range n.service.Book.UnfinishedNonces(escrowID) {
 		if _, live := snapshot.Inferences[nonce]; live || nonce > snapshot.LatestNonce {
 			continue
 		}
-		if sealed.finished(nonce) {
+		if _, final := timedOutNonces[nonce]; final {
+			continue
+		}
+		switch {
+		case sealed.finished(nonce):
 			finished = append(finished, nonce)
+		case sealed.timedOut(nonce):
+			timedOutNonces[nonce] = struct{}{}
 		}
 	}
 	n.report(n.service.Book.MarkFinished(escrowID, finished))
+}
+
+func (n *Recorder) timedOutAtSealOf(escrowID string) map[uint64]struct{} {
+	nonces, known := n.timedOutAtSeal[escrowID]
+	if !known {
+		nonces = make(map[uint64]struct{})
+		n.timedOutAtSeal[escrowID] = nonces
+	}
+	return nonces
 }
 
 type sealedLookup struct {
@@ -276,4 +299,9 @@ func (s *sealedRecords) finished(nonce uint64) bool {
 	}
 	underlying := s.session.UserSession()
 	return underlying != nil && underlying.IsNonceFinished(nonce)
+}
+
+func (s *sealedRecords) timedOut(nonce uint64) bool {
+	record, kept := s.lookup(nonce)
+	return kept && record.Status == types.StatusTimedOut
 }

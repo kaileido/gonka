@@ -13,12 +13,13 @@ import (
 var ErrUnknownEscrow = errors.New("accounting: unknown escrow")
 
 type Book struct {
-	mu            sync.RWMutex
-	escrows       map[string]*escrowLedger
-	unsaved       map[string]struct{}
-	replaceStored bool
-	updatedAt     time.Time
-	now           func() time.Time
+	mu               sync.RWMutex
+	escrows          map[string]*escrowLedger
+	unsaved          map[string]struct{}
+	replaceStored    bool
+	updatedAtUnsaved bool
+	updatedAt        time.Time
+	now              func() time.Time
 }
 
 type escrowLedger struct {
@@ -145,10 +146,17 @@ func (b *Book) ResetEpoch(epoch uint64) int {
 func (b *Book) RetireEscrow(escrowID string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if escrow, known := b.escrows[escrowID]; known {
-		escrow.retired = true
-		b.touchLocked(escrowID)
+	escrow, known := b.escrows[escrowID]
+	if !known {
+		return
 	}
+	if escrow.retired {
+		b.noteUpdateLocked()
+		return
+	}
+	escrow.retired = true
+	escrow.shrinkPerNonceMaps()
+	b.touchLocked(escrowID)
 }
 
 // MoneyTotals is one escrow's money as the ledger last observed it: reserved by open records, charged on challenged ones, and charged to its slots.
@@ -185,53 +193,6 @@ func (b *Book) TakeRestoredWatermark(escrowID string) (latestNonce uint64, resto
 	return escrow.restoredLatest, true
 }
 
-func (b *Book) ObserveLatestNonce(escrowID string, nonce uint64) error {
-	return b.withEscrow(escrowID, func(escrow *escrowLedger) error {
-		escrow.raiseLatest(nonce)
-		return nil
-	})
-}
-
-func (b *Book) ObserveHostStats(escrowID string, slotID uint32, stats types.HostStats) error {
-	return b.withEscrow(escrowID, func(escrow *escrowLedger) error {
-		if _, seen := escrow.hostStats[slotID]; !seen && escrow.timeouts[slotID] == 0 {
-			escrow.timeouts[slotID] = uint64(stats.Missed)
-		}
-		escrow.hostStats[slotID] = stats
-		return nil
-	})
-}
-
-// ObserveInferences replaces an escrow's per-nonce money and its open-challenge counts from one sweep.
-func (b *Book) ObserveInferences(escrowID string, inferences map[uint64]*types.InferenceRecord) error {
-	return b.withEscrow(escrowID, func(escrow *escrowLedger) error {
-		escrow.foldSealed(inferences)
-		challenged := make(map[uint32]uint64)
-		var inFlight, challengedCost uint64
-		for nonce, record := range inferences {
-			if record == nil {
-				continue
-			}
-			if FinishApplied(record.Status) {
-				escrow.markFinished(nonce)
-			}
-			escrow.costs[nonce] = costOf(record)
-			if record.Status == types.StatusChallenged {
-				challenged[record.ExecutorSlot]++
-			}
-			switch record.Status {
-			case types.StatusPending, types.StatusStarted:
-				inFlight += record.ReservedCost
-			case types.StatusChallenged:
-				challengedCost += record.ActualCost
-			}
-		}
-		escrow.challenged = challenged
-		escrow.inFlightReserved, escrow.challengedCost = inFlight, challengedCost
-		return nil
-	})
-}
-
 func (b *Book) RecordValidation(escrowID string, validatorSlot uint32) error {
 	return b.withEscrow(escrowID, func(escrow *escrowLedger) error {
 		if int(validatorSlot) >= len(escrow.metadata.Slots) {
@@ -253,15 +214,6 @@ func (b *Book) RecordServiceNonce(escrowID string, nonce uint64, purpose Service
 			purpose = ServiceFinalize
 		}
 		escrow.serviceNonces[serviceKey{slotID: escrow.slotOf(nonce), purpose: purpose}]++
-		return nil
-	})
-}
-
-// ObserveCharging takes the session's frozen fee per nonce and the chain's finalize nonce, from which no nonce pays it.
-func (b *Book) ObserveCharging(escrowID string, feePerNonce, finalizeNonce uint64) error {
-	return b.withEscrow(escrowID, func(escrow *escrowLedger) error {
-		escrow.feePerNonce = feePerNonce
-		escrow.noteFinalizeStart(finalizeNonce)
 		return nil
 	})
 }
@@ -357,8 +309,13 @@ func (b *Book) withEscrow(escrowID string, apply func(*escrowLedger) error) erro
 }
 
 func (b *Book) touchLocked(escrowID string) {
-	b.updatedAt = b.now().UTC()
+	b.noteUpdateLocked()
 	b.markUnsavedLocked(escrowID)
+}
+
+func (b *Book) noteUpdateLocked() {
+	b.updatedAt = b.now().UTC()
+	b.updatedAtUnsaved = true
 }
 
 func (b *Book) markUnsavedLocked(escrowID string) {
@@ -366,17 +323,21 @@ func (b *Book) markUnsavedLocked(escrowID string) {
 }
 
 // Seeing a nonce raises the assigned watermark too, or the counters outrun the range they are measured against.
-func (e *escrowLedger) raiseLatest(nonce uint64) {
-	if nonce > e.latest {
-		e.latest = nonce
+func (e *escrowLedger) raiseLatest(nonce uint64) bool {
+	if nonce <= e.latest {
+		return false
 	}
+	e.latest = nonce
+	return true
 }
 
 // Only the first finalize round names itself, so the earliest start either source saw wins.
-func (e *escrowLedger) noteFinalizeStart(nonce uint64) {
-	if nonce != 0 && (e.finalizingFrom == 0 || nonce < e.finalizingFrom) {
-		e.finalizingFrom = nonce
+func (e *escrowLedger) noteFinalizeStart(nonce uint64) bool {
+	if nonce == 0 || (e.finalizingFrom != 0 && nonce >= e.finalizingFrom) {
+		return false
 	}
+	e.finalizingFrom = nonce
+	return true
 }
 
 func (e *escrowLedger) record(nonce uint64) *nonceRecord {
@@ -394,7 +355,8 @@ func (e *escrowLedger) slotOf(nonce uint64) uint32 {
 	return uint32(nonce % uint64(len(e.metadata.Slots)))
 }
 
-func (e *escrowLedger) foldSealed(inferences map[uint64]*types.InferenceRecord) {
+func (e *escrowLedger) foldSealed(inferences map[uint64]*types.InferenceRecord) bool {
+	folded := false
 	for nonce, cost := range e.costs {
 		if _, live := inferences[nonce]; live {
 			continue
@@ -408,7 +370,9 @@ func (e *escrowLedger) foldSealed(inferences map[uint64]*types.InferenceRecord) 
 		e.folded[slotID] = money
 		delete(e.costs, nonce)
 		e.forgetSealed(nonce)
+		folded = true
 	}
+	return folded
 }
 
 func (e *escrowLedger) forgetSealed(nonce uint64) {
@@ -473,11 +437,12 @@ func (b *Book) MarkFinished(escrowID string, nonces []uint64) error {
 	})
 }
 
-func (e *escrowLedger) markFinished(nonce uint64) {
+func (e *escrowLedger) markFinished(nonce uint64) bool {
 	record, known := e.nonces[nonce]
 	if !known || record.finished {
-		return
+		return false
 	}
 	record.finished = true
 	e.reclassify(nonce, record)
+	return true
 }

@@ -67,13 +67,16 @@ func TestAFinishTheChainAppliedCountsItsNonceOnce(t *testing.T) {
 	}
 }
 
-// sealedSession answers only what the sweep asks about a record that has left the live window.
 type sealedSession struct {
 	registry.EscrowSession
-	sealed map[uint64]types.InferenceRecord
+	sealed  map[uint64]types.InferenceRecord
+	lookups map[uint64]int
 }
 
 func (s sealedSession) SealedInference(id uint64) (types.InferenceRecord, bool) {
+	if s.lookups != nil {
+		s.lookups[id]++
+	}
 	record, kept := s.sealed[id]
 	return record, kept
 }

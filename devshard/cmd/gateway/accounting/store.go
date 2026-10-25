@@ -96,16 +96,25 @@ func (b *Book) Snapshot() Snapshot {
 }
 
 type unsavedChanges struct {
-	snapshot      Snapshot
-	escrowIDs     []string
-	replaceStored bool
+	snapshot         Snapshot
+	escrowIDs        []string
+	replaceStored    bool
+	updatedAtUnsaved bool
 }
 
 func (changes unsavedChanges) empty() bool {
-	return len(changes.escrowIDs) == 0 && !changes.replaceStored
+	return len(changes.escrowIDs) == 0 && !changes.replaceStored && !changes.updatedAtUnsaved
 }
 
 func (b *Book) takeUnsaved() unsavedChanges {
+	changes := b.takeUnsavedEscrowIDs()
+	for _, escrowID := range changes.escrowIDs {
+		b.snapshotUnsaved(&changes, escrowID)
+	}
+	return changes
+}
+
+func (b *Book) takeUnsavedEscrowIDs() unsavedChanges {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.replaceStored {
@@ -114,18 +123,23 @@ func (b *Book) takeUnsaved() unsavedChanges {
 		}
 	}
 	changes := unsavedChanges{
-		snapshot:      Snapshot{SchemaVersion: SchemaVersion, UpdatedAt: b.updatedAt},
-		escrowIDs:     slices.Sorted(maps.Keys(b.unsaved)),
-		replaceStored: b.replaceStored,
+		snapshot:         Snapshot{SchemaVersion: SchemaVersion, UpdatedAt: b.updatedAt},
+		escrowIDs:        slices.Sorted(maps.Keys(b.unsaved)),
+		replaceStored:    b.replaceStored,
+		updatedAtUnsaved: b.updatedAtUnsaved,
 	}
 	clear(b.unsaved)
-	b.replaceStored = false
-	for _, escrowID := range changes.escrowIDs {
-		if escrow, known := b.escrows[escrowID]; known {
-			changes.snapshot.Escrows = append(changes.snapshot.Escrows, snapshotEscrow(escrow))
-		}
-	}
+	b.replaceStored, b.updatedAtUnsaved = false, false
 	return changes
+}
+
+func (b *Book) snapshotUnsaved(changes *unsavedChanges, escrowID string) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	changes.snapshot.UpdatedAt = b.updatedAt
+	if escrow, known := b.escrows[escrowID]; known {
+		changes.snapshot.Escrows = append(changes.snapshot.Escrows, snapshotEscrow(escrow))
+	}
 }
 
 func (b *Book) requeueUnsaved(changes unsavedChanges) {
@@ -135,6 +149,7 @@ func (b *Book) requeueUnsaved(changes unsavedChanges) {
 		b.unsaved[escrowID] = struct{}{}
 	}
 	b.replaceStored = b.replaceStored || changes.replaceStored
+	b.updatedAtUnsaved = b.updatedAtUnsaved || changes.updatedAtUnsaved
 }
 
 func (b *Book) replaceStoredOnNextSave() {
