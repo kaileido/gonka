@@ -42,8 +42,11 @@ func (e *WalletUnderfundedError) Error() string {
 
 func (e *WalletUnderfundedError) Unwrap() error { return ErrWalletUnderfunded }
 
-// ErrTxNotFound marks a tx absent from the chain -- not terminal, and distinct from one that committed and failed. See README.md, "Transaction encoding".
-var ErrTxNotFound = errors.New("tx not found on chain")
+// ErrTxNotFound marks a tx absent from the chain, which is not terminal; ErrTxRejected marks one the node refused at CheckTx, which can never land. See README.md, "Transaction encoding".
+var (
+	ErrTxNotFound = errors.New("tx not found on chain")
+	ErrTxRejected = errors.New("tx rejected at CheckTx")
+)
 
 // TxClient owns the transaction envelope and the intent hook; the transport underneath is interchangeable, which keeps its tests off a connection.
 type TxClient struct {

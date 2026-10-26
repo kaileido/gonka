@@ -279,11 +279,11 @@ These are read the same way and rarely need changing. Where a knob has a longer 
 
 ## Shutdown
 
-`app/lifecycle.go`, `shutdownOrder`. Thirteen steps, in this order, bounded by the grace period, with up to one more second from the journal step's floor:
+`app/lifecycle.go`, `serve` and `shutdownOrder`. Before the first step, `serve` cancels the background context the chain observer, warmup prober, host pings, nonce ledger, escrow lifecycle and devshard-write republish were started under (`stopBackground`). Then thirteen steps, in this order, bounded by the grace period, with up to one more second from the journal step's floor:
 
 | # | Step | Why here |
 | --- | --- | --- |
-| 1 | http server | stop taking new work first |
+| 1 | http server | stop taking new work first; open requests get half the grace period less the cancelled wait to finish uncancelled (`httpGracefulShare`, 4 s of the 10 s), so a short answer or an operator call still running completes; only if the server is not idle by then is every request still open cancelled, and the step waits at most 1 s more for those handlers (`httpCancelledWait`), so a stream that would never end holds the step for half the grace period at most and the steps below keep the other half; a race whose client is cancelled this way drains in step 2 like any client departure |
 | 2 | races | in-flight requests finish, and the losers post the votes they owe if those fall due inside the grace period (10 s); a refused nonce's vote falls due about 65 s after its refusal, so one refused in the last minute before a restart is not voted and finalize pays it in full |
 | 3 | dispatchers | nothing new reaches a host |
 | 4 | escrow lifecycle | no rotation starts mid-drain |

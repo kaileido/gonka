@@ -47,6 +47,7 @@ type hostPerf interface {
 	Degraded(participant, model string) bool
 	FirstContentP75(participant, model string) (time.Duration, bool)
 	Pressure(participant, model string) perf.Pressure
+	RecordOutputOverrun(participant, model string)
 }
 
 // crownGate carries the empty-stream crowning penalty between races.

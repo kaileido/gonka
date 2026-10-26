@@ -147,6 +147,8 @@ From departure onward the drain deadline is what bounds the race — forty minut
 
 Once the winner has finished, the client's request handler is released and any still-pending losers are handed to a second `await` on a background goroutine. Nothing they can do changes what the client received (`engine/race.go`, `runRace` and `raceCoordinator.release`).
 
+`Run` calls the request's `OnFinished` exactly once, after the race's last report: before it returns for a race that ends while its client waits, from that background goroutine for one that outlives its client or its winner, and also when a stopped engine refuses the race or the race panics (`engine/engine.go`, `Engine.Run`). The handler holds its limiter slot until then ([request.md](./request.md), step 12).
+
 ## The outcome
 
 Everything the race learned is folded into one `RaceOutcome`, and one field decides everything downstream: `Terminal`.
@@ -174,6 +176,8 @@ An empty stream narrows its host whether or not it closed the nonce: a client ca
 `AttemptOutcome.OutputTokens` prefers the host's own `usage.completion_tokens` and falls back to that count. The host's number is authoritative where it exists — it is what the chain is handed and what the escrow pays against — but a fleet contains runtimes that ignore `include_usage`, and a stream the race cancelled never reaches its usage chunk at all. Either way the reply the client received is worth a number, and the count off the wire is the only one available.
 
 The two can disagree, and where they do the gateway's request ledger says what the gateway saw while the nonce ledger says what the chain recorded ([accounting.md](./accounting.md), "Money and tokens"). That disagreement is a fact about the host's runtime, not about the gateway.
+
+**An attempt past its reservation is counted against its host, never cut.** The nonce was priced on the request's `max_tokens`, `Request.OutputTokens`, and a host whose `OutputTokens` passes it runs a build that ignores the limit; the chain caps the cost at the reservation, so the host works unpaid past it. The client still receives every byte. The report records an output overrun against the host and model (`engine/engine.go`, `Engine.record`; `perf/capability.go`), served as `output_overruns` in the nonce ledger's `capability` object ([accounting.md](./accounting.md), "What a host is allowed to be doing"). Like a capability refusal it is counted and reported, never routed on.
 
 ### Reading an empty answer back
 

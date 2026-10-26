@@ -358,6 +358,19 @@ type stubPerf struct {
 	pressure     perf.Pressure
 
 	contextLimitRecorded chan struct{}
+	overruns             []string
+}
+
+func (p *stubPerf) RecordOutputOverrun(participant, _ string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.overruns = append(p.overruns, participant)
+}
+
+func (p *stubPerf) outputOverruns() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.overruns...)
 }
 
 func (p *stubPerf) FirstContentP75(participant, _ string) (time.Duration, bool) {

@@ -11,6 +11,7 @@ const stagePrepareTemp = "prepare_temp"
 const (
 	commitmentClearedNoEscrow   = "transaction created no escrow"
 	commitmentClearedCannotLand = "transaction can no longer land"
+	commitmentClearedRejected   = "transaction rejected at broadcast"
 )
 
 type createReason string

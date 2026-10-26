@@ -61,12 +61,6 @@ func newClientStream(w http.ResponseWriter, requestID string, streaming, usage b
 
 func (c *clientStream) Header() http.Header { return c.writer.Header() }
 
-func (c *clientStream) Started() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.started
-}
-
 func (c *clientStream) delivered() (written int64, terminated bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -149,11 +143,22 @@ func (c *clientStream) Close() error {
 func (c *clientStream) discard() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.closed = true
 	c.budget.release(c.charged)
 	c.charged = 0
 	if c.folder != nil {
 		c.folder.Discard()
 	}
+}
+
+func (c *clientStream) closeUnstarted() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.started {
+		return false
+	}
+	c.closed = true
+	return true
 }
 
 func (c *clientStream) Fail(cause error) error {

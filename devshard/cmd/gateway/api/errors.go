@@ -38,6 +38,8 @@ var (
 	ErrDevshardExists = errors.New("devshard already registered")
 
 	ErrDevshardNotActivatable = errors.New("devshard cannot be activated")
+
+	ErrInvalidEscrowID = errors.New("escrow id is not a chain escrow id")
 )
 
 // UnsupportedModelError lists the routable models so a client can correct the request in one trip.
@@ -163,7 +165,7 @@ func statusForError(err error) int {
 		return http.StatusConflict
 	case errors.Is(err, engine.ErrStopped), errors.Is(err, registry.ErrClosed):
 		return http.StatusServiceUnavailable
-	case errors.Is(err, ErrPrivateKeyEnvRequired), errors.Is(err, config.ErrInvalid), errors.Is(err, escrow.ErrAmountBelowFloor):
+	case errors.Is(err, ErrPrivateKeyEnvRequired), errors.Is(err, ErrInvalidEscrowID), errors.Is(err, config.ErrInvalid), errors.Is(err, escrow.ErrAmountBelowFloor):
 		return http.StatusBadRequest
 	case errors.Is(err, ErrDevshardNotActivatable):
 		return http.StatusConflict

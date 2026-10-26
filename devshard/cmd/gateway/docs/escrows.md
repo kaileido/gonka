@@ -176,7 +176,7 @@ graph TD
     CLR --> OK
 ```
 
-**Park comes before the reconciliation.** The caller deletes the row on success, and a row that is gone can no longer take the escrow out of routing — an escrow put back into service by hand would otherwise keep serving with nothing left to un-publish it. For the same reason `Activate`, and a re-registration through `register` (`POST /v1/admin/devshards`, `/import`), both refuse a row that is parked or carries a settle hash (`ErrDevshardNotActivatable`, HTTP 409): serving from it again spends nonces the settlement does not account for.
+**Park comes before the reconciliation.** The caller deletes the row on success, and a row that is gone can no longer take the escrow out of routing — an escrow put back into service by hand would otherwise keep serving with nothing left to un-publish it. For the same reason `Activate`, a registration (`register`, `POST /v1/admin/devshards`) and an import (`ImportDevshard`, `POST /v1/admin/devshards/import`) refuse a row that is parked or carries a settle hash (`ErrDevshardNotActivatable`, HTTP 409): serving from it again spends nonces the settlement does not account for. The refusal is part of the write itself (`store.ActivateDevshardUnlessParked`, `store.UpsertDevshardUnlessParked`), and the escrow is published through a registry `Listing` taken before that write: a park that lands before the write is refused by it, and one that lands after it retires the escrow, which the listing records even while the session is still opening, so the escrow is never left routable ([`registry/README.md`](../registry/README.md), "Publishing, retiring and draining").
 
 **`alreadySettled`** decides whether a previous broadcast counts, using the hash and the `settle_tx_at` stamp:
 

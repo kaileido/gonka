@@ -10,6 +10,7 @@ type capabilityTracker struct {
 	versionRefusals map[string]uint64
 	toolRefusals    map[hostKey]uint64
 	contextRefusals map[hostKey]uint64
+	outputOverruns  map[hostKey]uint64
 }
 
 func newCapabilityTracker() *capabilityTracker {
@@ -18,6 +19,7 @@ func newCapabilityTracker() *capabilityTracker {
 		versionRefusals: make(map[string]uint64),
 		toolRefusals:    make(map[hostKey]uint64),
 		contextRefusals: make(map[hostKey]uint64),
+		outputOverruns:  make(map[hostKey]uint64),
 	}
 }
 
@@ -52,6 +54,18 @@ func (c *capabilityTracker) recordVersionUnsupported(participant string) (first 
 	defer c.mu.Unlock()
 	c.versionRefusals[participant]++
 	return c.versionRefusals[participant] == 1
+}
+
+func (c *capabilityTracker) recordOutputOverrun(participant, model string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.outputOverruns[hostKey{participant: participant, model: model}]++
+}
+
+func (c *capabilityTracker) overruns(participant, model string) uint64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.outputOverruns[hostKey{participant: participant, model: model}]
 }
 
 // capability reports the refusal counts and the smallest context the host has admitted to.

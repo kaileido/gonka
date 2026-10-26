@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"sync/atomic"
 	"time"
 
 	"devshard/cmd/gateway/chain"
@@ -43,4 +44,26 @@ func staleness(snapshot chain.PhaseSnapshot, now time.Time, maxAgeSeconds int64)
 		return &ChainStaleError{Age: age}
 	}
 	return nil
+}
+
+type limiterSlot struct {
+	holders atomic.Int32
+	release func()
+}
+
+func newLimiterSlot(release func()) *limiterSlot {
+	slot := &limiterSlot{release: release}
+	slot.holders.Store(1)
+	return slot
+}
+
+func (s *limiterSlot) share() func() {
+	s.holders.Add(1)
+	return s.done
+}
+
+func (s *limiterSlot) done() {
+	if s.holders.Add(-1) == 0 {
+		s.release()
+	}
 }

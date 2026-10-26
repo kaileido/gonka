@@ -105,6 +105,8 @@ Both money-moving transactions take an `onPrepared` hook that records the precom
 
 `awaitTx` is where a `DeliverTx` failure is learned at all: broadcasting in `BROADCAST_MODE_SYNC` reports `CheckTx` alone, so a transaction can be accepted and still never execute. It polls until a committed transaction satisfies the caller's readiness predicate, `pollTimeout` elapses, or the context is done, and returns a non-zero code as an error.
 
+A non-zero `CheckTx` code from `Broadcast` is `ErrTxRejected`: the node refused the transaction, so it entered no mempool and can never land, and the hash `onPrepared` recorded names nothing on its way. The one exception is `tx already in mempool` (`sdk` code 19), which says the transaction is on its way; it stays a plain error, as does a transport failure, from which nothing about the transaction can be concluded.
+
 ### How a message is encoded
 
 The two escrow messages are marshalled by the types generated from the chain's own `.proto`, so their wire layout tracks the chain by construction. Hand-laying those fields puts a money transaction's layout in a third place, edited in lockstep with the proto, or the settlement mis-encodes silently. `Marshal` cannot fail for these two messages — neither carries an `Any` nor a custom type — and the error is returned rather than dropped so a future field cannot make it silent.

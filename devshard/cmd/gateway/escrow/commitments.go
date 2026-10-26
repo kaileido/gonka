@@ -106,7 +106,11 @@ func (m *Manager) createFor(ctx context.Context, model ModelConfig, role string,
 	result, err := m.tx.CreateEscrow(ctx, signer, model.Amount, model.ModelID, onPrepared)
 	if err != nil {
 		m.narrateUnderfunded(model.ModelID, role, err)
-		return chain.CreateEscrowResult{}, fmt.Errorf("creating escrow for %s/%s: %w", model.ModelID, role, err)
+		failure := fmt.Errorf("creating escrow for %s/%s: %w", model.ModelID, role, err)
+		if errors.Is(err, chain.ErrTxRejected) {
+			return chain.CreateEscrowResult{}, errors.Join(failure, m.clearCommitment(ctx, c, commitmentClearedRejected))
+		}
+		return chain.CreateEscrowResult{}, failure
 	}
 	escrowID := strconv.FormatUint(result.EscrowID, 10)
 	if m.narrator != nil {

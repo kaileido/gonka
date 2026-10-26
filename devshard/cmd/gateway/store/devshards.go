@@ -8,8 +8,9 @@ import (
 	"time"
 )
 
-// Apart from its caller so a test can read which columns the update carries. See README.md, "The devshard registry".
-const upsertDevshardStatement = `
+// Apart from their callers so a test can read which columns the update carries. See README.md, "The devshard registry".
+const (
+	upsertDevshardStatement = `
 		INSERT INTO devshards (escrow_id, private_key_env, model, active, rotation_role, rotation_epoch, settlement_pending, route_prefix)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(escrow_id) DO UPDATE SET
@@ -20,6 +21,8 @@ const upsertDevshardStatement = `
 			rotation_epoch = excluded.rotation_epoch,
 			gone_from_chain = CASE WHEN excluded.active = 1 THEN 0 ELSE devshards.gone_from_chain END,
 			updated_at = datetime('now')`
+	unparkedCondition = `devshards.settlement_pending = 0 AND devshards.settle_tx_hash = ''`
+)
 
 // ErrDevshardNotFound is returned by updates/deletes that match no row.
 var ErrDevshardNotFound = errors.New("devshard not found")
@@ -197,4 +200,26 @@ func (s *Store) SetDevshardSettleTxHash(ctx context.Context, escrowID, txHash st
 		return fmt.Errorf("updating devshard %s: %w", escrowID, err)
 	}
 	return requireOneRow(result, escrowID)
+}
+
+// ActivateDevshardUnlessParked reports whether it activated the row; a parked row, or one carrying a settle hash, is left as it is.
+func (s *Store) ActivateDevshardUnlessParked(ctx context.Context, escrowID string) (bool, error) {
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE devshards SET active = 1, gone_from_chain = 0, updated_at = datetime('now') WHERE escrow_id = ? AND `+unparkedCondition,
+		escrowID)
+	if err != nil {
+		return false, fmt.Errorf("activating devshard %s: %w", escrowID, err)
+	}
+	return matchedOneRow(result, escrowID)
+}
+
+// UpsertDevshardUnlessParked reports whether it wrote the row; it is UpsertDevshard except that a parked row, or one carrying a settle hash, is left as it is.
+func (s *Store) UpsertDevshardUnlessParked(ctx context.Context, record DevshardRecord) (bool, error) {
+	result, err := s.db.ExecContext(ctx, upsertDevshardStatement+` WHERE `+unparkedCondition,
+		record.EscrowID, record.PrivateKeyEnv, record.Model, record.Active,
+		record.RotationRole, record.RotationEpoch, record.SettlementPending, record.RoutePrefix)
+	if err != nil {
+		return false, fmt.Errorf("upserting devshard %s: %w", record.EscrowID, err)
+	}
+	return matchedOneRow(result, record.EscrowID)
 }

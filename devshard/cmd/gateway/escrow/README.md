@@ -110,6 +110,8 @@ Every create names its reason in the `escrow created` line: the planner's `guard
 | `ErrTxNotFound`, past the grace window | it can no longer land | drop the commitment |
 | transport error | nothing is known — the endpoint is unreachable | keep the row, retry next tick |
 
+A create whose broadcast the node refused at `CheckTx` (`chain.ErrTxRejected`) drops its commitment at once, narrated as `transaction rejected at broadcast`, rather than holding it for the grace window: that transaction can never land, and the row would otherwise count against the model's unsettled room until the window ends. Any other broadcast error keeps the row for `reconcileOne`.
+
 The grace window is `commitmentReconcileGrace`: the chain's `UnorderedTxTTL` plus `commitmentIndexLagMargin` (2 min), which allows for a landed transaction staying unqueryable a little past its TTL. A row with a zero `CreatedAt` — malformed, or written before the stamp existed — counts as still pending, because keeping a commitment costs one row while dropping a live one costs an escrow nobody knows about.
 
 `clearCommitment` takes the reason it narrates rather than deriving it: the two callers know it, the row does not.
@@ -191,6 +193,8 @@ See [`docs/escrows.md`](../docs/escrows.md), "Settlement and retirement", for th
 | not found, inside the grace window | `ErrSettlementInFlight` — an unordered transaction stays landable for its whole TTL, and rebroadcasting inside that window pays a fee per tick for a settle still on its way, then loses to it and starts over |
 | not found, past the grace window | the hash is cleared: a fresh transaction is right |
 | transport error | fails the tick — an unreachable endpoint is not an answer, and must not be read as "the settle never happened" |
+
+A settle whose broadcast the node refused at `CheckTx` (`chain.ErrTxRejected`) clears the hash it recorded in the same call, so the next tick builds a fresh transaction instead of answering `ErrSettlementInFlight` until the window ends. A transport error or any other broadcast error keeps the hash, and the table above decides on the next tick.
 
 A settle row with no broadcast stamp defaults the opposite way to a commitment row: it counts as **past** the window. Keeping a commitment costs a row, while keeping a hash here costs an escrow that is never settled at all. Rebroadcasting one that was in fact still landing costs a fee once, and the stamp that write leaves governs every tick after it.
 

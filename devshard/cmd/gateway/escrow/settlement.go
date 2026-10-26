@@ -229,7 +229,11 @@ func (m *Manager) settleEntered(ctx context.Context, record store.DevshardRecord
 	}
 	result, err := m.tx.SettleEscrow(ctx, signer, input, recordHash)
 	if err != nil {
-		return chain.SettleEscrowResult{}, fmt.Errorf("settling escrow %s: %w", record.EscrowID, err)
+		failure := fmt.Errorf("settling escrow %s: %w", record.EscrowID, err)
+		if errors.Is(err, chain.ErrTxRejected) {
+			return chain.SettleEscrowResult{}, errors.Join(failure, m.clearSettleTxHash(ctx, record.EscrowID))
+		}
+		return chain.SettleEscrowResult{}, failure
 	}
 	if m.narrator != nil {
 		m.narrator.EscrowSettled(record.EscrowID, record.Model, result.TxHash, result.Settler)

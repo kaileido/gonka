@@ -142,6 +142,7 @@ type gateway struct {
 	participants *limits.ParticipantLimiter
 	telemetry    *metrics.Metrics
 	server       *http.Server
+	endRequests  context.CancelFunc
 	publicAPI    *http.Client
 	nonces       *nonces.Recorder
 	events       *journal.Journal
@@ -248,6 +249,7 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 			VersionRefusals:            versionRefusals,
 			ToolRefusals:               toolRefusals,
 			ContextRefusals:            contextRefusals,
+			OutputOverruns:             hosts.OutputOverruns(participant, model),
 		}
 		if window, tracked := participants.WindowFor(participant, model); tracked {
 			capability.InputWindowTokens = uint64(max(window.InputWindowTokens, 0))
@@ -422,6 +424,7 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 	// Registered after the server, which owns both sinks. See ../README.md, "Wiring order, and the knots in it".
 	telemetry.Register(metrics.NewCaptureCollector(server))
 	telemetry.Register(metrics.NewCacheCollector(server))
+	httpServer, cancelRequests := server.HTTPServer(fmt.Sprintf(":%d", configuration.Server.Port))
 
 	built = true
 	return &gateway{
@@ -436,7 +439,8 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 		limiter:      gatewayLimiter,
 		participants: participants,
 		telemetry:    telemetry,
-		server:       server.HTTPServer(fmt.Sprintf(":%d", configuration.Server.Port)),
+		server:       httpServer,
+		endRequests:  cancelRequests,
 		publicAPI:    publicAPI,
 		nonces:       recorder,
 		events:       events,

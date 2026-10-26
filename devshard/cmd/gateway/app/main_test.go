@@ -816,6 +816,7 @@ func (r *shutdownRecorder) CloseIdleConnections()          { r.note() }
 func recordedShutdownParts(listener *shutdownRecorder, recorder func(name string) *shutdownRecorder) shutdownParts {
 	return shutdownParts{
 		listener:        listener,
+		endRequests:     func() {},
 		races:           recorder("races"),
 		dispatchers:     recorder("dispatchers"),
 		escrowLifecycle: recorder("escrow lifecycle"),
@@ -1150,30 +1151,30 @@ func TestRegisteringAParkedEscrowIsRefused(t *testing.T) {
 	ctx := context.Background()
 	t.Setenv("DEVSHARD_PARKED_KEY", "0x01")
 	records := openedStore(t)
-	if err := records.UpsertDevshard(ctx, store.DevshardRecord{EscrowID: "escrow-1", Model: "model-a", PrivateKeyEnv: "DEVSHARD_PARKED_KEY", Active: true}); err != nil {
+	if err := records.UpsertDevshard(ctx, store.DevshardRecord{EscrowID: "1", Model: "model-a", PrivateKeyEnv: "DEVSHARD_PARKED_KEY", Active: true}); err != nil {
 		t.Fatalf("UpsertDevshard(): %v", err)
 	}
-	if err := records.ParkForSettlement(ctx, "escrow-1"); err != nil {
+	if err := records.ParkForSettlement(ctx, "1"); err != nil {
 		t.Fatalf("ParkForSettlement(): %v", err)
 	}
-	if err := records.SetDevshardSettleTxHash(ctx, "escrow-1", "SETTLE-HASH"); err != nil {
+	if err := records.SetDevshardSettleTxHash(ctx, "1", "SETTLE-HASH"); err != nil {
 		t.Fatalf("SetDevshardSettleTxHash(): %v", err)
 	}
 	escrows := servingRegistry(t)
 	operator := &operations{store: records, escrows: escrows}
 
 	err := operator.AddDevshard(ctx, api.AddDevshardRequest{
-		EscrowID: "escrow-1", Model: "model-a", PrivateKeyEnv: "DEVSHARD_PARKED_KEY", Activate: true,
+		EscrowID: "1", Model: "model-a", PrivateKeyEnv: "DEVSHARD_PARKED_KEY", Activate: true,
 	})
 
 	if !errors.Is(err, api.ErrDevshardNotActivatable) {
 		t.Fatalf("AddDevshard(parked) = %v, want ErrDevshardNotActivatable", err)
 	}
-	row := storedDevshard(t, records, "escrow-1")
+	row := storedDevshard(t, records, "1")
 	if row.Active || !row.SettlementPending || row.SettleTxHash != "SETTLE-HASH" {
 		t.Errorf("row = active %v, settlement pending %v, settle hash %q; want it still parked with its hash", row.Active, row.SettlementPending, row.SettleTxHash)
 	}
-	if _, routable := escrows.Routable("escrow-1"); routable {
+	if _, routable := escrows.Routable("1"); routable {
 		t.Error("the parked escrow was published routable")
 	}
 }
@@ -1191,16 +1192,47 @@ func TestRegisteringAnEscrowTheStoreHasNotSeenPublishesIt(t *testing.T) {
 	operator := &operations{store: records, escrows: escrows}
 
 	if err := operator.AddDevshard(ctx, api.AddDevshardRequest{
-		EscrowID: "escrow-1", Model: "model-a", PrivateKeyEnv: "DEVSHARD_FRESH_KEY", Activate: true,
+		EscrowID: "1", Model: "model-a", PrivateKeyEnv: "DEVSHARD_FRESH_KEY", Activate: true,
 	}); err != nil {
 		t.Fatalf("AddDevshard(new) = %v, want nil", err)
 	}
 
-	if row := storedDevshard(t, records, "escrow-1"); !row.Active {
+	if row := storedDevshard(t, records, "1"); !row.Active {
 		t.Errorf("row = %+v, want it stored active", row)
 	}
-	if _, routable := escrows.Routable("escrow-1"); !routable {
+	if _, routable := escrows.Routable("1"); !routable {
 		t.Error("the new escrow was not published")
+	}
+}
+
+// Test flow:
+//  1. Set the key variable and open an empty store.
+//  2. Call operator.AddDevshard with Activate set for each id that is not a canonical decimal chain escrow id.
+//  3. Assert each returns ErrInvalidEscrowID.
+//  4. Assert no row was stored and nothing was published.
+func TestRegisteringAnEscrowWhoseIDIsNotAChainEscrowIDIsRefused(t *testing.T) {
+	ctx := t.Context()
+	t.Setenv("DEVSHARD_FRESH_KEY", "0x01")
+	records := openedStore(t)
+	escrows := servingRegistry(t)
+	operator := &operations{store: records, escrows: escrows}
+
+	for _, escrowID := range []string{"1/../../outside", "escrow-1", "007", "+7", " 7", "-1", "18446744073709551616"} {
+		err := operator.AddDevshard(ctx, api.AddDevshardRequest{EscrowID: escrowID, Model: "model-a", PrivateKeyEnv: "DEVSHARD_FRESH_KEY", Activate: true})
+		if !errors.Is(err, api.ErrInvalidEscrowID) {
+			t.Errorf("AddDevshard(%q) = %v, want ErrInvalidEscrowID", escrowID, err)
+		}
+	}
+
+	known, err := records.ListDevshards(ctx)
+	if err != nil {
+		t.Fatalf("ListDevshards(): %v", err)
+	}
+	if len(known) != 0 {
+		t.Errorf("refused registrations stored %d rows, want 0", len(known))
+	}
+	if candidates := escrows.Candidates("model-a"); len(candidates) != 0 {
+		t.Errorf("Candidates(model-a) = %+v, want none", candidates)
 	}
 }
 

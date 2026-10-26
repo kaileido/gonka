@@ -107,6 +107,11 @@ type fakeEngine struct {
 	outcome engine.RaceOutcome
 	err     error
 	ledger  *RaceLedger
+	panics  bool
+
+	finishes   chan func()
+	late       []byte
+	lateWrites chan func()
 }
 
 func (e *fakeEngine) Run(ctx context.Context, request engine.Request, client io.Writer) (engine.RaceOutcome, error) {
@@ -114,6 +119,17 @@ func (e *fakeEngine) Run(ctx context.Context, request engine.Request, client io.
 	spanContext := trace.SpanContextFromContext(ctx)
 	e.racedIn.Store(&spanContext)
 	e.raced.Store(&request)
+	if e.finishes != nil {
+		e.finishes <- request.OnFinished
+	} else if request.OnFinished != nil {
+		defer request.OnFinished()
+	}
+	if e.panics {
+		panic("race panicked")
+	}
+	if e.late != nil {
+		e.lateWrites <- func() { _, _ = client.Write(e.late) }
+	}
 	if request.OnEscrow != nil && e.outcome.EscrowID != "" {
 		request.OnEscrow(e.outcome.EscrowID)
 	}
@@ -715,7 +731,7 @@ func TestKillSwitchRedirectsOnlyWithADestination(t *testing.T) {
 //  3. Assert ReadHeaderTimeout is set, so a slowloris connection is not left open.
 func TestHTTPServerLeavesWriteTimeoutUnsetSoStreamsSurvive(t *testing.T) {
 	live := newHarness(t)
-	server := live.server.HTTPServer(":0")
+	server, _ := live.server.HTTPServer(":0")
 	if server.WriteTimeout != 0 {
 		t.Fatalf("WriteTimeout is set to %v; an absolute deadline cuts every SSE stream", server.WriteTimeout)
 	}
