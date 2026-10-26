@@ -22,7 +22,7 @@ The only package that speaks HTTP to a client, and the one that decides what a f
 - **The gateway's own limiter answers 429; a full shard answers 503.** A quota the caller exceeded is theirs to slow down; no room on the shard is not.
 - **A reply is folded as it arrives**, so a non-streaming request holds the answer being assembled rather than the stream it came from. Past the process-wide ceiling it is refused with 503 rather than held until the kernel intervenes.
 - **The status is chosen from the assembled body, not before it.** A body the assembler could not fold is answered as a failure, not as a 200 carrying an error object.
-- **`clientStream` is written by attempt goroutines after the handler has returned**, so every path through it takes the lock and stops once closed.
+- **`clientStream` is written by attempt goroutines after the handler has returned**, so every path through it takes the lock and stops once closed, and every way a reply ends closes it: `Close`, `Fail`, `closeUnstarted` on a race that failed before the first byte, and `discard`. A late write is dropped and charges the buffer budget nothing.
 - **The admin surface is disabled entirely when no admin key is set** — including escrow creation.
 
 ## What the server is given
@@ -86,6 +86,8 @@ Each `route` is one registered pattern. An empty label means the route is not in
 **The gateway writes the stream's terminator, and never forwards the host's.** `TrimSSEDone` drops a `[DONE]` out of every forwarded chunk and `terminateLocked` writes the gateway's own at the end. Relaying the host's would put it on the wire before the gateway knows the nonce finished, and an error event written afterwards is invisible: every OpenAI-compatible client stops reading at the terminator. Owning it means a failure after the host finished still reaches the client, ahead of the sentinel. A truncated answer (`engine.ErrAnswerTruncated`) is the one failure written without it: the stream ends on the error event, so a client that skips error events still never reads the partial answer as whole. A cache replay writes its stored body directly and keeps the terminator it stored.
 
 In `race`, the second `X-Devshard-ID` write is the authoritative one for a reply still holding its headers. The error from `client.Close()` is returned rather than only logged: a tail the rewriter could not finish is a failure the status can no longer carry — the reply is already 200 — and returning it is what makes the cache refuse a body that stops mid-answer. `race` reports that failure alongside the outcome for the same reason: a stream commits 200 on its first byte, so the caller needs the error itself to tell a response worth replaying from one that is not.
+
+`HTTPServer` gives every request a context derived from one it returns the cancel of (`BaseContext`), and `Shutdown` alone never calls it, so a request that ends within the shutdown's graceful share is never cut. Nothing else ends an SSE stream: the shutdown calls the cancel only once that share has passed with requests still open, so a stream that would never end cannot hold the shutdown for the whole grace period ([`docs/operations.md`](../docs/operations.md), "Shutdown"); a race whose client is cancelled this way detaches and drains like any other client departure.
 
 ## The request row carries two kinds of token count
 

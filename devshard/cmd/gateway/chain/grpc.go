@@ -12,6 +12,7 @@ import (
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	cryptocodec "github.com/cosmos/cosmos-sdk/crypto/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	txtypes "github.com/cosmos/cosmos-sdk/types/tx"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
@@ -167,19 +168,30 @@ func (g *GRPCChain) Broadcast(ctx context.Context, txBytes []byte) (string, erro
 	if err != nil {
 		return "", fmt.Errorf("broadcast tx: %w", err)
 	}
-	result := response.GetTxResponse()
+	return broadcastTxHash(response.GetTxResponse())
+}
+
+func broadcastTxHash(result *sdk.TxResponse) (string, error) {
 	if result == nil {
 		return "", fmt.Errorf("broadcast response carried no result")
 	}
 	if result.Code != 0 {
-		return "", fmt.Errorf("broadcast tx failed code=%d codespace=%s raw_log=%s",
+		failure := fmt.Errorf("broadcast tx failed code=%d codespace=%s raw_log=%s",
 			result.Code, result.Codespace, result.RawLog)
+		if alreadyInMempool(result) {
+			return "", failure
+		}
+		return "", fmt.Errorf("%w: %w", ErrTxRejected, failure)
 	}
 	txHash := strings.TrimSpace(result.TxHash)
 	if txHash == "" {
 		return "", fmt.Errorf("broadcast response missing txhash")
 	}
 	return txHash, nil
+}
+
+func alreadyInMempool(result *sdk.TxResponse) bool {
+	return result.Codespace == sdkerrors.ErrTxInMempoolCache.Codespace() && result.Code == sdkerrors.ErrTxInMempoolCache.ABCICode()
 }
 
 // Tx reports found=false for a transaction the node has not indexed yet, which a poller must tell apart from a failure.

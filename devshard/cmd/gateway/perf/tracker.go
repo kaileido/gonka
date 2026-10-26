@@ -259,6 +259,10 @@ func (t *Tracker) RecordVersionUnsupported(participant string) {
 	}
 }
 
+func (t *Tracker) RecordOutputOverrun(participant, model string) {
+	t.capability.recordOutputOverrun(participant, model)
+}
+
 func (t *Tracker) Acquire(participant string) {
 	t.inflight.acquire(participant)
 }
@@ -337,4 +341,8 @@ func maxEjectable(perf config.Perf, knownForModel int) int {
 
 func (t *Tracker) Capability(participant, model string) (contextLimit, versionRefusals, toolRefusals, contextRefusals uint64) {
 	return t.capability.capability(participant, model)
+}
+
+func (t *Tracker) OutputOverruns(participant, model string) uint64 {
+	return t.capability.overruns(participant, model)
 }

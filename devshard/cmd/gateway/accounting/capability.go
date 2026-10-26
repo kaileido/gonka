@@ -9,6 +9,7 @@ type HostCapability struct {
 	VersionRefusals            uint64 `json:"version_refusals,omitempty"`
 	ToolRefusals               uint64 `json:"tool_refusals,omitempty"`
 	ContextRefusals            uint64 `json:"context_refusals,omitempty"`
+	OutputOverruns             uint64 `json:"output_overruns,omitempty"`
 
 	InputWindowTokens    uint64 `json:"input_window_tokens,omitempty"`
 	OutputWindowTokens   uint64 `json:"output_window_tokens,omitempty"`
@@ -20,7 +21,7 @@ type HostCapability struct {
 
 func (c HostCapability) empty() bool {
 	return !c.ProtocolVersionUnsupported && !c.ToolChoiceUnsupported && c.ContextLimit == 0 &&
-		c.VersionRefusals == 0 && c.ToolRefusals == 0 && c.ContextRefusals == 0 &&
+		c.VersionRefusals == 0 && c.ToolRefusals == 0 && c.ContextRefusals == 0 && c.OutputOverruns == 0 &&
 		c.InputWindowTokens == 0 && c.OutputWindowTokens == 0 &&
 		c.InflightInputTokens == 0 && c.InflightOutputTokens == 0 &&
 		c.WindowCutoff == "" && c.WindowWeight == 0

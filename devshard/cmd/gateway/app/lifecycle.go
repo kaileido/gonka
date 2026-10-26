@@ -13,8 +13,12 @@ import (
 	"devshard/logging"
 )
 
-// journalCloseFloor lets the journal drain even after a drain step above it spent the whole budget.
-const journalCloseFloor = time.Second
+// Step 1 lets requests finish for httpGracefulShare and then cancels the ones still open, waiting at most httpCancelledWait, so the steps below keep half the grace period; journalCloseFloor lets the journal drain after a step above it spent the budget. See operations.md, "Shutdown".
+const (
+	httpCancelledWait = time.Second
+	httpGracefulShare = shutdownGracePeriod/2 - httpCancelledWait
+	journalCloseFloor = time.Second
+)
 
 func (g *gateway) serve(ctx context.Context) error {
 	backgroundCtx, stopBackground := context.WithCancel(ctx)
@@ -120,6 +124,7 @@ type idleConnections interface{ CloseIdleConnections() }
 
 type shutdownParts struct {
 	listener        httpListener
+	endRequests     func()
 	races           stopper
 	dispatchers     stopper
 	escrowLifecycle stopper
@@ -137,7 +142,7 @@ type shutdownParts struct {
 // shutdownOrder is the thirteen-step contract every shutdown follows. See operations.md, "Shutdown".
 func shutdownOrder(parts shutdownParts) []shutdownStep {
 	return []shutdownStep{
-		{name: "http server", stop: parts.listener.Shutdown},
+		{name: "http server", stop: stopListener(parts.listener, parts.endRequests)},
 		{name: "races", stop: waitFor(parts.races)},
 		{name: "dispatchers", stop: waitFor(parts.dispatchers)},
 		{name: "escrow lifecycle", stop: waitFor(parts.escrowLifecycle)},
@@ -153,6 +158,24 @@ func shutdownOrder(parts shutdownParts) []shutdownStep {
 		{name: "store", stop: closeOf(parts.storage)},
 		// Last: every step above can still reach the public API. See ../README.md, "Shutdown".
 		{name: "public api connections", stop: closeIdle(parts.publicAPI)},
+	}
+}
+
+func stopListener(listener httpListener, endRequests func()) func(context.Context) error {
+	return func(ctx context.Context) error {
+		bounded, cancelBounded := context.WithTimeout(ctx, httpGracefulShare+httpCancelledWait)
+		defer cancelBounded()
+		stopped := make(chan error, 1)
+		go func() { stopped <- listener.Shutdown(bounded) }()
+		graceful := time.NewTimer(httpGracefulShare)
+		defer graceful.Stop()
+		select {
+		case err := <-stopped:
+			return err
+		case <-graceful.C:
+		}
+		endRequests()
+		return <-stopped
 	}
 }
 
@@ -229,6 +252,7 @@ func (g *gateway) shutdown(grace time.Duration) error {
 	defer cancelDrain()
 	return stopAll(drainCtx, shutdownOrder(shutdownParts{
 		listener:        g.server,
+		endRequests:     g.endRequests,
 		races:           g.races,
 		dispatchers:     g.router,
 		escrowLifecycle: g.manager,

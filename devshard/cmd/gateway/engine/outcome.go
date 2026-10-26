@@ -127,6 +127,10 @@ func (a AttemptOutcome) OutputTokens() int64 {
 	return a.LogprobTokens
 }
 
+func (o RaceOutcome) overranReservation(a AttemptOutcome) bool {
+	return a.OutputTokens() > int64(o.OutputTokens)
+}
+
 func (a AttemptOutcome) emptyStream() bool {
 	return a.Terminal == TerminalEmptyStream || a.Terminal == TerminalBurnEmpty
 }

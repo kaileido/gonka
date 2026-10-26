@@ -61,3 +61,19 @@ func TestCapabilityStillReportsAHostWhoseVerdictExpired(t *testing.T) {
 		t.Error("an expired verdict is still reported as blocking")
 	}
 }
+
+// Test flow:
+//  1. Build one participant record.
+//  2. Attach capabilities using a lookup that reports only output overruns.
+//  3. Assert the record carries a capability block with the overrun count.
+func TestCapabilityReportsAHostThatOverranItsReservation(t *testing.T) {
+	records := []ParticipantRecord{{Participant: "overran"}}
+
+	attachCapabilities(records, func(string, string) HostCapability {
+		return HostCapability{OutputOverruns: 4}
+	})
+
+	if records[0].Capability == nil || records[0].Capability.OutputOverruns != 4 {
+		t.Fatalf("capability = %+v, want the four overruns", records[0].Capability)
+	}
+}

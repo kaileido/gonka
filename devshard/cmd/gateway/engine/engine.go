@@ -86,7 +86,7 @@ type Deps struct {
 	E2E E2EOverrides
 }
 
-// Request is one client request as a race sees it; OnEscrow fires at the last moment a header can still be set.
+// Request is one client request as a race sees it; OnEscrow fires at the last moment a header can still be set, and Run calls OnFinished exactly once, after the race's last report.
 type Request struct {
 	RequestID               string
 	Model                   string
@@ -101,7 +101,8 @@ type Request struct {
 
 	Params any
 
-	OnEscrow func(escrowID string)
+	OnEscrow   func(escrowID string)
+	OnFinished func()
 }
 
 // Engine admits races and is the barrier that outlives them. See race.md, "Stop".
@@ -159,14 +160,17 @@ func NewEngine(deps Deps) (*Engine, error) {
 
 // Run races one request to a single winner and streams that winner's bytes to client. See README, "From pick to report".
 func (e *Engine) Run(ctx context.Context, request Request, client io.Writer) (RaceOutcome, error) {
+	request.OnFinished = finishOnce(request.OnFinished)
 	registration := e.admit()
 	if registration == nil {
+		request.OnFinished()
 		return RaceOutcome{}, ErrStopped
 	}
 	// A panicking race still owes the barrier its release. See race.md, "Stop".
 	defer func() {
 		if panicked := recover(); panicked != nil {
 			registration.release()
+			request.OnFinished()
 			panic(panicked)
 		}
 	}()
@@ -176,6 +180,13 @@ func (e *Engine) Run(ctx context.Context, request Request, client io.Writer) (Ra
 		return outcome, err
 	}
 	return outcome, outcome.failure()
+}
+
+func finishOnce(finished func()) func() {
+	if finished == nil {
+		return func() {}
+	}
+	return sync.OnceFunc(finished)
 }
 
 // OwedTimeoutVotes reports the votes taken and not yet posted. See race.md, "The timeout-vote queue".
@@ -297,8 +308,11 @@ func (e *Engine) raceDeps(settings *config.Config, request Request, registration
 
 		ModelContextLength: settings.Limits.ContextLength(request.Model, e.deps.Snapshots.Snapshot().Models[request.Model].MaxModelLen),
 
-		Hold:   registration.holdEscrow,
-		Report: func(outcome RaceOutcome) { e.record(outcome, request.Params, registration) },
+		Hold: registration.holdEscrow,
+		Report: func(outcome RaceOutcome) {
+			e.record(outcome, request.Params, registration)
+			request.OnFinished()
+		},
 	}
 }
 
@@ -339,6 +353,9 @@ func (e *Engine) record(outcome RaceOutcome, params any, registration *raceRegis
 	}
 	for _, attempt := range outcome.Attempts {
 		e.recordSample(outcome, attempt, registration)
+		if outcome.overranReservation(attempt) {
+			e.deps.Perf.RecordOutputOverrun(attempt.Participant, outcome.Model)
+		}
 		if verdict, moves := outcome.Verdict(attempt); moves {
 			e.deps.Windows.OnResult(limits.Result{
 				Participant: attempt.Participant,
