@@ -139,6 +139,12 @@ func (r *Registry) SettlementSession(escrowID string) (EscrowSession, bool) {
 	return entry.session, true
 }
 
+// HoldsSession reports whether the registry still holds an escrow's session, published or draining.
+func (r *Registry) HoldsSession(escrowID string) bool {
+	_, held := r.SettlementSession(escrowID)
+	return held
+}
+
 // HoldSettlement: see README.md, "The published set and its readers".
 func (r *Registry) HoldSettlement(escrowID string) (EscrowSession, func(), bool) {
 	return r.holdUnclosed(escrowID, func(entry *escrowEntry) *atomic.Int64 { return &entry.settlementHolds })

@@ -47,7 +47,7 @@ The index's first read takes every live id and marks every nonce up to the large
 
 `openingLock` serializes opens of one escrow. A session is a SQLite file: two concurrent opens fail with `SQLITE_BUSY` before either reaches the already-published check, so the escrow an operator just created can report a failure while another caller serves it. The locks are kept for the life of the process — one small mutex per escrow id ever published — because removing one a waiter still holds would let the next caller take a fresh lock and race it.
 
-A `Listing` adds escrows from rows read after it was taken and skips any escrow retired since: `unpublish` records every retired id in each open listing under the registry lock, whether or not the escrow was live, and `add` checks that record under the same lock right before it publishes. A park writes its row inactive before it retires the escrow, so a row a republish pass read active is retired after the pass took its listing; under the registry lock that retirement either comes first and the add skips the escrow, or comes after the publish and finds the entry live. Without it a pass working from a stale list reopens an escrow parked for settlement, and nothing retires it again.
+A `Listing` adds escrows from rows read after it was taken and skips any escrow retired since: `unpublish` records every retired id in each open listing under the registry lock, whether or not the escrow was live, and `add` checks that record under the same lock right before it publishes. A park, a deactivation and an inactive registration write the row inactive before they retire the escrow (the last two also retire it before the write), so a row a republish pass read active is retired after the pass took its listing; under the registry lock that retirement either comes first and the add skips the escrow, or comes after the publish and finds the entry live. Without it a pass working from a stale list reopens an escrow parked for settlement, and nothing retires it again.
 
 `ErrDraining` refuses an escrow id whose earlier entry has not finished: that entry owns the nonces still awaiting votes and holds the storage they settle through. `ErrClosed` rejects work on a registry whose sessions are already released.
 
@@ -60,6 +60,8 @@ A `Listing` adds escrows from rows read after it was taken and skips any escrow 
 `DrainCloseFailures` counts the drained escrows whose flush or close failed. `Retire` and `Close` hand that error to their caller; here the request that kept the escrow open has already been answered and there is nobody left to return it to, so it is counted instead of lost.
 
 `IsBusy` satisfies `escrow.SettlementSource`: a settlement must not claim funds while a request is still spending nonces on the escrow, including one still draining from an earlier session of it.
+
+`HoldsSession` reports whether the registry still holds an escrow's session, published or draining, through the same lookup as `SettlementSession`. An import refuses such an escrow: a draining session held only for settlement is neither busy nor routable, yet flushes its snapshot onto the storage once the hold ends.
 
 `Exhausted` reports an escrow routing declined as spent — out of nonces or out of deposit — to the rotation lifecycle, which is what replaces it.
 

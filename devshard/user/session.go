@@ -292,6 +292,9 @@ type Session struct {
 	diffs           []types.Diff        // append-only log
 	hostSyncNonce   map[int]uint64      // hostIdx -> last nonce sent
 	pendingTxs      []*types.DevshardTx // from host mempools, for next diff
+	// lastDropped is the newest diff the prefix drop removed from a session without a store. Its nonce is
+	// the slowest host cursor, which a receipt can move before that host's final response is checked.
+	lastDropped types.Diff
 	// pendingTxKeys dedups the current pendingTxs slice by tx_type:id. It is
 	// rebuilt from what compose retained, so a tx that failed to apply frees
 	// its key again -- otherwise the first host to propose a bogus tx would
@@ -871,6 +874,9 @@ func (s *Session) dropDiffPrefixLocked() {
 	if cut == 0 {
 		return
 	}
+	if s.store == nil {
+		s.lastDropped = s.diffs[cut-1]
+	}
 	if cut >= len(s.diffs) {
 		s.diffs = nil
 		return
@@ -1118,6 +1124,9 @@ func (s *Session) postStateRootForNonce(nonce uint64) ([]byte, bool, error) {
 		if diff.Nonce == nonce {
 			return diff.PostStateRoot, true, nil
 		}
+	}
+	if s.store == nil && nonce > 0 && s.lastDropped.Nonce == nonce {
+		return s.lastDropped.PostStateRoot, true, nil
 	}
 	return nil, false, nil
 }

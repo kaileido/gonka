@@ -29,7 +29,7 @@ services:
     # the journal's floor, the final accounting snapshot and the store close. See devshard/cmd/gateway/docs/operations.md, "Shutdown".
     stop_grace_period: 30s
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/status"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/v1/status"]
       interval: 30s
       timeout: 5s
       retries: 3

@@ -231,9 +231,13 @@ These are read the same way and rarely need changing. Where a knob has a longer 
 | `DEVSHARD_ENABLE_CONTENTION_PROFILES` | false | whether lock contention and blocking are sampled, so `/debug/pprof/mutex` and `/debug/pprof/block` hold data; it costs a little on every contended lock, so it stays off outside a diagnosis, and turning it on is logged |
 | `DEVSHARD_GATEWAY_DISABLED_NEW_URL` | empty | the URL a disabled gateway redirects to with 308; empty means 503 |
 | `DEVSHARD_API_KEYS` / `DEVSHARD_ADMIN_API_KEY` | empty / empty | the client keys an `api_key` model accepts and the admin key; an admin key shorter than 16 characters is refused, and an empty one leaves the admin surface unrouted ("Who may call what" above) |
-| `DEVSHARDS_JSON` | empty | the escrows seeded into the store at boot, each naming its `model` and `private_key_env` ("Boot" below) |
+| `DEVSHARDS_JSON` | empty | the escrows seeded into the store at boot, each naming its `id` (the chain escrow id in canonical decimal; any other fails the boot), `model` and `private_key_env` ("Boot" below) |
 | `DEVSHARD_CHAIN_GRPC` / `DEVSHARD_CHAIN_RPC` | `localhost:9090` / empty | the chain's gRPC endpoint, and the CometBFT RPC its queries fall back to; an empty RPC endpoint is derived from the gRPC host at the standard port ([`README.md`](../README.md), "Escrow sessions and the chain connection") |
 | `DEVSHARD_PUBLIC_API` | `http://localhost:9000` | the public API the phase observer polls; it must be an absolute URL |
+| `DEVSHARD_RPC_H2_UPGRADE` | on | whether a session's connection to a host first tries HTTP/2 on the origin of the host's inference URL (h2c on `http`, TLS offering ALPN `gonka-rpc/1` on `https`) and drops to Connect over HTTP/1.1 on the same origin when the host does not speak it; `0`, `false`, `no` or `off` stays on HTTP/1.1 |
+| `DEVSHARD_RPC_GRPC` | off | whether that HTTP/2 connection speaks native gRPC instead of Connect; on only for `1`, `true`, `yes` or `on`, and never used over HTTP/1.1 |
+| `DEVSHARD_RPC_MAX_CONNS_PER_PEER` | 2 561 | the most HTTP connections the gateway keeps open to one host; a value that is not a positive integer falls back to the default without a warning |
+| `DEVSHARD_RPC_ENDPOINTS` | unset | not honoured: every peer method uses Connect, and a set value is logged once as ignored |
 | `DEVSHARD_MAX_CONCURRENT_RUNTIME_BUILDS` | 16 | escrow sessions opened at once while the boot publishes the active escrows ("Boot" below) |
 | `DEVSHARD_MAX_CONCURRENT_PROMPT_COUNTS` | half of `GOMAXPROCS`, at least 1 | prompts tokenized at once after the cache lookup; a request that finds every slot taken is not held but carries the byte estimate instead ([`request.md`](request.md), "The prompt token count") |
 | `DEVSHARD_STATS_TOKENIZER` | off | whether every request that admission lets through and the cache does not answer is counted with the model's tokenizer after the cache lookup, through the gate above, with each pre-token's merge capped at 512 bytes; off, only a prompt the context check tokenizes carries a tokenizer count and every other request the byte estimate ([`request.md`](request.md), "The prompt token count") |
@@ -259,7 +263,7 @@ These are read the same way and rarely need changing. Where a knob has a longer 
 | `GATEWAY_PERF_MAX_EJECTION_FRACTION` / `GATEWAY_PERF_MIN_AVAILABLE_HOSTS` | 0.5 / 4 | the share of a model's hosts that may be ejected at once, and the number that always stays routable |
 | `GATEWAY_PERF_HOST_STALENESS_SECONDS` | 3 600 | how long an unseen host is remembered before its history and its participant-labelled metric series are dropped |
 
-`env/env.go` remains the authoritative list and `config.Defaults()` the authoritative set of defaults; a variable added there belongs in one of the two tables above. One table sits outside `env/env.go`: the runtime-params feed reads the fleet-shared `DEVSHARD_*` / `DEVSHARDD_*` knobs declared in `devshard/runtimeparams/env.go`, because they are the same knobs every devshard binary honours.
+`env/env.go` remains the authoritative list and `config.Defaults()` the authoritative set of defaults; a variable added there belongs in one of the two tables above. Three sets sit outside `env/env.go`, because they are the same knobs every devshard binary honours: the runtime-params feed reads the fleet-shared `DEVSHARD_*` / `DEVSHARDD_*` knobs declared in `devshard/runtimeparams/env.go`, a session's connection to its hosts reads the four `DEVSHARD_RPC_*` knobs above, declared in `devshard/transport`, and tracing reads `DEVSHARD_OTEL_ENABLED` in `devshard/observability` and `OTEL_ENDPOINT` / `OTEL_HEADERS` in `common/observability`.
 
 ## Boot
 
@@ -279,11 +283,11 @@ These are read the same way and rarely need changing. Where a knob has a longer 
 
 ## Shutdown
 
-`app/lifecycle.go`, `serve` and `shutdownOrder`. Before the first step, `serve` cancels the background context the chain observer, warmup prober, host pings, nonce ledger, escrow lifecycle and devshard-write republish were started under (`stopBackground`). Then thirteen steps, in this order, bounded by the grace period, with up to one more second from the journal step's floor:
+`app/lifecycle.go`, `serve` and `shutdownOrder`. Before the first step, `serve` cancels the background context the chain observer, warmup prober, host pings, nonce ledger, escrow lifecycle and devshard-write republish were started under (`stopThenShutDown`), after a boot that failed as after a signal. Then thirteen steps, in this order, bounded by the grace period, with up to one more second from the journal step's floor:
 
 | # | Step | Why here |
 | --- | --- | --- |
-| 1 | http server | stop taking new work first; open requests get half the grace period less the cancelled wait to finish uncancelled (`httpGracefulShare`, 4 s of the 10 s), so a short answer or an operator call still running completes; only if the server is not idle by then is every request still open cancelled, and the step waits at most 1 s more for those handlers (`httpCancelledWait`), so a stream that would never end holds the step for half the grace period at most and the steps below keep the other half; a race whose client is cancelled this way drains in step 2 like any client departure |
+| 1 | http server | stop taking new work first; open requests get the grace period less the reserve the steps below keep (`laterStepsReserve`, 5 s) and less the cancelled wait to finish uncancelled (`httpGracefulShare`, 4 s of the 10 s), so a short answer or an operator call still running completes; only if the server is not idle by then is every request still open cancelled, and the step waits at most 1 s more for those handlers (`httpCancelledWait`), so a stream that would never end holds the step for 5 s at most and the steps below keep their reserve; a race whose client is cancelled this way drains in step 2 like any client departure |
 | 2 | races | in-flight requests finish, and the losers post the votes they owe if those fall due inside the grace period (10 s); a refused nonce's vote falls due about 65 s after its refusal, so one refused in the last minute before a restart is not voted and finalize pays it in full |
 | 3 | dispatchers | nothing new reaches a host |
 | 4 | escrow lifecycle | no rotation starts mid-drain |
@@ -297,7 +301,7 @@ These are read the same way and rarely need changing. Where a knob has a longer 
 | 12 | store | every step above may still write to it |
 | 13 | public API connections | every step above can still reach it; closing earlier just forces a re-dial |
 
-`stopAll` runs every step **even after one fails**, except a step marked `needsQuiesced` (step 7): if anything above it failed, work may still be running, so closing the sessions would pull storage out from under it. That step is skipped and the skip is reported.
+`stopAll` runs every step **even after one fails**, except a step marked `needsQuiesced` (step 7): if anything above it failed, work may still be running, so closing the sessions would pull storage out from under it. That step is skipped and the skip is reported. A stream cancelled in step 1 hands its race off to keep running and step 2 waits for it, so a host still generating when the grace period left to step 2 runs out makes that drain overrun and step 7 is skipped (`TestShutdownSkipsEscrowSessionsWhenADrainOverran`).
 
 Each drain is bounded by the grace period but **not cancelled** by it — a step that runs out of time is reported as "abandoned with work still running" rather than killed mid-vote.
 
@@ -664,11 +668,11 @@ Neither list restrains anything but routing. Host pings, catch-up, finalize, the
 
 `POST /v1/admin/devshards/{id}/settle` answers 409 `devshard busy` while requests are still spending the escrow's nonces, and for up to a minute after its timeout sweep failed a vote, so the vote is retried before finalize pays that record in full (escrows.md, "Settlement and retirement"). By then the escrow has already been parked and taken out of routing, so it is draining: calling again once it has drained settles it.
 
-`POST /v1/admin/devshards/{id}/settle?force=true` does not wait. This route reads `force` from the query alone and takes no body; only the batch route below also reads it from its body. It crosses the busy check and nothing else — a second concurrent settlement of the same escrow is still refused, and an escrow already settled is still not rebroadcast. **The requests still in flight are failed for their callers, and their full reserved cost is paid to the hosts that held them**, because finalize closes the door on new nonces and the records still live take the settlement default. The forced call is written to the audit log as `escrow settled under force`, with `in_flight` naming how many requests it overrode.
+`POST /v1/admin/devshards/{id}/settle?force=true` does not wait. This route reads `force` from the query alone and takes no body; only the batch route below also reads it from its body. It crosses the busy check and nothing else — a second admin settle of the same escrow waits for the first to return and answers 404 `unknown devshard` if the first settled it, one the rotation lifecycle has in flight is still refused, and an escrow already settled is still not rebroadcast. **The requests still in flight are failed for their callers, and their full reserved cost is paid to the hosts that held them**, because finalize closes the door on new nonces and the records still live take the settlement default. The forced call is written to the audit log as `escrow settled under force`, with `in_flight` naming how many requests it overrode.
 
 A forced settlement runs on an escrow that still has requests, so the one that finishes last would close the escrow's store while finalize is still collecting signatures. Finalizing, building the settlement, inspecting and the admin finalize and signature-collection routes therefore each take a settlement hold, and the draining escrow closes only after they return. The hold is counted apart from requests, so it neither makes the escrow busy nor moves routing (`registry/views.go`, `Registry.HoldSettlement`).
 
-A settle that has started runs to its end even if the client leaves: it runs on a context detached from the request, bounded by `adminSettleTimeout` (5 minutes; `api/admin_settle.go`), because a settle cut short between its timeout sweep and the end of finalize would pay full reserve on the records the sweep did not reach. A settle that does time out stops before finalize or partway through it, and the next settle resumes the finalize where it stopped.
+A settle that has started runs to its end even if the client leaves, because a settle cut short between its timeout sweep and the end of finalize would pay full reserve on the records the sweep did not reach: it runs on a context detached from the request, bounded by `adminSettleTimeout` (5 minutes; `api/admin_settle.go`). That timeout starts counting before the settle waits for the escrow's operator lock, and it does not interrupt that wait: a settle queued behind another write of the same escrow waits until that write returns, then has only what is left of the 5 minutes. A settle that does time out stops before finalize or partway through it, and the next settle resumes the finalize where it stopped.
 
 ## Settling an escrow the chain has pruned
 
@@ -704,5 +708,7 @@ curl -sS -N -X POST "$GATEWAY/v1/admin/devshards/deactivate" \
   -H "Authorization: Bearer $ADMIN_KEY" -H "Content-Type: application/json" \
   -d '{"escrow_ids": ["93033", "93040"]}' | jq -c
 ```
+
+A registration (`POST /v1/admin/devshards`) with `activate` false deactivates an escrow already routed the same way, so its storage can be imported once its session is released.
 
 A deactivation does not wait on the nonce ledger: the escrow's last reading is taken in memory and the ledger's own goroutine writes it out (`accounting.Service.RequestFlush`). What it can still wait on is the escrow's last diff to its hosts, up to five seconds when the escrow holds gossiped transactions no request composed (`registry/retirement_flush.go`).

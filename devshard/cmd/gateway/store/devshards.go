@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// Apart from their callers so a test can read which columns the update carries. See README.md, "The devshard registry".
+// SQL shared by two statements each: the upsert, kept apart so a test can read which columns it carries, and the condition that leaves a parked row alone. See README.md, "The devshard registry".
 const (
 	upsertDevshardStatement = `
 		INSERT INTO devshards (escrow_id, private_key_env, model, active, rotation_role, rotation_epoch, settlement_pending, route_prefix)

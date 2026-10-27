@@ -71,7 +71,6 @@ type RequestLedger interface {
 
 type ControlStore interface {
 	ListDevshards(ctx context.Context) ([]store.DevshardRecord, error)
-	DeleteDevshard(ctx context.Context, escrowID string) error
 	LoadOverrides(ctx context.Context) (config.Overrides, error)
 	LoadRotationStatuses(ctx context.Context) ([]store.RotationStatus, error)
 }
@@ -117,6 +116,7 @@ type Operations interface {
 	CreateEscrow(ctx context.Context, request CreateEscrowRequest) (chain.CreateEscrowResult, error)
 	AddDevshard(ctx context.Context, request AddDevshardRequest) error
 	ImportDevshard(ctx context.Context, request ImportDevshardRequest) error
+	DeleteDevshard(ctx context.Context, escrowID string) error
 	Activate(ctx context.Context, escrowID string) error
 	Deactivate(ctx context.Context, escrowID string) error
 	Settle(ctx context.Context, escrowID string, force bool) (chain.SettleEscrowResult, error)

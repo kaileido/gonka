@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"devshard/bridge"
+	"devshard/cmd/gateway/api"
 	"devshard/cmd/gateway/chain"
 	"devshard/cmd/gateway/config"
 	"devshard/cmd/gateway/env"
@@ -84,6 +85,25 @@ func TestSeedDevshardsKeepsTheSeedsRoutePrefix(t *testing.T) {
 
 	if len(registry.upserted) != 1 || registry.upserted[0].RoutePrefix != "/v4" {
 		t.Fatalf("stored %+v, want one record with route prefix /v4", registry.upserted)
+	}
+}
+
+// Test flow:
+//  1. Call seedDevshards with each id that is not a canonical decimal chain escrow id, the path traversal ones included.
+//  2. Assert each call returns ErrInvalidEscrowID and stores nothing.
+func TestSeedDevshardsRejectsAnIDThatIsNotAChainEscrowID(t *testing.T) {
+	for _, escrowID := range []string{"1/../../outside", "../outside", "escrow-1", "007", "+7", " 7", "-1", "18446744073709551616"} {
+		registry := &recordingRegistry{}
+		seed := fmt.Sprintf(`[{"id":%q,"model":"Qwen/Test","private_key_env":"DEVSHARD_PRIVATE_KEY"}]`, escrowID)
+
+		err := seedDevshards(context.Background(), registry, seed)
+
+		if !errors.Is(err, api.ErrInvalidEscrowID) {
+			t.Errorf("seedDevshards(%q) = %v, want ErrInvalidEscrowID", escrowID, err)
+		}
+		if len(registry.upserted) != 0 {
+			t.Errorf("seedDevshards(%q) stored %d records, want none", escrowID, len(registry.upserted))
+		}
 	}
 }
 

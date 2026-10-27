@@ -131,6 +131,14 @@ These rules bind new and changed code; an existing comment in a file you touch m
 - **Fakes** implement the consumer-side interface; a real in-process session is preferred where the behaviour under test lives in the session.
 - **A bug fix starts with a failing test**, shown failing for the reason the bug gives. An assertion that passed before the fix is checked by mutation: break the fix, watch the test fail, restore it.
 - **End to end.** Tests that need the running stand — mock chain, real hosts, containers — live in [`devshard/e2e`](../../e2e/), named `TestE2E_Gateway…`, in the same `Test flow` format. `make -C devshard e2e` builds the images and runs them; [`devshard/e2e/README.md`](../../e2e/README.md) shows how to run one.
+- **End-to-end gates.** Every e2e test skips unless `DEVSHARD_E2E=1`, which the compose runner sets. Two more gates keep the long scenarios out of that default run, and the runner passes neither through, so set them on the run itself. `DEVSHARD_E2E_SLOW=1` adds the gateway scenarios that wait out a protocol deadline (`TestE2E_GatewayAccountsATimeoutItsVerifiersCouldNotDecide`, `TestE2E_GatewayAppliesTheTimeoutOfAHostThatReceiptsAndStalls`, `TestE2E_GatewayAccountsAStalledNonceEvenWhenTheGroupCallsItARefusal`) and the slow scenarios of the parity test. `DEVSHARD_E2E_PARITY=1` runs `TestE2E_DriverParity`, which boots the stand twice per scenario to compare devshardctl and the gateway on the same traffic. From the repository root, after `make -C devshard e2e-images`:
+
+  ```sh
+  docker compose -f devshard/docker-compose.e2e.yml run --rm -e DEVSHARD_E2E_SLOW=1 e2e-test go test ./e2e -run TestE2E_Gateway -count=1 -v -timeout 30m
+  docker compose -f devshard/docker-compose.e2e.yml run --rm -e DEVSHARD_E2E_PARITY=1 -e DEVSHARD_E2E_SLOW=1 e2e-test go test ./e2e -run TestE2E_DriverParity -count=1 -v -timeout 60m
+  ```
+
+  Drop `-e DEVSHARD_E2E_SLOW=1` from the second command to skip the parity scenarios that wait out a protocol deadline.
 
 ## Scenario harness
 

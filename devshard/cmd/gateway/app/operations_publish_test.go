@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"devshard/cmd/gateway/api"
-	"devshard/cmd/gateway/escrow"
 	"devshard/cmd/gateway/registry"
 	"devshard/cmd/gateway/store"
 )
@@ -112,11 +111,11 @@ func TestActivatingAParkedRowIsRefusedAndNotPublished(t *testing.T) {
 // Test flow:
 //  1. Open an empty store.
 //  2. Call operator.Activate for escrow 42, which has no row.
-//  3. Assert it returns ErrUnknownEscrow.
+//  3. Assert it returns ErrUnknownDevshard.
 func TestActivatingAnEscrowWithoutARowReportsItUnknown(t *testing.T) {
 	operator := &operations{store: openedStore(t), escrows: servingRegistry(t)}
 
-	if err := operator.Activate(t.Context(), "42"); !errors.Is(err, escrow.ErrUnknownEscrow) {
-		t.Fatalf("Activate(42) = %v, want ErrUnknownEscrow", err)
+	if err := operator.Activate(t.Context(), "42"); !errors.Is(err, api.ErrUnknownDevshard) {
+		t.Fatalf("Activate(42) = %v, want ErrUnknownDevshard", err)
 	}
 }

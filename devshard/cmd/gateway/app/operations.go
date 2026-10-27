@@ -96,6 +96,8 @@ type operations struct {
 	participants *limits.ParticipantLimiter
 	storageDir   string
 	nonces       *nonces.Recorder
+
+	writes sync.Map
 }
 
 // CreateEscrow takes the name of the variable holding the signing key, never the key. See operations.md, "What is exposed".
@@ -137,10 +139,15 @@ func (o *operations) ImportDevshard(ctx context.Context, request api.ImportDevsh
 	if err := refuseUnregistrable(record); err != nil {
 		return err
 	}
-	if err := o.refuseParked(ctx, record.EscrowID); err != nil {
+	defer o.lockWrites(record.EscrowID)()
+	existing, err := findDevshard(ctx, o.store, record.EscrowID)
+	if err != nil && !errors.Is(err, escrow.ErrUnknownEscrow) {
 		return err
 	}
-	if err := o.refuseServedStorage(ctx, record.EscrowID); err != nil {
+	if err := refuseParkedRecord(existing); err != nil {
+		return err
+	}
+	if err := o.refuseServedStorage(record.EscrowID, existing.Active); err != nil {
 		return err
 	}
 	storagePath, err := escrowStorage(o.storageDir, request.EscrowID)
@@ -153,11 +160,38 @@ func (o *operations) ImportDevshard(ctx context.Context, request api.ImportDevsh
 	return o.save(ctx, record)
 }
 
+// DeleteDevshard refuses a parked escrow, whose storage its settlement still needs, and one whose row is active or whose session the registry still holds.
+func (o *operations) DeleteDevshard(ctx context.Context, id string) error {
+	defer o.lockWrites(id)()
+	record, err := findDevshard(ctx, o.store, id)
+	if err != nil {
+		return unknownDevshard(id, err)
+	}
+	if isParked(record) {
+		return parkedError(escrow.ErrDevshardBusy, id)
+	}
+	if record.Active || o.escrows.HoldsSession(id) {
+		return fmt.Errorf("%w: %s", escrow.ErrDevshardBusy, id)
+	}
+	if err := o.store.DeleteDevshard(ctx, id); err != nil {
+		return unknownDevshard(id, err)
+	}
+	return removeDevshardStorage(api.DevshardStoragePath(o.storageDir, id), o.storageDir)
+}
+
 func (o *operations) register(ctx context.Context, record store.DevshardRecord) error {
 	if err := refuseUnregistrable(record); err != nil {
 		return err
 	}
+	defer o.lockWrites(record.EscrowID)()
 	return o.save(ctx, record)
+}
+
+func (o *operations) lockWrites(escrowID string) func() {
+	lock, _ := o.writes.LoadOrStore(escrowID, &sync.Mutex{})
+	writes := lock.(*sync.Mutex)
+	writes.Lock()
+	return writes.Unlock
 }
 
 func refuseUnregistrable(record store.DevshardRecord) error {
@@ -169,6 +203,11 @@ func refuseUnregistrable(record store.DevshardRecord) error {
 }
 
 func (o *operations) save(ctx context.Context, record store.DevshardRecord) error {
+	if !record.Active {
+		if err := o.escrows.Retire(record.EscrowID); err != nil {
+			return err
+		}
+	}
 	listing := o.escrows.Listing()
 	defer listing.Close()
 	written, err := o.store.UpsertDevshardUnlessParked(ctx, record)
@@ -176,53 +215,46 @@ func (o *operations) save(ctx context.Context, record store.DevshardRecord) erro
 		return err
 	}
 	if !written {
-		return parkedError(record.EscrowID)
+		return parkedError(api.ErrDevshardNotActivatable, record.EscrowID)
 	}
 	if !record.Active {
-		return nil
+		return o.escrows.Retire(record.EscrowID)
 	}
 	return addServing(ctx, listing, record)
 }
 
-func (o *operations) refuseServedStorage(ctx context.Context, id string) error {
-	existing, err := findDevshard(ctx, o.store, id)
-	if errors.Is(err, escrow.ErrUnknownEscrow) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if existing.Active || o.escrows.IsBusy(id) {
-		return fmt.Errorf("%w: escrow %s is serving", api.ErrDevshardExists, id)
+func (o *operations) refuseServedStorage(escrowID string, active bool) error {
+	if active || o.escrows.HoldsSession(escrowID) {
+		return fmt.Errorf("%w: escrow %s is serving", api.ErrDevshardExists, escrowID)
 	}
 	return nil
-}
-
-// refuseParked keeps an import from replacing the storage of a parked escrow before its write would refuse it.
-func (o *operations) refuseParked(ctx context.Context, id string) error {
-	existing, err := findDevshard(ctx, o.store, id)
-	if errors.Is(err, escrow.ErrUnknownEscrow) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	return refuseParkedRecord(existing)
 }
 
 // A parked escrow's balance is already committed: serving spends nonces the settlement misses.
 func refuseParkedRecord(record store.DevshardRecord) error {
-	if record.SettlementPending || record.SettleTxHash != "" {
-		return parkedError(record.EscrowID)
+	if isParked(record) {
+		return parkedError(api.ErrDevshardNotActivatable, record.EscrowID)
 	}
 	return nil
 }
 
-func parkedError(escrowID string) error {
-	return fmt.Errorf("%w: escrow %s is parked for settlement", api.ErrDevshardNotActivatable, escrowID)
+func unknownDevshard(escrowID string, err error) error {
+	if errors.Is(err, escrow.ErrUnknownEscrow) || errors.Is(err, store.ErrDevshardNotFound) {
+		return fmt.Errorf("%w: %s", api.ErrUnknownDevshard, escrowID)
+	}
+	return err
+}
+
+func isParked(record store.DevshardRecord) bool {
+	return record.SettlementPending || record.SettleTxHash != ""
+}
+
+func parkedError(refusal error, escrowID string) error {
+	return fmt.Errorf("%w: escrow %s is parked for settlement", refusal, escrowID)
 }
 
 func (o *operations) Activate(ctx context.Context, id string) error {
+	defer o.lockWrites(id)()
 	listing := o.escrows.Listing()
 	defer listing.Close()
 	activated, err := o.store.ActivateDevshardUnlessParked(ctx, id)
@@ -231,27 +263,36 @@ func (o *operations) Activate(ctx context.Context, id string) error {
 	}
 	record, err := findDevshard(ctx, o.store, id)
 	if err != nil {
-		return err
+		return unknownDevshard(id, err)
 	}
 	if !activated {
-		return parkedError(id)
+		return parkedError(api.ErrDevshardNotActivatable, id)
 	}
 	return addServing(ctx, listing, record)
 }
 
-// Deactivate and Settle stop routing before the row changes. See operations.md, "What is exposed".
+// Deactivate retires the escrow before and after writing its row inactive, as an inactive registration does. See ../README.md, "Admin operations".
 func (o *operations) Deactivate(ctx context.Context, id string) error {
+	defer o.lockWrites(id)()
 	if err := o.escrows.Retire(id); err != nil {
 		return err
 	}
-	return o.store.SetDevshardActive(ctx, id, false)
+	if err := o.store.SetDevshardActive(ctx, id, false); err != nil {
+		return unknownDevshard(id, err)
+	}
+	return o.escrows.Retire(id)
 }
 
 func (o *operations) Settle(ctx context.Context, id string, force bool) (chain.SettleEscrowResult, error) {
+	defer o.lockWrites(id)()
+	if _, err := findDevshard(ctx, o.store, id); err != nil {
+		return chain.SettleEscrowResult{}, unknownDevshard(id, err)
+	}
 	if err := o.escrows.Retire(id); err != nil {
 		return chain.SettleEscrowResult{}, err
 	}
-	return o.manager.Settle(ctx, id, force)
+	result, err := o.manager.Settle(ctx, id, force)
+	return result, unknownDevshard(id, err)
 }
 
 func (o *operations) Unquarantine(_ context.Context, participantKey string) error {
@@ -276,9 +317,9 @@ func (o *operations) Reconfigure(ctx context.Context, overrides config.Overrides
 	o.config.Swap(next)
 	return nil
 }
-func escrowID(created uint64) string { return fmt.Sprintf("%d", created) }
+func escrowID(created uint64) string { return strconv.FormatUint(created, 10) }
 
 func isChainEscrowID(id string) bool {
 	parsed, err := strconv.ParseUint(id, 10, 64)
-	return err == nil && strconv.FormatUint(parsed, 10) == id
+	return err == nil && escrowID(parsed) == id
 }

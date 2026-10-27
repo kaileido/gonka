@@ -1023,66 +1023,6 @@ func TestWaitForReportsNothingWhenTheDrainFinishesInTime(t *testing.T) {
 	assertSame(t, "drained components", sequence, []string{"races"})
 }
 
-// settleObserver reports what routing still offered at the moment the chain settlement began.
-type settleObserver struct {
-	escrows          *registry.Registry
-	failure          error
-	routableAtSettle bool
-}
-
-func (s *settleObserver) CreateEscrow(context.Context, escrow.ModelConfig) (chain.CreateEscrowResult, error) {
-	return chain.CreateEscrowResult{}, nil
-}
-
-func (s *settleObserver) Settle(_ context.Context, escrowID string, _ bool) (chain.SettleEscrowResult, error) {
-	_, s.routableAtSettle = s.escrows.RoutableSession(escrowID)
-	return chain.SettleEscrowResult{}, s.failure
-}
-
-// Test flow:
-//  1. For a settlement that succeeds and one the chain refuses, build a registry with one active escrow and an operator wrapping a settle observer.
-//  2. Call operator.Settle for that escrow.
-//  3. Assert the returned error matches the case's failure.
-//  4. Assert the escrow was not routable at the moment settlement began.
-//  5. Assert the escrow is not routable after Settle returns.
-func TestSettleStopsRoutingBeforeTheChainSettlementAndLeavesItRetiredWhenItFails(t *testing.T) {
-	testCases := []struct {
-		name    string
-		failure error
-	}{
-		{name: "a settlement that succeeds"},
-		{name: "a settlement the chain refused", failure: errors.New("broadcast refused")},
-	}
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			escrows := registry.New(registry.Deps{
-				ServingSessions: func(context.Context, string) (registry.EscrowSession, error) {
-					return weightlessSession{participants: []string{"validator-a"}}, nil
-				},
-				Now: time.Now,
-			})
-			t.Cleanup(func() { escrows.Close() })
-			if err := escrows.Add(context.Background(), "escrow-1", "model-a"); err != nil {
-				t.Fatalf("Add(): %v", err)
-			}
-			settler := &settleObserver{escrows: escrows, failure: testCase.failure}
-			operator := &operations{escrows: escrows, manager: settler}
-
-			_, err := operator.Settle(context.Background(), "escrow-1", false)
-
-			if !errors.Is(err, testCase.failure) {
-				t.Fatalf("Settle() = %v, want %v", err, testCase.failure)
-			}
-			if settler.routableAtSettle {
-				t.Error("the escrow was still routable when the settlement began: a nonce can land after the payload was built")
-			}
-			if _, routable := escrows.RoutableSession("escrow-1"); routable {
-				t.Error("the escrow is routable after the settle: it claims funds against nonces routing can still spend")
-			}
-		})
-	}
-}
-
 func openedStore(t *testing.T) *store.Store {
 	t.Helper()
 	records, err := store.Open(t.TempDir())
