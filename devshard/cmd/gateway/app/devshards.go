@@ -448,8 +448,8 @@ func seedDevshards(ctx context.Context, records devshardRegistry, raw string) er
 	}
 	for _, seed := range seeds {
 		switch {
-		case strings.TrimSpace(seed.EscrowID) == "":
-			return fmt.Errorf("seed devshard: id is required")
+		case !isChainEscrowID(seed.EscrowID):
+			return fmt.Errorf("seed devshard: %w: %q", api.ErrInvalidEscrowID, seed.EscrowID)
 		case strings.TrimSpace(seed.Model) == "":
 			return fmt.Errorf("seed devshard %s: model is required", seed.EscrowID)
 		case strings.TrimSpace(seed.PrivateKeyEnv) == "":

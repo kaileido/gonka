@@ -196,3 +196,94 @@ func TestReimportingAnInactiveEscrowReplacesItsStorage(t *testing.T) {
 		t.Errorf("epoch file = %q, want %q", got, importedState)
 	}
 }
+
+// Test flow:
+//  1. Register escrow 42 active, so the registry routes it.
+//  2. Register escrow 42 again with Activate false.
+//  3. Assert the registry no longer routes escrow 42 and its stored row is inactive.
+func TestRegisteringALiveEscrowInactiveStopsRoutingIt(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("DEVSHARD_IMPORT_KEY", "0x01")
+	records := openedStore(t)
+	escrows := servingRegistry(t)
+	operator := &operations{store: records, escrows: escrows, storageDir: t.TempDir()}
+	if err := operator.AddDevshard(ctx, api.AddDevshardRequest{EscrowID: "42", Model: "model-a", PrivateKeyEnv: "DEVSHARD_IMPORT_KEY", Activate: true}); err != nil {
+		t.Fatalf("AddDevshard(active) = %v, want nil", err)
+	}
+
+	if err := operator.AddDevshard(ctx, api.AddDevshardRequest{EscrowID: "42", Model: "model-a", PrivateKeyEnv: "DEVSHARD_IMPORT_KEY"}); err != nil {
+		t.Fatalf("AddDevshard(inactive) = %v, want nil", err)
+	}
+
+	if _, routable := escrows.Routable("42"); routable {
+		t.Error("escrow 42 is still routable after an inactive registration")
+	}
+	if storedDevshard(t, records, "42").Active {
+		t.Error("escrow 42's row is active after an inactive registration")
+	}
+}
+
+// Test flow:
+//  1. Store an inactive row for escrow 42, publish it in the registry anyway, and write its live epoch file.
+//  2. Import escrow 42 from a source directory holding a different epoch file.
+//  3. Assert the import returns ErrDevshardExists.
+//  4. Assert the routed escrow's epoch file still holds its live state.
+func TestAnImportOfAnEscrowTheRegistryRoutesIsRefusedWhateverItsRow(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("DEVSHARD_IMPORT_KEY", "0x01")
+	records := openedStore(t)
+	storageDir := t.TempDir()
+	if err := records.UpsertDevshard(ctx, store.DevshardRecord{EscrowID: "42", PrivateKeyEnv: "DEVSHARD_IMPORT_KEY", Model: "model-a"}); err != nil {
+		t.Fatalf("UpsertDevshard(): %v", err)
+	}
+	escrows := servingRegistry(t)
+	if err := escrows.Add(ctx, "42", "model-a"); err != nil {
+		t.Fatalf("Add(): %v", err)
+	}
+	livePath := liveSession(t, storageDir, "42")
+	operator := &operations{store: records, escrows: escrows, storageDir: storageDir}
+
+	err := operator.ImportDevshard(ctx, api.ImportDevshardRequest{EscrowID: "42", SourcePath: sessionSource(t), PrivateKeyEnv: "DEVSHARD_IMPORT_KEY", Model: "model-a"})
+
+	if !errors.Is(err, api.ErrDevshardExists) {
+		t.Fatalf("ImportDevshard(routed) = %v, want ErrDevshardExists", err)
+	}
+	if got := fileContents(t, livePath); got != liveSessionState {
+		t.Errorf("routed escrow's epoch file = %q, want %q", got, liveSessionState)
+	}
+}
+
+// Test flow:
+//  1. Register escrow 42 active, write its live epoch file, and hold its session for settlement as an admin finalize or state read does.
+//  2. Deactivate escrow 42, then import it from a source holding a different epoch file.
+//  3. Assert the import returns ErrDevshardExists.
+//  4. Assert the held session's epoch file still holds its live state.
+func TestAnImportRefusesAnEscrowWhoseSessionIsHeldForSettlement(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("DEVSHARD_IMPORT_KEY", "0x01")
+	records := openedStore(t)
+	storageDir := t.TempDir()
+	escrows := servingRegistry(t)
+	operator := &operations{store: records, escrows: escrows, storageDir: storageDir}
+	if err := operator.AddDevshard(ctx, api.AddDevshardRequest{EscrowID: "42", Model: "model-a", PrivateKeyEnv: "DEVSHARD_IMPORT_KEY", Activate: true}); err != nil {
+		t.Fatalf("AddDevshard(active) = %v", err)
+	}
+	livePath := liveSession(t, storageDir, "42")
+	_, release, held := escrows.HoldSettlement("42")
+	if !held {
+		t.Fatal("HoldSettlement(42) = false")
+	}
+	defer release()
+	if err := operator.Deactivate(ctx, "42"); err != nil {
+		t.Fatalf("Deactivate = %v", err)
+	}
+
+	err := operator.ImportDevshard(ctx, api.ImportDevshardRequest{EscrowID: "42", SourcePath: sessionSource(t), PrivateKeyEnv: "DEVSHARD_IMPORT_KEY", Model: "model-a"})
+
+	if !errors.Is(err, api.ErrDevshardExists) {
+		t.Errorf("ImportDevshard(held for settlement) = %v, want ErrDevshardExists", err)
+	}
+	if got := fileContents(t, livePath); got != liveSessionState {
+		t.Errorf("held session's epoch file = %q, want %q", got, liveSessionState)
+	}
+}

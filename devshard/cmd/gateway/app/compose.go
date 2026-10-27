@@ -154,6 +154,7 @@ type gateway struct {
 
 	builders     int
 	devshardWork chan struct{}
+	bootSteps    func(g *gateway, ctx, backgroundCtx context.Context, settings *config.Config, started *bootState) []bootStep
 }
 
 func compose(ctx context.Context, values env.Values, storageDir string, gatewayStore *store.Store, openSessions sessionSources) (*gateway, error) {
@@ -240,27 +241,7 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 	})
 	hosts := perf.NewTracker(configHolder, clock)
 	hosts.SetNarrator(events)
-	recorder.SetCapability(func(participant, model string) accounting.HostCapability {
-		contextLimit, versionRefusals, toolRefusals, contextRefusals := hosts.Capability(participant, model)
-		capability := accounting.HostCapability{
-			ProtocolVersionUnsupported: versionRefusals > 0,
-			ToolChoiceUnsupported:      toolRefusals > 0,
-			ContextLimit:               contextLimit,
-			VersionRefusals:            versionRefusals,
-			ToolRefusals:               toolRefusals,
-			ContextRefusals:            contextRefusals,
-			OutputOverruns:             hosts.OutputOverruns(participant, model),
-		}
-		if window, tracked := participants.WindowFor(participant, model); tracked {
-			capability.InputWindowTokens = uint64(max(window.InputWindowTokens, 0))
-			capability.OutputWindowTokens = uint64(max(window.OutputWindowTokens, 0))
-			capability.InflightInputTokens = uint64(max(window.InflightInputTokens, 0))
-			capability.InflightOutputTokens = uint64(max(window.InflightOutputTokens, 0))
-			capability.WindowCutoff = string(window.Cutoff)
-			capability.WindowWeight = uint64(max(capacity.ParticipantWeight(participant, model), 0))
-		}
-		return capability
-	})
+	recorder.SetCapability(hostCapabilities(hosts, participants, capacity))
 
 	devshardWork := make(chan struct{}, 1)
 	depletion := &depletionNotice{}
@@ -424,7 +405,7 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 	// Registered after the server, which owns both sinks. See ../README.md, "Wiring order, and the knots in it".
 	telemetry.Register(metrics.NewCaptureCollector(server))
 	telemetry.Register(metrics.NewCacheCollector(server))
-	httpServer, cancelRequests := server.HTTPServer(fmt.Sprintf(":%d", configuration.Server.Port))
+	httpServer, endRequests := server.HTTPServer(fmt.Sprintf(":%d", configuration.Server.Port))
 
 	built = true
 	return &gateway{
@@ -440,7 +421,7 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 		participants: participants,
 		telemetry:    telemetry,
 		server:       httpServer,
-		endRequests:  cancelRequests,
+		endRequests:  endRequests,
 		publicAPI:    publicAPI,
 		nonces:       recorder,
 		events:       events,
@@ -451,7 +432,32 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 		hosts:        sources.Hosts,
 		builders:     boot.builders,
 		devshardWork: devshardWork,
+		bootSteps:    (*gateway).bootOrder,
 	}, nil
+}
+
+func hostCapabilities(hosts *perf.Tracker, participants *limits.ParticipantLimiter, capacity *limits.Capacity) accounting.CapabilityFunc {
+	return func(participant, model string) accounting.HostCapability {
+		contextLimit, versionRefusals, toolRefusals, contextRefusals := hosts.Capability(participant, model)
+		capability := accounting.HostCapability{
+			ProtocolVersionUnsupported: versionRefusals > 0,
+			ToolChoiceUnsupported:      toolRefusals > 0,
+			ContextLimit:               contextLimit,
+			VersionRefusals:            versionRefusals,
+			ToolRefusals:               toolRefusals,
+			ContextRefusals:            contextRefusals,
+			OutputOverruns:             hosts.OutputOverruns(participant, model),
+		}
+		if window, tracked := participants.WindowFor(participant, model); tracked {
+			capability.InputWindowTokens = uint64(max(window.InputWindowTokens, 0))
+			capability.OutputWindowTokens = uint64(max(window.OutputWindowTokens, 0))
+			capability.InflightInputTokens = uint64(max(window.InflightInputTokens, 0))
+			capability.InflightOutputTokens = uint64(max(window.InflightOutputTokens, 0))
+			capability.WindowCutoff = string(window.Cutoff)
+			capability.WindowWeight = uint64(max(capacity.ParticipantWeight(participant, model), 0))
+		}
+		return capability
+	}
 }
 
 type environmentSigner struct{}

@@ -3,7 +3,6 @@ package api
 import (
 	"fmt"
 	"net/http"
-	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -256,16 +255,4 @@ func (s *Server) handleDebugMemstats(w http.ResponseWriter, r *http.Request) {
 		"num_goroutine":   runtime.NumGoroutine(),
 		"gc_cpu_fraction": memory.GCCPUFraction,
 	})
-}
-
-func normalizeStorageDir(storagePath string) string {
-	storagePath = strings.TrimSpace(storagePath)
-	if storagePath == "" {
-		return ""
-	}
-	clean := filepath.Clean(storagePath)
-	if filepath.Base(clean) == "state.db" {
-		return filepath.Dir(clean)
-	}
-	return clean
 }

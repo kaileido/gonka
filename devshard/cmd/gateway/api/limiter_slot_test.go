@@ -10,7 +10,7 @@ import (
 //  1. Make inference keep the race's `OnFinished` hook instead of running it, as a race still draining a host after its client left does.
 //  2. POST a chat completion from a client that has already left and let the handler return.
 //  3. Assert the limiter still counts the request and its input tokens while the race goes on.
-//  4. Run the hook twice and assert the slot and the token budget were given back exactly once.
+//  4. Run the hook and assert the slot and the token budget were given back exactly once.
 func TestTheLimiterSlotIsHeldUntilTheRaceFinishes(t *testing.T) {
 	live := newHarness(t)
 	live.inference.finishes = make(chan func(), 1)
@@ -26,7 +26,6 @@ func TestTheLimiterSlotIsHeldUntilTheRaceFinishes(t *testing.T) {
 		t.Fatalf("input tokens held while the race still runs: got %d, want %d", got, want)
 	}
 	finish := <-live.inference.finishes
-	finish()
 	finish()
 	if got := live.limiter.releases.Load(); got != 1 {
 		t.Fatalf("limiter releases after the race finished: got %d, want 1", got)

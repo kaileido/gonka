@@ -13,10 +13,11 @@ import (
 	"devshard/logging"
 )
 
-// Step 1 lets requests finish for httpGracefulShare and then cancels the ones still open, waiting at most httpCancelledWait, so the steps below keep half the grace period; journalCloseFloor lets the journal drain after a step above it spent the budget. See operations.md, "Shutdown".
+// Step 1 lets requests finish for httpGracefulShare and then cancels the ones still open, waiting at most httpCancelledWait, so the steps below keep laterStepsReserve of the grace period; journalCloseFloor lets the journal drain after a step above it spent the budget. See operations.md, "Shutdown".
 const (
 	httpCancelledWait = time.Second
-	httpGracefulShare = shutdownGracePeriod/2 - httpCancelledWait
+	laterStepsReserve = 5 * time.Second
+	httpGracefulShare = shutdownGracePeriod - laterStepsReserve - httpCancelledWait
 	journalCloseFloor = time.Second
 )
 
@@ -26,8 +27,8 @@ func (g *gateway) serve(ctx context.Context) error {
 
 	configuration := g.config.Load()
 	var started bootState
-	if err := startAll(g.bootOrder(ctx, backgroundCtx, configuration, &started)); err != nil {
-		return errors.Join(err, g.shutdown(shutdownGracePeriod))
+	if err := startAll(g.bootSteps(g, ctx, backgroundCtx, configuration, &started)); err != nil {
+		return errors.Join(err, stopThenShutDown(stopBackground, g.shutdown))
 	}
 	engine := configuration.Engine
 	logging.Info("gateway started",
@@ -46,8 +47,7 @@ func (g *gateway) serve(ctx context.Context) error {
 	case listenErr = <-started.listening:
 	case <-ctx.Done():
 	}
-	stopBackground()
-	shutdownErr := g.shutdown(shutdownGracePeriod)
+	shutdownErr := stopThenShutDown(stopBackground, g.shutdown)
 	<-started.republished
 	if listenErr == nil {
 		listenErr = <-started.listening
@@ -57,6 +57,11 @@ func (g *gateway) serve(ctx context.Context) error {
 	}
 	logging.Info("gateway stopped")
 	return shutdownErr
+}
+
+func stopThenShutDown(stopBackground context.CancelFunc, shutdown func(time.Duration) error) error {
+	stopBackground()
+	return shutdown(shutdownGracePeriod)
 }
 
 // bootState carries out of the boot steps what serve blocks on once they have all run.
@@ -124,7 +129,7 @@ type idleConnections interface{ CloseIdleConnections() }
 
 type shutdownParts struct {
 	listener        httpListener
-	endRequests     func()
+	endRequests     context.CancelFunc
 	races           stopper
 	dispatchers     stopper
 	escrowLifecycle stopper
@@ -161,7 +166,7 @@ func shutdownOrder(parts shutdownParts) []shutdownStep {
 	}
 }
 
-func stopListener(listener httpListener, endRequests func()) func(context.Context) error {
+func stopListener(listener httpListener, endRequests context.CancelFunc) func(context.Context) error {
 	return func(ctx context.Context) error {
 		bounded, cancelBounded := context.WithTimeout(ctx, httpGracefulShare+httpCancelledWait)
 		defer cancelBounded()
@@ -250,7 +255,11 @@ func stopAll(ctx context.Context, steps []shutdownStep) error {
 func (g *gateway) shutdown(grace time.Duration) error {
 	drainCtx, cancelDrain := context.WithTimeout(context.Background(), grace)
 	defer cancelDrain()
-	return stopAll(drainCtx, shutdownOrder(shutdownParts{
+	return stopAll(drainCtx, shutdownOrder(g.partsToStop()))
+}
+
+func (g *gateway) partsToStop() shutdownParts {
+	return shutdownParts{
 		listener:        g.server,
 		endRequests:     g.endRequests,
 		races:           g.races,
@@ -265,7 +274,7 @@ func (g *gateway) shutdown(grace time.Duration) error {
 		heightFollower:  g.heights,
 		storage:         g.store,
 		publicAPI:       g.publicAPI,
-	}))
+	}
 }
 
 // bootBudget sizes the build limit and the idle pool those builds reuse together. See ../README.md, "Wiring order, and the knots in it".

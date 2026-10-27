@@ -8,7 +8,8 @@ The only package that speaks HTTP to a client, and the one that decides what a f
 | --- | --- |
 | `routes.go`, `server.go` | the route table and the server; every route names its own label and whether the operator kill switch exempts it |
 | `middleware.go` | authentication, body limits, request ids |
-| `admission.go` | the limiter slot and the token budget a request takes before it is raced |
+| `admission.go` | the chain check a request passes before it is queued |
+| `limiter_slot.go` | the limiter slot and token budget a request holds until both its handler and its race are done |
 | `stream.go` | `clientStream`: the writer the race streams through, and the fold for a non-streaming client |
 | `buffer_budget.go` | the ceiling on the bytes every non-streaming reply holds at once |
 | `cache.go` | the response cache, keyed on everything that varies the answer |
@@ -154,7 +155,7 @@ These keys are fixed: an escrow is `id` in `/v1/status`, `/v1/admin/state` and t
 
 `badRequestUnlessOversized` keeps an ingest-cap rejection at 413 while every other decode failure is treated as the client's malformed body.
 
-`DevshardStoragePath` is where one escrow's session keeps its SQLite files, and sessions and the delete route must derive it the same way. `removeDevshardStorage` guards `os.RemoveAll` on a path derived from a client-supplied escrow id: it refuses any path outside the base storage dir, and the base dir itself.
+`DevshardStoragePath` is where one escrow's session keeps its SQLite files, and sessions and the delete route must derive it the same way.
 
 `escrowInspection` is one escrow's state as an operator reads it while recovering a stuck devshard. Live and sealed inferences are counted apart because sealing drains records out of the live map, so the live tail alone reads as a whole history and is off by the escrow's entire lifetime. `unresolved` marks the inferences that have not produced a result yet — the ones holding a stuck escrow short of settlement.
 

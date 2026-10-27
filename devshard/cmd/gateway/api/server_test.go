@@ -185,16 +185,10 @@ type fakeControl struct {
 	overrides config.Overrides
 	rotation  []store.RotationStatus
 	listErr   error
-	deleted   []string
 }
 
 func (f *fakeControl) ListDevshards(context.Context) ([]store.DevshardRecord, error) {
 	return f.devshards, f.listErr
-}
-
-func (f *fakeControl) DeleteDevshard(_ context.Context, escrowID string) error {
-	f.deleted = append(f.deleted, escrowID)
-	return nil
 }
 
 func (f *fakeControl) LoadOverrides(context.Context) (config.Overrides, error) {
@@ -216,6 +210,7 @@ type fakeOperations struct {
 	created     []CreateEscrowRequest
 	added       []AddDevshardRequest
 	imported    []ImportDevshardRequest
+	deleted     []string
 	deactivated []string
 	applied     config.Overrides
 }
@@ -260,6 +255,13 @@ func (f *fakeOperations) ImportDevshard(_ context.Context, request ImportDevshar
 	f.imported = append(f.imported, request)
 	f.mu.Unlock()
 	return f.record("import")
+}
+
+func (f *fakeOperations) DeleteDevshard(_ context.Context, escrowID string) error {
+	f.mu.Lock()
+	f.deleted = append(f.deleted, escrowID)
+	f.mu.Unlock()
+	return f.record("delete")
 }
 
 func (f *fakeOperations) Activate(context.Context, string) error { return f.record("activate") }
@@ -582,7 +584,6 @@ func TestEveryRouteAnswersItsDocumentedStatus(t *testing.T) {
 		{name: "admin import without a key variable", method: http.MethodPost, target: "/v1/admin/devshards/import", body: `{"id":"11","source_path":"/tmp/x"}`, headers: adminHeaders(), want: http.StatusBadRequest},
 
 		{name: "admin delete inactive", method: http.MethodDelete, target: "/v1/admin/devshards/7", headers: adminHeaders(), want: http.StatusOK},
-		{name: "admin delete active", method: http.MethodDelete, target: "/v1/admin/devshards/9", headers: adminHeaders(), want: http.StatusConflict},
 		{name: "admin delete unknown", method: http.MethodDelete, target: "/v1/admin/devshards/404", headers: adminHeaders(), want: http.StatusNotFound},
 		{name: "admin delete wrong method", method: http.MethodGet, target: "/v1/admin/devshards/7", headers: adminHeaders(), want: http.StatusMethodNotAllowed},
 

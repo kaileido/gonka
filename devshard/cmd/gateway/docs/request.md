@@ -19,7 +19,7 @@ One `POST /v1/chat/completions`, from the socket to the settled nonce. Every ste
 | 9 | count the prompt once when `DEVSHARD_STATS_TOKENIZER` is on, take an admission slot and token budget | `countPrompt`, then `limiter.AcquireForModel` | 429 |
 | 10 | does the chain phase still admit new work | `admission` again, on a fresh snapshot: the limiter can hold a request for minutes, and a block that began meanwhile must not get a nonce | 503 |
 | 11 | race it | `race` → `engine.Run` | see below |
-| 12 | release the slot | `limiterSlot` (`api/admission.go`): `limiter.ReleaseForModel` once the handler has returned and the race has run `engine.Request.OnFinished` | — |
+| 12 | release the slot | `limiterSlot` (`api/limiter_slot.go`): `limiter.ReleaseForModel` once the handler has returned and the race has run `engine.Request.OnFinished` | — |
 
 Steps 4–7 run **after** normalisation because the model name is only known once the body is parsed and the per-model profile applied.
 

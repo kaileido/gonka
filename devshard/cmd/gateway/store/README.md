@@ -56,7 +56,7 @@ A row names the escrow, the environment variable holding the key that can act on
 - `settle_tx_hash`, which only `SetDevshardSettleTxHash` writes, beside the `settle_tx_at` stamp it is read against, so a re-registration can neither erase a broadcast hash nor leave a stamp for a hash it erased;
 - `route_prefix`, because a host binds an escrow to the first version that reaches it and refuses every other one for good, so the version an escrow was created under must never change;
 - `chain_epoch` and `amount`, which only `SetDevshardChainFacts` writes, from the chain's own answer; a re-registration cannot clear them, and a zero passed to `SetDevshardChainFacts` leaves its column as it was;
-- `gone_from_chain`, which only `MarkDevshardGoneFromChain` sets, in the same statement that clears `active`. Every statement that writes `active = 1` clears it in the same write — `SetDevshardActive(true)`, and an upsert that writes `active = 1` — so a row an operator reactivates is no longer gone, and a later park settles it like any other row.
+- `gone_from_chain`, which only `MarkDevshardGoneFromChain` sets, in the same statement that clears `active`. Every statement that writes `active = 1` clears it in the same write — `ActivateDevshardUnlessParked`, the operator's activation; `SetDevshardActive(true)`; and an upsert through `UpsertDevshard` or `UpsertDevshardUnlessParked` that writes `active = 1` — so a row an operator reactivates is no longer gone, and a later park settles it like any other row.
 
 Its statement is a named constant so a test can read which columns the update carries: a field present in `DevshardRecord` but absent from that statement is inserted once and never updated again, and no other code in the package fails on it.
 

@@ -65,7 +65,7 @@ func TestMarkingARowGoneFromChainTakesItOutOfServiceInOneWrite(t *testing.T) {
 }
 
 // Test flow:
-//  1. Table-driven: each case is one statement that puts a row back into service (`SetDevshardActive` to true, `UpsertDevshard` with active set), plus an upsert that keeps the row inactive.
+//  1. Table-driven: each case is one statement that puts a row back into service (`ActivateDevshardUnlessParked`, `SetDevshardActive` to true, `UpsertDevshard` or `UpsertDevshardUnlessParked` with active set), plus an upsert that keeps the row inactive.
 //  2. For each case, register a row, mark it gone from chain, then run the case's statement.
 //  3. Assert the mark is cleared exactly when the statement reactivated the row.
 func TestReactivatingARowGoneFromChainClearsTheMark(t *testing.T) {
@@ -74,11 +74,19 @@ func TestReactivatingARowGoneFromChainClearsTheMark(t *testing.T) {
 		statement func(*Store) error
 		wantGone  bool
 	}{
+		{name: "ActivateDevshardUnlessParked", statement: func(testStore *Store) error {
+			_, err := testStore.ActivateDevshardUnlessParked(context.Background(), "9")
+			return err
+		}},
 		{name: "SetDevshardActive", statement: func(testStore *Store) error {
 			return testStore.SetDevshardActive(context.Background(), "9", true)
 		}},
 		{name: "UpsertDevshard active", statement: func(testStore *Store) error {
 			return testStore.UpsertDevshard(context.Background(), DevshardRecord{EscrowID: "9", Model: "qwen", Active: true, RotationRole: "regular"})
+		}},
+		{name: "UpsertDevshardUnlessParked active", statement: func(testStore *Store) error {
+			_, err := testStore.UpsertDevshardUnlessParked(context.Background(), DevshardRecord{EscrowID: "9", Model: "qwen", Active: true, RotationRole: "regular"})
+			return err
 		}},
 		{name: "UpsertDevshard inactive", wantGone: true, statement: func(testStore *Store) error {
 			return testStore.UpsertDevshard(context.Background(), DevshardRecord{EscrowID: "9", Model: "qwen", RotationRole: "regular"})

@@ -57,11 +57,11 @@ func (m *memoryModelFilterStore) DeleteModelFilter(_ context.Context, model stri
 	return nil
 }
 
-func fixedFilterClock() time.Time { return time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC) }
+func fixedClock() time.Time { return time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC) }
 
 func newTestModelFilters(t *testing.T, rows *memoryModelFilterStore) *modelFilters {
 	t.Helper()
-	registry, err := newModelFilters(context.Background(), rows, fixedFilterClock)
+	registry, err := newModelFilters(context.Background(), rows, fixedClock)
 	if err != nil {
 		t.Fatalf("newModelFilters(): %v", err)
 	}

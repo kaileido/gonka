@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -93,18 +92,20 @@ func (s *Server) handleAdminDevshardDelete(w http.ResponseWriter, r *http.Reques
 		s.writeErrorFor(w, fmt.Errorf("%w: %s", ErrUnknownDevshard, escrowID))
 		return
 	}
-	if record.Active || s.escrows.IsBusy(escrowID) {
-		s.writeErrorFor(w, fmt.Errorf("%w: %s", escrow.ErrDevshardBusy, escrowID))
+	err = s.operations.DeleteDevshard(r.Context(), escrowID)
+	if isDeleteRefusal(err) {
+		s.writeErrorFor(w, err)
 		return
 	}
-	if writeControlFailure(w, s.control.DeleteDevshard(r.Context(), escrowID)) {
-		return
-	}
-	if writeControlFailure(w, removeDevshardStorage(DevshardStoragePath(s.storageDir, escrowID), s.storageDir)) {
+	if writeControlFailure(w, err) {
 		return
 	}
 	auditAdmin("escrow deleted with its session storage", "escrow", escrowID, "model", record.Model)
 	writeJSON(w, http.StatusOK, map[string]any{"id": escrowID, "deleted": true})
+}
+
+func isDeleteRefusal(err error) bool {
+	return errors.Is(err, ErrUnknownDevshard) || errors.Is(err, escrow.ErrDevshardBusy)
 }
 
 func (s *Server) handleAdminDevshardActivate(w http.ResponseWriter, r *http.Request) {
@@ -256,20 +257,4 @@ const DevshardStoragePrefix = "escrow-"
 // DevshardStoragePath: sessions, the delete route and session retention must derive it the same way. See operations.md, "What is exposed".
 func DevshardStoragePath(baseStorageDir, escrowID string) string {
 	return filepath.Join(baseStorageDir, DevshardStoragePrefix+escrowID)
-}
-
-// removeDevshardStorage guards os.RemoveAll on a client-supplied escrow id. See operations.md, "What is exposed".
-func removeDevshardStorage(storagePath, baseStorageDir string) error {
-	if strings.TrimSpace(storagePath) == "" {
-		return nil
-	}
-	storagePath = normalizeStorageDir(storagePath)
-	baseStorageDir = filepath.Clean(baseStorageDir)
-	if !strings.HasPrefix(storagePath, baseStorageDir+string(os.PathSeparator)) && storagePath != baseStorageDir {
-		return fmt.Errorf("refusing to delete storage outside base dir: %s", storagePath)
-	}
-	if storagePath == baseStorageDir {
-		return fmt.Errorf("refusing to delete base storage dir: %s", storagePath)
-	}
-	return os.RemoveAll(storagePath)
 }
