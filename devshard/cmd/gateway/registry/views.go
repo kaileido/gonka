@@ -9,6 +9,8 @@ import (
 	"devshard/cmd/gateway/scheduler"
 )
 
+const unknownChainMaxNonce uint32 = 0
+
 // Candidates satisfies scheduler.escrowSource.
 func (r *Registry) Candidates(model string) []scheduler.Escrow {
 	entries := r.live.Load().byModel[model]
@@ -247,9 +249,12 @@ func (r *Registry) Holds(escrowID string) uint64 {
 	return entry.holds.Load()
 }
 
-// ShareChainMaxNonce hands every published and draining session the chain's max_nonce. See README.md.
+// ShareChainMaxNonce hands every published and draining session, and every serving session opened later, the chain's max_nonce. See README.md.
 func (r *Registry) ShareChainMaxNonce(maxNonce uint64) {
 	capped := uint32(min(maxNonce, math.MaxUint32))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.chainMaxNonce.Store(capped)
 	for _, entry := range r.live.Load().ordered {
 		entry.session.SetChainMaxNonce(capped)
 	}
@@ -258,6 +263,11 @@ func (r *Registry) ShareChainMaxNonce(maxNonce uint64) {
 			entry.session.SetChainMaxNonce(capped)
 		}
 	}
+}
+
+func (r *Registry) withChainMaxNonceLocked(session EscrowSession) EscrowSession {
+	session.SetChainMaxNonce(r.chainMaxNonce.Load())
+	return session
 }
 
 // HostDials is every address the live escrows can reach, once each. See README.md.

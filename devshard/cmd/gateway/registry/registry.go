@@ -62,8 +62,9 @@ type Registry struct {
 	peerRPC          peerRPCAdoption
 	now              func() time.Time
 
-	live         atomic.Pointer[liveSet]
-	drainingView atomic.Pointer[[]*escrowEntry]
+	live          atomic.Pointer[liveSet]
+	drainingView  atomic.Pointer[[]*escrowEntry]
+	chainMaxNonce atomic.Uint32
 
 	openings sync.Map
 
@@ -190,7 +191,7 @@ func (r *Registry) add(ctx context.Context, escrowID, model string, flags entryF
 		return nil
 	}
 
-	session, err := r.servingSessions(ctx, escrowID)
+	session, err := r.openServingSession(ctx, escrowID)
 	if err != nil {
 		return fmt.Errorf("opening serving session for escrow %s: %w", escrowID, err)
 	}
@@ -212,7 +213,7 @@ func (r *Registry) add(ctx context.Context, escrowID, model string, flags entryF
 	if _, alreadyLive := published.byID[escrowID]; alreadyLive {
 		return session.Close()
 	}
-	entry := newEscrowEntry(escrowID, model, r.sessions.Add(1), session, r.now)
+	entry := newEscrowEntry(escrowID, model, r.sessions.Add(1), r.withChainMaxNonceLocked(session), r.now)
 	entry.isReserve.Store(flags.isReserve)
 	entry.hold = r.holdFor(entry)
 	entry.rescueHold = r.escalationHoldFor(entry)

@@ -49,7 +49,7 @@ type sweepResult struct {
 }
 
 // Test flow:
-//  1. Publish a real escrow session whose host votes block until released, with one record confirmed two hours ago and one overdue by a quarter of a 120 s race grace.
+//  1. Publish a real escrow session whose host votes block until released, with one record confirmed two hours ago and one overdue by a quarter of a 120 s race grace, and share the chain's max_nonce.
 //  2. Run the periodic sweep with that grace and wait until it is mid-vote on the first record, holding the escrow's finalize lock.
 //  3. Run the pre-finalize sweep on a context that signals when it is waited on; assert the sweep waits on it instead of returning.
 //  4. Release the votes; assert the periodic sweep voted the first record alone and the pre-finalize sweep then voted the second.
@@ -59,10 +59,11 @@ func TestThePreFinalizeSweepWaitsForAPeriodicSweepAndVotesWithNoGrace(t *testing
 	escrow := publishVotingEscrow(t, func(voter acceptingVoter) user.HostClient {
 		return gatedVoter{acceptingVoter: voter, entered: entered, enteredOnce: once, release: release}
 	})
+	escrow.registry.ShareChainMaxNonce(1_700)
 	balance := escrow.machine.Balance()
 	const grace = 120 * time.Second
-	overdueNonce := startedConfirmedAt(t, escrow, time.Now().Add(-2*time.Hour).Unix())
-	insideGraceNonce := startedConfirmedAt(t, escrow, overdueInsideGrace(grace))
+	overdueNonce := startedConfirmedAt(t, escrow, time.Now().Add(-2*time.Hour).Unix(), false)
+	insideGraceNonce := startedConfirmedAt(t, escrow, overdueInsideGrace(grace), false)
 	periodic := make(chan [3]int, 1)
 	go func() {
 		due, applied, failed := escrow.registry.SweepExecutionTimeouts(context.Background(), grace, 8)
@@ -96,12 +97,13 @@ func TestThePreFinalizeSweepWaitsForAPeriodicSweepAndVotesWithNoGrace(t *testing
 }
 
 // Test flow:
-//  1. Publish a real escrow session with one inference started two hours ago and never finished.
+//  1. Publish a real escrow session with one inference started two hours ago and never finished, and share the chain's max_nonce.
 //  2. Take the escrow's finalize lock, as a running sweep or Finalize does.
 //  3. Run the pre-finalize sweep on a cancelled context; assert it returns the context's error.
 //  4. Assert the record is still started with its reserve held.
 func TestThePreFinalizeSweepGivesUpWaitingWhenItsContextEnds(t *testing.T) {
 	escrow := publishLongResponseEscrow(t)
+	escrow.registry.ShareChainMaxNonce(1_700)
 	nonce := startedTwoHoursAgo(t, escrow)
 	escrow.handle.finalizing.Lock()
 	defer escrow.handle.finalizing.Unlock()
@@ -118,11 +120,12 @@ func TestThePreFinalizeSweepGivesUpWaitingWhenItsContextEnds(t *testing.T) {
 }
 
 // Test flow:
-//  1. Publish a real escrow session and take its finalize lock, as a running sweep does.
+//  1. Publish a real escrow session, share the chain's max_nonce and take its finalize lock, as a running sweep does.
 //  2. Finalize the escrow on a cancelled context.
 //  3. Assert Finalize returns the context's error and the session is still active.
 func TestFinalizeGivesUpWaitingForTheEscrowWhenItsContextEnds(t *testing.T) {
 	escrow := publishLongResponseEscrow(t)
+	escrow.registry.ShareChainMaxNonce(1_700)
 	escrow.handle.finalizing.Lock()
 	defer escrow.handle.finalizing.Unlock()
 	ctx, cancel := context.WithCancel(context.Background())

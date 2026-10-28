@@ -17,7 +17,7 @@ const noRaceGrace time.Duration = 0
 // instead of closing a session mid-vote; the hold makes the escrow busy but is not a request, so it never moves ActiveUsers.
 func (r *Registry) SweepExecutionTimeouts(ctx context.Context, grace time.Duration, budget int) (due, applied, failed int) {
 	states := r.Snapshot()
-	if budget <= 0 || len(states) == 0 {
+	if budget <= 0 || len(states) == 0 || r.chainMaxNonce.Load() == unknownChainMaxNonce {
 		return 0, 0, 0
 	}
 	start := int(r.sweepCursor.Add(1)-1) % len(states)
