@@ -15,6 +15,7 @@ func registryWithOneEscrow(t *testing.T) *Registry {
 	t.Helper()
 	sessions := newSessions(map[string]*fakeSession{"1": newFakeSession("participant-a")})
 	registry := New(Deps{ServingSessions: sessions.open, Membership: newRecordingMembership(), Now: fixedClock()})
+	registry.ShareChainMaxNonce(1_700)
 	require.NoError(t, registry.Add(context.Background(), "1", "qwen"))
 	return registry
 }
@@ -59,7 +60,7 @@ func TestSweepStopsWalkingOnACancelledContext(t *testing.T) {
 }
 
 // Test flow:
-//  1. Build a registry with one escrow whose session has one execution timeout due, in each table case's phase.
+//  1. Build a registry with one escrow whose session has one execution timeout due, in each table case's phase, and share the chain's max_nonce.
 //  2. Sweep execution timeouts.
 //  3. Assert the active escrow is swept and an escrow finalizing or settled is left alone.
 func TestSweepVotesOnlyWhileTheSessionIsActive(t *testing.T) {
@@ -78,6 +79,7 @@ func TestSweepVotesOnlyWhileTheSessionIsActive(t *testing.T) {
 			session.sweepReport = user.SweepReport{Due: 1, Applied: 1}
 			registry := New(Deps{ServingSessions: newSessions(map[string]*fakeSession{"1": session}).open, Membership: newRecordingMembership(), Now: fixedClock()})
 			require.NoError(t, registry.Add(context.Background(), "1", "qwen"))
+			registry.ShareChainMaxNonce(1_700)
 			session.setPhase(testCase.phase)
 
 			due, applied, failed := registry.SweepExecutionTimeouts(context.Background(), time.Minute, 4)
@@ -88,7 +90,7 @@ func TestSweepVotesOnlyWhileTheSessionIsActive(t *testing.T) {
 }
 
 // Test flow:
-//  1. Build a registry with one active escrow whose session runs a probe while the sweep votes on it.
+//  1. Build a registry with one active escrow whose session runs a probe while the sweep votes on it, and share the chain's max_nonce.
 //  2. Sweep execution timeouts; inside the vote, read Routable, Candidates and IsBusy, then retire the escrow.
 //  3. Assert the sweep counted no active user but did report the escrow busy, and the retired session stayed open during the vote.
 //  4. Assert the session closes once the sweep releases its hold.
@@ -97,6 +99,7 @@ func TestSweepHoldsTheSessionOpenAndBusyWithoutCountingAsARequest(t *testing.T) 
 	session.sweepReport = user.SweepReport{Due: 1, Applied: 1}
 	registry := New(Deps{ServingSessions: newSessions(map[string]*fakeSession{"1": session}).open, Membership: newRecordingMembership(), Now: fixedClock()})
 	require.NoError(t, registry.Add(context.Background(), "1", "qwen"))
+	registry.ShareChainMaxNonce(1_700)
 	session.setPhase(types.PhaseActive)
 	var routableUsers, candidateUsers int
 	var busyDuringSweep bool
@@ -123,7 +126,7 @@ func TestSweepHoldsTheSessionOpenAndBusyWithoutCountingAsARequest(t *testing.T) 
 }
 
 // Test flow:
-//  1. Build a registry with one active escrow whose session has one execution timeout due.
+//  1. Build a registry with one active escrow whose session has one execution timeout due, and share the chain's max_nonce.
 //  2. Acquire the escrow as a running race would, then retire it so it drains.
 //  3. Sweep execution timeouts.
 //  4. Assert the draining escrow was swept, then release the race and assert the session closes.
@@ -132,6 +135,7 @@ func TestSweepVotesOnADrainingEscrow(t *testing.T) {
 	session.sweepReport = user.SweepReport{Due: 1, Applied: 1}
 	registry := New(Deps{ServingSessions: newSessions(map[string]*fakeSession{"1": session}).open, Membership: newRecordingMembership(), Now: fixedClock()})
 	require.NoError(t, registry.Add(context.Background(), "1", "qwen"))
+	registry.ShareChainMaxNonce(1_700)
 	session.setPhase(types.PhaseActive)
 	_, release, acquired := registry.Acquire("1")
 	require.True(t, acquired)
@@ -146,7 +150,7 @@ func TestSweepVotesOnADrainingEscrow(t *testing.T) {
 }
 
 // Test flow:
-//  1. Build a registry holding escrow 1, and a session factory that also serves escrow 2, which the registry does not hold.
+//  1. Build a registry holding escrow 1, and a session factory that also serves escrow 2, which the registry does not hold; share the chain's max_nonce.
 //  2. Sweep both before finalizing, with a budget of 5.
 //  3. Assert each session was swept with no race grace and the given budget, and only the rehydrated one was closed.
 func TestSweepBeforeFinalizeVotesWithNoRaceGrace(t *testing.T) {
@@ -155,6 +159,7 @@ func TestSweepBeforeFinalizeVotesWithNoRaceGrace(t *testing.T) {
 	parked := newFakeSession("participant-b")
 	parked.sweepReport = user.SweepReport{Due: 1, Applied: 1}
 	registry := New(Deps{ServingSessions: newSessions(map[string]*fakeSession{"1": held, "2": parked}).open, Membership: newRecordingMembership(), Now: fixedClock()})
+	registry.ShareChainMaxNonce(1_700)
 	require.NoError(t, registry.Add(context.Background(), "1", "qwen"))
 
 	heldDue, heldApplied, heldFailed, heldErr := registry.SweepBeforeFinalize(context.Background(), "1", 5)

@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"devshard/cmd/gateway/chain"
+	"devshard/cmd/gateway/escrow"
 	"devshard/signing"
 	"devshard/state"
 	"devshard/types"
@@ -25,6 +26,9 @@ func (r *Registry) Finalize(ctx context.Context, escrowID string) error {
 }
 
 func (r *Registry) withServingSession(ctx context.Context, escrowID string, work func(EscrowSession) error) error {
+	if r.chainMaxNonce.Load() == unknownChainMaxNonce {
+		return fmt.Errorf("%w: escrow %s waits for the chain max_nonce before it is settled", escrow.ErrDevshardBusy, escrowID)
+	}
 	if session, release, held := r.HoldSettlement(escrowID); held {
 		defer release()
 		return work(session)
@@ -32,11 +36,20 @@ func (r *Registry) withServingSession(ctx context.Context, escrowID string, work
 	if r.servingSessions == nil {
 		return fmt.Errorf("escrow %s: no serving session factory", escrowID)
 	}
-	session, err := r.servingSessions(ctx, escrowID)
+	session, err := r.openServingSession(ctx, escrowID)
 	if err != nil {
 		return fmt.Errorf("rehydrating serving session for escrow %s: %w", escrowID, err)
 	}
 	return errors.Join(work(session), session.Close())
+}
+
+func (r *Registry) openServingSession(ctx context.Context, escrowID string) (EscrowSession, error) {
+	session, err := r.servingSessions(ctx, escrowID)
+	if err != nil {
+		return nil, err
+	}
+	session.SetChainMaxNonce(r.chainMaxNonce.Load())
+	return session, nil
 }
 
 // observeFinalized hands the ledger the escrow as finalize left it: finalize pays every open record, which a reading taken at drain never saw.

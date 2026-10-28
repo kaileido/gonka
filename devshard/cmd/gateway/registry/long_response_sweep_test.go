@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"io"
 	"testing"
 	"time"
 
@@ -64,6 +65,21 @@ func publishLongResponseEscrow(t *testing.T, servedBindings ...servedBindingObse
 
 func publishVotingEscrow(t *testing.T, client func(acceptingVoter) user.HostClient, servedBindings ...servedBindingObserver) longResponseEscrow {
 	t.Helper()
+	escrow := newVotingEscrow(t, client)
+	deps := Deps{
+		ServingSessions: func(context.Context, string) (EscrowSession, error) { return escrow.handle, nil },
+		Now:             fixedClock(),
+	}
+	if len(servedBindings) > 0 {
+		deps.ServedBindings = servedBindings[0]
+	}
+	escrow.registry = New(deps)
+	require.NoError(t, escrow.registry.Add(context.Background(), longResponseEscrowID, "llama"))
+	return escrow
+}
+
+func newVotingEscrow(t *testing.T, client func(acceptingVoter) user.HostClient, hostOptions ...host.HostOption) longResponseEscrow {
+	t.Helper()
 	signers := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	group := testutil.MakeGroup(signers)
 	config := testutil.DefaultConfig(len(group))
@@ -72,7 +88,7 @@ func publishVotingEscrow(t *testing.T, client func(acceptingVoter) user.HostClie
 	clients := make([]user.HostClient, len(signers))
 	for index, signer := range signers {
 		hostMachine := statetest.MustStateMachine(t, longResponseEscrowID, config, group, 1_000_000, creator.Address(), verifier)
-		hostNode, err := host.NewHost(hostMachine, signer, stub.NewInferenceEngine(), longResponseEscrowID, group, nil, host.WithGrace(100))
+		hostNode, err := host.NewHost(hostMachine, signer, stub.NewInferenceEngine(), longResponseEscrowID, group, nil, append([]host.HostOption{host.WithGrace(100)}, hostOptions...)...)
 		require.NoError(t, err)
 		clients[index] = client(acceptingVoter{HostClient: &user.InProcessClient{Host: hostNode}, signer: signer, slot: group[index].SlotID})
 	}
@@ -81,29 +97,24 @@ func publishVotingEscrow(t *testing.T, client func(acceptingVoter) user.HostClie
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = session.Close() })
 	handle := NewSessionHandle(session, machine).(sessionHandle)
-	deps := Deps{
-		ServingSessions: func(context.Context, string) (EscrowSession, error) { return handle, nil },
-		Now:             fixedClock(),
-	}
-	if len(servedBindings) > 0 {
-		deps.ServedBindings = servedBindings[0]
-	}
-	registry := New(deps)
-	require.NoError(t, registry.Add(context.Background(), longResponseEscrowID, "llama"))
-	return longResponseEscrow{registry: registry, handle: handle, session: session, machine: machine, signers: signers}
+	return longResponseEscrow{handle: handle, session: session, machine: machine, signers: signers}
 }
 
 func startedTwoHoursAgo(t *testing.T, escrow longResponseEscrow) uint64 {
 	t.Helper()
-	return startedConfirmedAt(t, escrow, time.Now().Add(-2*time.Hour).Unix())
+	return startedConfirmedAt(t, escrow, time.Now().Add(-2*time.Hour).Unix(), false)
 }
 
-func startedConfirmedAt(t *testing.T, escrow longResponseEscrow, confirmedAt int64) uint64 {
+func startedConfirmedAt(t *testing.T, escrow longResponseEscrow, confirmedAt int64, delivered bool) uint64 {
 	t.Helper()
 	prepared, err := escrow.session.PrepareInferenceFn(func(user.HostBinding) (user.InferenceParams, bool, context.Context, error) {
 		return user.InferenceParams{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000}, false, nil, nil
 	})
 	require.NoError(t, err)
+	if delivered {
+		_, err = escrow.session.SendOnly(context.Background(), prepared, io.Discard, nil)
+		require.NoError(t, err)
+	}
 	nonce := prepared.Nonce()
 	record, tracked := escrow.machine.GetInference(nonce)
 	require.True(t, tracked)
@@ -129,13 +140,14 @@ func startedConfirmedAt(t *testing.T, escrow longResponseEscrow, confirmedAt int
 }
 
 // Test flow:
-//  1. Publish a real escrow session whose three hosts sign accepting timeout votes, and start one inference whose executor confirmed it two hours ago and never finished.
+//  1. Publish a real escrow session whose three hosts sign accepting timeout votes, and start one inference whose executor confirmed it two hours ago and never finished; share the chain's max_nonce.
 //  2. Judge that attempt as a race would: it streamed content for 281 seconds, stalled and never finished; assert the race posts no vote for it, skipping it as a long response.
 //  3. Assert the nonce still holds its whole reservation.
 //  4. Run the registry's execution-timeout sweep; assert it finds the nonce due and applies the vote.
 //  5. Assert the record timed out and its reservation is back in the balance.
 func TestALongResponseTheRaceDoesNotVoteOnIsReturnedByTheSweep(t *testing.T) {
 	escrow := publishLongResponseEscrow(t)
+	escrow.registry.ShareChainMaxNonce(1_700)
 	nonce := startedTwoHoursAgo(t, escrow)
 	sentAt := time.Now().Add(-10 * time.Minute)
 	outcome := engine.RaceOutcome{
@@ -169,11 +181,12 @@ func TestALongResponseTheRaceDoesNotVoteOnIsReturnedByTheSweep(t *testing.T) {
 }
 
 // Test flow:
-//  1. Publish a real escrow session with one inference started two hours ago and never finished.
+//  1. Publish a real escrow session with one inference started two hours ago and never finished, and share the chain's max_nonce.
 //  2. Take the escrow's finalize lock, as a running Finalize does, and run the registry's execution-timeout sweep.
 //  3. Assert the sweep left the escrow alone: nothing due, and the record still started with its reserve held.
 func TestTheSweepLeavesAnEscrowAloneWhileItFinalizes(t *testing.T) {
 	escrow := publishLongResponseEscrow(t)
+	escrow.registry.ShareChainMaxNonce(1_700)
 	nonce := startedTwoHoursAgo(t, escrow)
 	escrow.handle.finalizing.Lock()
 	defer escrow.handle.finalizing.Unlock()

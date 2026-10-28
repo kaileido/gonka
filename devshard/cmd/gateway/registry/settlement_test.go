@@ -149,7 +149,7 @@ func TestBuildSettlementRejectsANonNumericEscrowID(t *testing.T) {
 }
 
 // Test flow:
-//  1. Build a registry with separate serving and read-only factories, neither holding a resident session for escrow 5.
+//  1. Build a registry with separate serving and read-only factories, neither holding a resident session for escrow 5, and share the chain's max_nonce.
 //  2. Call `Finalize` for escrow 5.
 //  3. Assert the serving factory was called once and the read-only factory was never called: finalizing collects host signatures, which a read-only rehydration cannot do.
 //  4. Assert the rehydrated serving session's Finalize and Close were each called once.
@@ -158,6 +158,7 @@ func TestFinalizeRehydratesANonResidentEscrowWithAServingSession(t *testing.T) {
 	serving := newSessions(map[string]*fakeSession{"5": settleableSession(9)})
 	readOnly := newSessions(map[string]*fakeSession{"5": settleableSession(9)})
 	registry := New(Deps{ServingSessions: serving.open, ReadOnlySessions: readOnly.open, Now: fixedClock()})
+	registry.ShareChainMaxNonce(1_700)
 
 	if err := registry.Finalize(context.Background(), "5"); err != nil {
 		t.Fatalf("Finalize = %v, want nil", err)
@@ -179,7 +180,7 @@ func TestFinalizeRehydratesANonResidentEscrowWithAServingSession(t *testing.T) {
 }
 
 // Test flow:
-//  1. Build a registry with a resident serving session for escrow 5, added to the registry, plus a separate read-only factory.
+//  1. Build a registry with a resident serving session for escrow 5, added to the registry, plus a separate read-only factory, and share the chain's max_nonce.
 //  2. Call `Finalize` for escrow 5.
 //  3. Assert the serving factory was called only for the Add and the read-only factory was never called.
 //  4. Assert Finalize was called once on the resident session and it was never closed.
@@ -190,6 +191,7 @@ func TestFinalizeUsesTheResidentSessionWithoutRehydrating(t *testing.T) {
 	readOnly := newSessions(map[string]*fakeSession{"5": settleableSession(9)})
 	registry := New(Deps{ServingSessions: serving.open, ReadOnlySessions: readOnly.open, Now: fixedClock()})
 	mustAdd(t, registry, "5", "qwen")
+	registry.ShareChainMaxNonce(1_700)
 
 	if err := registry.Finalize(context.Background(), "5"); err != nil {
 		t.Fatalf("Finalize = %v, want nil", err)
@@ -210,7 +212,7 @@ func TestFinalizeUsesTheResidentSessionWithoutRehydrating(t *testing.T) {
 }
 
 // Test flow:
-//  1. Build a registry around a resident session already in the settlement phase, added to the registry.
+//  1. Build a registry around a resident session already in the settlement phase, added to the registry, and share the chain's max_nonce.
 //  2. Call `Finalize`.
 //  3. Assert Finalize is still called once: only the session itself knows whether its quorum is held.
 func TestFinalizeLetsAnEscrowAlreadyInSettlementCollectMissingSignatures(t *testing.T) {
@@ -222,6 +224,7 @@ func TestFinalizeLetsAnEscrowAlreadyInSettlementCollectMissingSignatures(t *test
 		Now:             fixedClock(),
 	})
 	mustAdd(t, registry, "5", "qwen")
+	registry.ShareChainMaxNonce(1_700)
 
 	if err := registry.Finalize(context.Background(), "5"); err != nil {
 		t.Fatalf("Finalize = %v, want nil", err)
@@ -233,7 +236,7 @@ func TestFinalizeLetsAnEscrowAlreadyInSettlementCollectMissingSignatures(t *test
 }
 
 // Test flow:
-//  1. Build a registry with one escrow, acquire a request, then retire the escrow so it starts draining.
+//  1. Build a registry with one escrow and share the chain's max_nonce, acquire a request, then retire the escrow so it starts draining.
 //  2. Arm the session's onFinalize hook to release the request and wait for the registry to finish closing before recording the close-call count.
 //  3. Call `Finalize`.
 //  4. Assert the session had not yet been closed while Finalize was running, and was closed exactly once afterward: the drain closed the store under the settlement, not before or during it.
@@ -245,6 +248,7 @@ func TestADrainedEscrowClosesOnlyAfterTheFinalizeRunningOnIt(t *testing.T) {
 		Now:             fixedClock(),
 	})
 	mustAdd(t, registry, "1", "qwen")
+	registry.ShareChainMaxNonce(1_700)
 	_, releaseRequest, acquired := registry.Acquire("1")
 	if !acquired {
 		t.Fatal("Acquire(1) = false, want true")
@@ -376,7 +380,7 @@ func TestASettlementHoldIsRefusedOnceTheCloseHasStarted(t *testing.T) {
 }
 
 // Test flow:
-//  1. Build a registry around a resident session whose Finalize call always fails, added to the registry.
+//  1. Build a registry around a resident session whose Finalize call always fails, added to the registry, and share the chain's max_nonce.
 //  2. Call `Finalize`.
 //  3. Assert the returned error wraps the resident session's failure.
 func TestFinalizeReportsTheSessionFailure(t *testing.T) {
@@ -388,6 +392,7 @@ func TestFinalizeReportsTheSessionFailure(t *testing.T) {
 		Now:             fixedClock(),
 	})
 	mustAdd(t, registry, "5", "qwen")
+	registry.ShareChainMaxNonce(1_700)
 
 	err := registry.Finalize(context.Background(), "5")
 
@@ -413,7 +418,7 @@ func TestSettlementPathsReportAMissingFactory(t *testing.T) {
 }
 
 // Test flow:
-//  1. Table-driven: a resident escrow and a non-resident one, each with a Retiring observer that records the finalize calls its session had when it read.
+//  1. Table-driven: a resident escrow and a non-resident one, each with a Retiring observer that records the finalize calls its session had when it read, and the chain's max_nonce shared.
 //  2. Finalize the escrow.
 //  3. Assert the observer read it once, after its finalize.
 func TestTheLedgerReadsAnEscrowAfterItsFinalize(t *testing.T) {
@@ -434,6 +439,7 @@ func TestTheLedgerReadsAnEscrowAfterItsFinalize(t *testing.T) {
 				},
 				Now: fixedClock(),
 			})
+			registry.ShareChainMaxNonce(1_700)
 			if testCase.resident {
 				mustAdd(t, registry, "5", "qwen")
 			}
