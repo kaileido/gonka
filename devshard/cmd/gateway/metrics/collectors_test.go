@@ -296,7 +296,7 @@ func TestThePerfCollectorMatchesTheTracker(t *testing.T) {
 	expectSeriesCount(t, telemetry, "devshard_gateway_host_ejected", 0)
 
 	tracker.RecordSample(perf.Sample{ParticipantKey: "gonka1host", Model: "qwen", Responsive: true})
-	tracker.Acquire("gonka1host")
+	tracker.Acquire("gonka1host", "model-a")
 
 	expectGauge(t, telemetry, "devshard_gateway_host_ejected", labels{"participant_key": "gonka1host", "model": "qwen"}, 0)
 	expectGauge(t, telemetry, "devshard_gateway_host_inflight_requests", labels{"participant_key": "gonka1host"}, 1)

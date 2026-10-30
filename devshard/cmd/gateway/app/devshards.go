@@ -62,6 +62,7 @@ func chainBackedSessions(records devshardLookup, storageDir string) sessionSourc
 			ReadOnly:   readOnlySessions(records, storageDir),
 			Reader:     grpcChain,
 			Transport:  grpcChain,
+			Registry:   grpcChain,
 			Heights:    follower,
 			Governance: governance,
 
@@ -406,6 +407,7 @@ type chainSources struct {
 	ReadOnly       registry.SessionFactory
 	Reader         chain.Reader
 	Transport      chain.Transport
+	Registry       contractRegistry
 	Heights        *heights.Oracle
 	Governance     *runtimeParams
 	PublicAPI      *http.Client

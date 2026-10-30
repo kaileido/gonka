@@ -101,6 +101,16 @@ func (c *Capacity) ParticipantWeight(participant, model string) float64 {
 	return min(c.fullWeightsLocked(model)[participant], c.currentWeightsLocked(model)[participant])
 }
 
+// ModelKnown reports whether the chain view this gateway holds names the model.
+func (c *Capacity) ModelKnown(model string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	_, listed := c.snapshot.Models[model]
+	_, current := c.snapshot.CurrentWeightsByModel[model]
+	_, full := c.snapshot.FullWeightsByModel[model]
+	return listed || current || full
+}
+
 // A model absent from a populated by-model view is served by nobody, so it must not inherit the generic view.
 func (c *Capacity) modelServedLocked(model string) bool {
 	if len(c.snapshot.CurrentWeightsByModel) == 0 && len(c.snapshot.FullWeightsByModel) == 0 {

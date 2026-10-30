@@ -12,6 +12,7 @@ Each package has its own `README.md` describing what that layer owns. The docume
 | [capacity.md](./capacity.md) | admission, the per-host congestion windows, ejection, buffered replies |
 | [accounting.md](./accounting.md) | the nonce ledger: vocabulary, surface, findings, storage |
 | [rules.md](./rules.md) | the invariants that must never stop being true, and the non-goals |
+| [peerload.md](./peerload.md) | the channel between gateways: membership, the mTLS check, the wire contract, the shadow discount |
 | [operations.md](./operations.md) | every route, every environment variable, the metrics by the question they answer |
 | [findings.md](./findings.md) | defects outside `cmd/gateway`, and the rules that closed them |
 | [proposal.md](./proposal.md) | the design the gateway was built to |

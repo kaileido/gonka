@@ -17,6 +17,7 @@ Three tiers, and the tier decides both who may call it and whether the kill swit
 | `/devshard/{id}/v1/finalize`, `.../state`, `.../debug/*` | admin | yes |
 | `/v1/admin/*`, `/v1/debug/rotation`, `/v1/debug/memstats`, `/v1/debug/heightsync` | admin | yes |
 | `/debug/pprof/*` | admin | yes |
+| `GET /v1/peer/{topic}` | mTLS with an allowlisted peer, on its own listener, only while the channel is on ([`peerload.md`](peerload.md)) | yes — the kill switch guards the client API, and this is not on it |
 
 The `/devshard/{id}/…` prefix pins a request to one escrow instead of letting the scheduler choose — the recovery surface for an escrow that needs attention on its own. A pinned chat to an escrow the gateway no longer routes answers 404, as an unknown devshard.
 
@@ -171,6 +172,13 @@ Signing keys are addressed **by the name of the variable that holds them**, neve
 
 | Variable | Default | What it decides |
 | --- | --- | --- |
+| `DEVSHARD_PEER_ENABLED` | off | switches on the channel between gateways, with the contract below; off, nothing listens or dials ([`peerload.md`](peerload.md)) |
+| `DEVSHARD_PEER_REGISTRY_CONTRACT` | empty, channel off | the bech32 address of the gateway-registry contract |
+| `DEVSHARD_PEER_INSTANCE_ID` | empty, required when on | this instance's name under its address, `[a-z0-9-]+`, at most 32 bytes, unique per address |
+| `DEVSHARD_PEER_LISTEN` | `:8443` | the mTLS listener's bind address, separate from the client API |
+| `DEVSHARD_PEER_ADVERTISE_URL` | empty, required when on | the `https://host:port` other instances dial, written to the registry; at most 256 bytes, no path, no userinfo, and a host of letters, digits, `.` and `-` or a bracketed IPv6, else the boot is refused |
+| `DEVSHARD_PEER_TRANSPORT_KEY` | empty, required when on | this instance's own transport key, PKCS#8 PEM, ed25519 or ECDSA; never the chain key, and logs name the variable, not the key |
+| `DEVSHARD_PEER_IDENTITY_KEY_ENV` | empty, required when on | the name of the variable holding the allowlisted chain key that signs `RegisterInstance` |
 | `DEVSHARD_PORT` | 8080 | the listening port |
 | `DEVSHARD_CHAIN_ID` | empty | the chain id the gateway signs its transactions for; empty asks the node over `DEVSHARD_CHAIN_GRPC`, and a configured value wins over the node |
 | `DEVSHARD_STORAGE_DIR` | `$HOME/.cache/gonka-gateway` | where `gateway.db` and the escrow storage live |
@@ -277,13 +285,14 @@ These are read the same way and rarely need changing. Where a knob has a longer 
 6. the nonce ledger starts, so nothing above it files a fact into a sink that is not yet reading;
 7. the escrow lifecycle manager starts its 15 s tick;
 8. the store's write notifications start republishing escrows on change, and on a timer while step 5 left an escrow unopened; the same loop probes the chain for participants absent when an escrow's session opened, and reopens that escrow once one is listed again, all of a model's such escrows in the same probe while another escrow of the model with no dead slot serves it ([routing.md](./routing.md), "A slot the chain did not list at open");
-9. the HTTP listener opens — **last**, so the first request meets a gateway that is fully assembled.
+9. the peer channel starts, when it is switched on: its listener and its polling ([`peerload.md`](peerload.md)); off, nothing happens;
+10. the HTTP listener opens — **last**, so the first request meets a gateway that is fully assembled.
 
-`startAll` stops at the first step that fails and names it, and `serve` shuts down cleanly rather than serving half-built. Steps 4 and 5 are the only two that can fail: the rest start a goroutine or a listener and return. Step 5 fails only when the store cannot be read or a row cannot be retired or marked inactive, not when an escrow's session will not open.
+`startAll` stops at the first step that fails and names it, and `serve` shuts down cleanly rather than serving half-built. Steps 4, 5 and 9 are the only ones that can fail, step 9 when its listener cannot bind: the rest start a goroutine or a listener and return. Step 5 fails only when the store cannot be read or a row cannot be retired or marked inactive, not when an escrow's session will not open.
 
 ## Shutdown
 
-`app/lifecycle.go`, `serve` and `shutdownOrder`. Before the first step, `serve` cancels the background context the chain observer, warmup prober, host pings, nonce ledger, escrow lifecycle and devshard-write republish were started under (`stopThenShutDown`), after a boot that failed as after a signal. Then thirteen steps, in this order, bounded by the grace period, with up to one more second from the journal step's floor:
+`app/lifecycle.go`, `serve` and `shutdownOrder`. Before the first step, `serve` cancels the background context the chain observer, warmup prober, host pings, nonce ledger, escrow lifecycle, devshard-write republish and peer channel were started under (`stopThenShutDown`), after a boot that failed as after a signal. Then fourteen steps, in this order, bounded by the grace period, with up to one more second from the journal step's floor:
 
 | # | Step | Why here |
 | --- | --- | --- |
@@ -292,20 +301,21 @@ These are read the same way and rarely need changing. Where a knob has a longer 
 | 3 | dispatchers | nothing new reaches a host |
 | 4 | escrow lifecycle | no rotation starts mid-drain |
 | 5 | chain observer | nothing above still needs a snapshot |
-| 6 | nonce sweep | the nonce ledger's sweep stops and the step waits for the sweep in progress, so no sweep reads a closing session or retires an escrow once the live set is emptied |
-| 7 | escrow sessions | **destroys state** the steps above may still use; the nonce ledger takes its last reading of each escrow just before its session closes |
-| 8 | journal | every producer with a shutdown step above has stopped; it drains its queue into the ledger below, waiting for whatever budget remains, or for one second when the steps above leave less, and counts anything later as a late event, such as a line from the warmup, which is only cancelled, or from the republish after a devshard write |
-| 9 | nonce accounting | after every emitter, so the final snapshot holds the counters the run ended with |
-| 10 | runtime params | after the sessions whose schedule it answers for. It cancels the feed and closes the node-manager connection without waiting for an in-flight poll; nothing above it still reads a schedule by then |
-| 11 | height follower | after the sessions that carried its readings; it holds a block subscription and a dialled client |
-| 12 | store | every step above may still write to it |
-| 13 | public API connections | every step above can still reach it; closing earlier just forces a re-dial |
+| 6 | peer channel | the background context already stopped its loops, and this step waits for them and its connections to close, so nothing of it outlives the state below |
+| 7 | nonce sweep | the nonce ledger's sweep stops and the step waits for the sweep in progress, so no sweep reads a closing session or retires an escrow once the live set is emptied |
+| 8 | escrow sessions | **destroys state** the steps above may still use; the nonce ledger takes its last reading of each escrow just before its session closes |
+| 9 | journal | every producer with a shutdown step above has stopped; it drains its queue into the ledger below, waiting for whatever budget remains, or for one second when the steps above leave less, and counts anything later as a late event, such as a line from the warmup, which is only cancelled, or from the republish after a devshard write |
+| 10 | nonce accounting | after every emitter, so the final snapshot holds the counters the run ended with |
+| 11 | runtime params | after the sessions whose schedule it answers for. It cancels the feed and closes the node-manager connection without waiting for an in-flight poll; nothing above it still reads a schedule by then |
+| 12 | height follower | after the sessions that carried its readings; it holds a block subscription and a dialled client |
+| 13 | store | every step above may still write to it |
+| 14 | public API connections | every step above can still reach it; closing earlier just forces a re-dial |
 
-`stopAll` runs every step **even after one fails**, except a step marked `needsQuiesced` (step 7): if anything above it failed, work may still be running, so closing the sessions would pull storage out from under it. That step is skipped and the skip is reported. A stream cancelled in step 1 hands its race off to keep running and step 2 waits for it, so a host still generating when the grace period left to step 2 runs out makes that drain overrun and step 7 is skipped (`TestShutdownSkipsEscrowSessionsWhenADrainOverran`).
+`stopAll` runs every step **even after one fails**, except a step marked `needsQuiesced` (step 8): if anything above it failed, work may still be running, so closing the sessions would pull storage out from under it. That step is skipped and the skip is reported. A stream cancelled in step 1 hands its race off to keep running and step 2 waits for it, so a host still generating when the grace period left to step 2 runs out makes that drain overrun and step 7 is skipped (`TestShutdownSkipsEscrowSessionsWhenADrainOverran`).
 
 Each drain is bounded by the grace period but **not cancelled** by it — a step that runs out of time is reported as "abandoned with work still running" rather than killed mid-vote.
 
-The `journal` step (8) is bounded the same way, but with a floor: it waits for its queue for whatever budget remains, or for one second whenever the steps above it leave less than one second of the grace period, so its queue can still reach the ledger, and a close that outlasts that wait is reported as "abandoned with events still queued".
+The `journal` step (9) is bounded the same way, but with a floor: it waits for its queue for whatever budget remains, or for one second whenever the steps above it leave less than one second of the grace period, so its queue can still reach the ledger, and a close that outlasts that wait is reported as "abandoned with events still queued".
 
 **Docker's stop timeout.** Docker sends SIGKILL ten seconds after SIGTERM unless the service sets `stop_grace_period`, and ten seconds is the grace period itself, so a gateway with a stream still open would be killed before the journal drains, the final accounting snapshot is written and the store closes. Both compose files that run the gateway (`deploy/docker-compose.devshard-gateway.yml` and the join stack's `deploy/join/docker-compose.devshard-gateway.yml`) set `stop_grace_period: 30s`, which covers the grace period, the journal's one-second floor and the steps after it. A deployment that raises the grace period raises this with it.
 
@@ -426,6 +436,8 @@ Admin lines carry the action and its subject, **never the request body** — an 
 | is the journal keeping up | `devshard_gateway_journal_money_refused_total`, `devshard_gateway_journal_progress_dropped_total`, `devshard_gateway_journal_late_events_total` |
 | is the nonce ledger losing facts | `devshard_gateway_nonce_ledger_unknown_escrow_facts_total`: facts about an escrow the ledger does not hold — one its sweep has not opened yet, which a published escrow's wake keeps to the first sweep's latency, or one its retention pruned |
 | where does a request wait inside the gateway | `devshard_gateway_escrow_queue_wait_seconds`, `devshard_gateway_session_step_seconds{step}` (below) |
+
+The peer channel adds four families only while it is on: `devshard_gateway_peer_last_seen_seconds{peer,peer_instance}`, `devshard_gateway_peer_handshakes_total{result}`, `devshard_gateway_peer_foreign_inflight{participant,model}` and `devshard_gateway_peer_discount{participant,model}`, a shadow value no limit or score reads. `result` is `accepted`, counted per side when a handshake completes, or the refusal: `self`, `identity`, `not_allowed`, `fingerprint` or `protocol`.
 
 A race the client left counts as `devshard_gateway_requests_total{reason="client_cancelled"}` unless the escrow itself failed first, which outranks a departure as `reason="escrow_missing"` or `reason="balance_exhausted"`; the faults of its hosts stay on `devshard_gateway_attempt_failures_total{reason}` instead.
 

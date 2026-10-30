@@ -187,9 +187,9 @@ func (o *PhaseObserver) refresh(ctx context.Context) {
 	}
 
 	if params, fetched, paramsErr := o.fetchEscrowParams(ctx); fetched {
-		snapshot.MaxNonce, snapshot.TokenPrice, snapshot.FeePerNonce, snapshot.CreateDevshardFee = params.MaxNonce, params.TokenPrice, params.FeePerNonce, params.CreateDevshardFee
+		snapshot.MaxNonce, snapshot.TokenPrice, snapshot.FeePerNonce, snapshot.CreateDevshardFee, snapshot.AllowedCreators = params.MaxNonce, params.TokenPrice, params.FeePerNonce, params.CreateDevshardFee, params.AllowedCreators
 	} else {
-		snapshot.MaxNonce, snapshot.TokenPrice, snapshot.FeePerNonce, snapshot.CreateDevshardFee = previous.MaxNonce, previous.TokenPrice, previous.FeePerNonce, previous.CreateDevshardFee
+		snapshot.MaxNonce, snapshot.TokenPrice, snapshot.FeePerNonce, snapshot.CreateDevshardFee, snapshot.AllowedCreators = previous.MaxNonce, previous.TokenPrice, previous.FeePerNonce, previous.CreateDevshardFee, previous.AllowedCreators
 		if paramsErr != nil {
 			snapshot.LastError = joinSnapshotError(snapshot.LastError, fmt.Sprintf("fetch devshard escrow params: %v", paramsErr))
 		}

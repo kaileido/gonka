@@ -89,6 +89,7 @@ type PhaseSnapshot struct {
 	TokenPrice        uint64
 	FeePerNonce       uint64
 	CreateDevshardFee uint64
+	AllowedCreators   []string
 
 	Models map[string]ModelParams
 

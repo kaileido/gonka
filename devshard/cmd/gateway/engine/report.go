@@ -166,7 +166,7 @@ func (c *raceCoordinator) retire(attempt *liveAttempt) {
 	c.pending--
 	c.deps.Fleet.forget(attempt)
 	attempt.cancel()
-	c.deps.Perf.Release(attempt.participant)
+	c.deps.Perf.Release(attempt.participant, c.request.Model)
 }
 
 func (c *raceCoordinator) report() RaceOutcome {

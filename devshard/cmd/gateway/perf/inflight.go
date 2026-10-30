@@ -2,33 +2,33 @@ package perf
 
 import "sync"
 
-type inflightGauge struct {
+type inflightGauge[K comparable] struct {
 	mu     sync.Mutex
-	counts map[string]int
+	counts map[K]int
 }
 
-func newInflightGauge() *inflightGauge {
-	return &inflightGauge{counts: make(map[string]int)}
+func newInflightGauge[K comparable]() *inflightGauge[K] {
+	return &inflightGauge[K]{counts: make(map[K]int)}
 }
 
-func (g *inflightGauge) acquire(participant string) {
+func (g *inflightGauge[K]) acquire(key K) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.counts[participant]++
+	g.counts[key]++
 }
 
-func (g *inflightGauge) release(participant string) {
+func (g *inflightGauge[K]) release(key K) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if n := g.counts[participant] - 1; n > 0 {
-		g.counts[participant] = n
+	if n := g.counts[key] - 1; n > 0 {
+		g.counts[key] = n
 	} else {
-		delete(g.counts, participant)
+		delete(g.counts, key)
 	}
 }
 
-func (g *inflightGauge) count(participant string) int {
+func (g *inflightGauge[K]) count(key K) int {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return g.counts[participant]
+	return g.counts[key]
 }

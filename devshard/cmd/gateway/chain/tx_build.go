@@ -5,12 +5,16 @@ import (
 	"strings"
 	"time"
 
+	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 
 	"devshard/signing"
 )
 
-const compactSignatureLength = 64
+const (
+	compactSignatureLength    = 64
+	executeContractMsgTypeURL = "/cosmwasm.wasm.v1.MsgExecuteContract"
+)
 
 // The escrow messages are marshalled by the chain's own generated types, so their wire layout tracks the chain by construction. See README.md, "How a message is encoded".
 func encodeMsgCreateDevshardEscrow(creator string, amount uint64, modelID string) ([]byte, error) {
@@ -99,6 +103,29 @@ func buildSettleEscrowTx(signer *signing.Secp256k1Signer, chainID string, accoun
 	sig, err := signer.Sign(signDoc)
 	if err != nil {
 		return nil, fmt.Errorf("sign settle-escrow tx: %w", err)
+	}
+	truncated, err := truncateSignature(sig)
+	if err != nil {
+		return nil, err
+	}
+	return encodeTxRaw(bodyBytes, authInfoBytes, truncated), nil
+}
+
+func buildExecuteContractTx(signer *signing.Secp256k1Signer, chainID string, accountNumber uint64, feeDenom string, feeAmount, gasLimit uint64, contract string, execute []byte, ttl time.Time) ([]byte, error) {
+	if strings.TrimSpace(chainID) == "" {
+		return nil, fmt.Errorf("chain id is required")
+	}
+	message := &wasmtypes.MsgExecuteContract{Sender: signer.Address(), Contract: contract, Msg: execute}
+	msg, err := message.Marshal()
+	if err != nil {
+		return nil, fmt.Errorf("encode execute-contract message: %w", err)
+	}
+	bodyBytes := encodeUnorderedTxBody(encodeAny(executeContractMsgTypeURL, msg), ttl)
+	pubKeyAny := encodeAny(secp256k1PubKeyTypeURL, encodeSecp256k1PubKey(signer.CompressedPublicKeyBytes()))
+	authInfoBytes := encodeAuthInfo(pubKeyAny, 0, feeDenom, feeAmount, gasLimit)
+	sig, err := signer.Sign(encodeSignDoc(bodyBytes, authInfoBytes, chainID, accountNumber))
+	if err != nil {
+		return nil, fmt.Errorf("sign execute-contract tx: %w", err)
 	}
 	truncated, err := truncateSignature(sig)
 	if err != nil {

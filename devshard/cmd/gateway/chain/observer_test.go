@@ -32,6 +32,7 @@ type phaseObserverStub struct {
 	feePerNonce        uint64
 	createDevshardFee  uint64
 	maxNonceHeld       bool
+	allowedCreators    []string
 	maxNonceErr        error
 	maxNonceHits       int
 	models             map[string]ModelParams
@@ -101,7 +102,7 @@ func (s *phaseObserverStub) EscrowParams(context.Context) (EscrowParams, bool, e
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.maxNonceHits++
-	return EscrowParams{MaxNonce: s.maxNonce, TokenPrice: s.tokenPrice, FeePerNonce: s.feePerNonce, CreateDevshardFee: s.createDevshardFee}, s.maxNonceHeld, s.maxNonceErr
+	return EscrowParams{MaxNonce: s.maxNonce, TokenPrice: s.tokenPrice, FeePerNonce: s.feePerNonce, CreateDevshardFee: s.createDevshardFee, AllowedCreators: s.allowedCreators}, s.maxNonceHeld, s.maxNonceErr
 }
 
 func (s *phaseObserverStub) setPreservedNodes(snapshot *PreservedNodes, found bool, failure error) {
@@ -114,6 +115,12 @@ func (s *phaseObserverStub) setMaxNonceValue(value uint64, held bool, failure er
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.maxNonce, s.maxNonceHeld, s.maxNonceErr = value, held, failure
+}
+
+func (s *phaseObserverStub) setAllowedCreators(allowed []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.allowedCreators = allowed
 }
 
 func (s *phaseObserverStub) setEscrowPrice(tokenPrice, feePerNonce, createDevshardFee uint64) {
@@ -608,7 +615,7 @@ func TestPhaseObserver_CarriesEveryParticipantDerivedFieldForward(t *testing.T) 
 	}
 	phaseDerived := []string{
 		"BlockHeight", "EpochSwitchBlockHeight", "EpochIndex", "EffectiveEpochIndex", "EpochPhase", "ConfirmationPoCPhase",
-		"RequestsBlocked", "BlockReason", "MaxNonce", "TokenPrice", "FeePerNonce", "CreateDevshardFee", "Models", "LastUpdatedAt", "LastError",
+		"RequestsBlocked", "BlockReason", "MaxNonce", "TokenPrice", "FeePerNonce", "CreateDevshardFee", "AllowedCreators", "Models", "LastUpdatedAt", "LastError",
 	}
 
 	previous := PhaseSnapshot{

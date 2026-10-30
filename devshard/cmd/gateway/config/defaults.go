@@ -27,6 +27,9 @@ func Defaults() Config {
 			SnapshotMaxAgeSeconds:       60,
 			VersionsPollIntervalSeconds: int64(chain.DefaultVersionsPollInterval.Seconds()),
 		},
+		Peer: Peer{
+			Listen: ":8443",
+		},
 		Tx: Tx{
 			FeeDenom:       chain.DefaultFeeDenom,
 			FeeAmount:      int64(chain.DefaultFeeAmount),

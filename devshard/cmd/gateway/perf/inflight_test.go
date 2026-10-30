@@ -11,7 +11,7 @@ import (
 //  3. Release a second time and assert the count drops to 1.
 //  4. Release a third time and assert the count reaches 0 and the participant's key is dropped from the counts map.
 func TestInflightGaugeAcquireReleaseBalance(t *testing.T) {
-	g := newInflightGauge()
+	g := newInflightGauge[string]()
 	g.acquire("alice")
 	g.acquire("alice")
 	g.acquire("alice")
@@ -51,7 +51,7 @@ func TestInflightGaugeReleaseNeverGoesNegative(t *testing.T) {
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
-			g := newInflightGauge()
+			g := newInflightGauge[string]()
 			for range testCase.acquires {
 				g.acquire("alice")
 			}
@@ -72,7 +72,7 @@ func TestInflightGaugeReleaseNeverGoesNegative(t *testing.T) {
 //  1. Build an inflight gauge.
 //  2. Assert the count for a participant that was never acquired is 0.
 func TestInflightGaugeCountUnknownParticipantIsZero(t *testing.T) {
-	g := newInflightGauge()
+	g := newInflightGauge[string]()
 	if got := g.count("nobody"); got != 0 {
 		t.Fatalf("count() for unknown participant = %d, want 0", got)
 	}
@@ -82,7 +82,7 @@ func TestInflightGaugeCountUnknownParticipantIsZero(t *testing.T) {
 //  1. Build an inflight gauge, acquire and release "alice" so her count returns to 0 and her key is dropped.
 //  2. Assert alice's count matches "bob", a participant never seen.
 func TestInflightGaugeFreshParticipantMatchesDroppedParticipant(t *testing.T) {
-	g := newInflightGauge()
+	g := newInflightGauge[string]()
 	g.acquire("alice")
 	g.release("alice")
 
@@ -96,7 +96,7 @@ func TestInflightGaugeFreshParticipantMatchesDroppedParticipant(t *testing.T) {
 //  2. Assert alice's count is 2 and bob's is 1.
 //  3. Release alice once and assert bob's count is unaffected at 1.
 func TestInflightGaugeTracksParticipantsIndependently(t *testing.T) {
-	g := newInflightGauge()
+	g := newInflightGauge[string]()
 	g.acquire("alice")
 	g.acquire("alice")
 	g.acquire("bob")
@@ -120,7 +120,7 @@ func TestInflightGaugeTracksParticipantsIndependently(t *testing.T) {
 //  3. Wait for all goroutines to finish.
 //  4. Assert the count settles at 0 and the participant's key is dropped.
 func TestInflightGaugeConcurrentAcquireReleaseSettlesAtZero(t *testing.T) {
-	g := newInflightGauge()
+	g := newInflightGauge[string]()
 	const goroutines = 200
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
@@ -147,7 +147,7 @@ func TestInflightGaugeConcurrentAcquireReleaseSettlesAtZero(t *testing.T) {
 //  3. Assert the count is exactly 200 while none have released yet.
 //  4. Close the release channel, wait for all goroutines to release, and assert the count settles back to 0.
 func TestInflightGaugeConcurrentAcquireReachesExactTotalBeforeRelease(t *testing.T) {
-	g := newInflightGauge()
+	g := newInflightGauge[string]()
 	const goroutines = 200
 
 	var acquired sync.WaitGroup

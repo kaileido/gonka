@@ -41,8 +41,8 @@ type targets interface {
 
 type hostPerf interface {
 	CapabilityRecorder
-	Acquire(participant string)
-	Release(participant string)
+	Acquire(participant, model string)
+	Release(participant, model string)
 	Ejected(participant, model string) bool
 	Degraded(participant, model string) bool
 	FirstContentP75(participant, model string) (time.Duration, bool)

@@ -77,6 +77,7 @@ type EscrowParams struct {
 	TokenPrice        uint64
 	FeePerNonce       uint64
 	CreateDevshardFee uint64
+	AllowedCreators   []string
 }
 
 // PreservedNodes is the PoC preserved set, keyed the way routing reads it.
@@ -278,7 +279,7 @@ func (g *GRPCChain) EscrowParams(ctx context.Context) (EscrowParams, bool, error
 	if params == nil {
 		return EscrowParams{}, false, nil
 	}
-	return EscrowParams{MaxNonce: uint64(params.GetMaxNonce()), TokenPrice: params.GetTokenPrice(), FeePerNonce: params.GetFeePerNonce(), CreateDevshardFee: params.GetCreateDevshardFee()}, true, nil
+	return EscrowParams{MaxNonce: uint64(params.GetMaxNonce()), TokenPrice: params.GetTokenPrice(), FeePerNonce: params.GetFeePerNonce(), CreateDevshardFee: params.GetCreateDevshardFee(), AllowedCreators: params.GetAllowedCreatorAddresses()}, true, nil
 }
 
 // PreservedNodes reports found=false when the chain holds no snapshot for the current episode, which routing reads as "no preserved set".

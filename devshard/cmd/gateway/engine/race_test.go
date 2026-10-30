@@ -386,13 +386,13 @@ func (p *stubPerf) Pressure(participant, model string) perf.Pressure {
 	return p.pressure
 }
 
-func (p *stubPerf) Acquire(participant string) {
+func (p *stubPerf) Acquire(participant, _ string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.acquired = append(p.acquired, participant)
 }
 
-func (p *stubPerf) Release(participant string) {
+func (p *stubPerf) Release(participant, _ string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.released = append(p.released, participant)

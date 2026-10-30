@@ -29,6 +29,13 @@ type Values struct {
 	StatsTokenizerEnabled      *bool
 	SessionRetentionEpochs     *int64
 
+	PeerEnabled          *bool
+	PeerRegistryContract *string
+	PeerInstanceID       *string
+	PeerListen           *string
+	PeerAdvertiseURL     *string
+	PeerIdentityKeyEnv   *string
+
 	ChainGRPC        *string
 	PublicAPI        *string
 	ChainID          *string
@@ -132,6 +139,8 @@ const (
 	LogFormatText = "text"
 
 	AllowPrivateAddressesVariable = "DEVSHARD_ALLOW_PRIVATE_ADDRESSES"
+
+	peerTransportKeyVariable = "DEVSHARD_PEER_TRANSPORT_KEY"
 )
 
 // ErrPrivateKeyMissing marks a devshard whose signing key the environment does not hold.
@@ -162,6 +171,11 @@ func PrivateKey(name string) (string, error) {
 		return key, nil
 	}
 	return "", fmt.Errorf("%w: %s is unset", ErrPrivateKeyMissing, name)
+}
+
+// PeerTransportKey reads the instance's transport key PEM; it stays out of Values so no config dump can carry it.
+func PeerTransportKey() (string, error) {
+	return PrivateKey(peerTransportKeyVariable)
 }
 
 func lookup(names ...string) string {
@@ -287,6 +301,13 @@ func Load() (Values, error) {
 	readLenientInt("DEVSHARD_MAX_CONCURRENT_PROMPT_COUNTS", 1, &values.MaxConcurrentPromptCounts)
 	readLenientBool("DEVSHARD_STATS_TOKENIZER", &values.StatsTokenizerEnabled)
 	readLenientInt("DEVSHARD_SESSION_RETENTION_EPOCHS", 0, &values.SessionRetentionEpochs)
+
+	readLenientBool("DEVSHARD_PEER_ENABLED", &values.PeerEnabled)
+	readString("DEVSHARD_PEER_REGISTRY_CONTRACT", &values.PeerRegistryContract)
+	readString("DEVSHARD_PEER_INSTANCE_ID", &values.PeerInstanceID)
+	readString("DEVSHARD_PEER_LISTEN", &values.PeerListen)
+	readString("DEVSHARD_PEER_ADVERTISE_URL", &values.PeerAdvertiseURL)
+	readString("DEVSHARD_PEER_IDENTITY_KEY_ENV", &values.PeerIdentityKeyEnv)
 
 	readString("DEVSHARD_CHAIN_GRPC", &values.ChainGRPC, "NODE_GRPC_URL")
 	readString("DEVSHARD_PUBLIC_API", &values.PublicAPI)

@@ -26,6 +26,13 @@ func Build(values env.Values, overrides Overrides) (*Config, error) {
 	overrideIfSet(&configuration.Server.StatsTokenizerEnabled, values.StatsTokenizerEnabled)
 	overrideIfSet(&configuration.Server.SessionRetentionEpochs, values.SessionRetentionEpochs)
 
+	overrideIfSet(&configuration.Peer.Enabled, values.PeerEnabled)
+	overrideIfSet(&configuration.Peer.RegistryContract, values.PeerRegistryContract)
+	overrideIfSet(&configuration.Peer.InstanceID, values.PeerInstanceID)
+	overrideIfSet(&configuration.Peer.Listen, values.PeerListen)
+	overrideIfSet(&configuration.Peer.AdvertiseURL, values.PeerAdvertiseURL)
+	overrideIfSet(&configuration.Peer.IdentityKeyEnv, values.PeerIdentityKeyEnv)
+
 	overrideIfSet(&configuration.Chain.GRPCEndpoint, values.ChainGRPC)
 	overrideIfSet(&configuration.Chain.PublicAPIBaseURL, values.PublicAPI)
 	overrideIfSet(&configuration.Chain.ChainID, values.ChainID)

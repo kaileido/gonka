@@ -625,3 +625,34 @@ func TestTheDispatchQueueDepthIsReadStrictly(t *testing.T) {
 		t.Fatalf("Load() with GATEWAY_DISPATCH_QUEUE_DEPTH=deep = %v, want an error naming the variable", err)
 	}
 }
+
+// Test flow:
+//  1. Set every peer variable.
+//  2. Call `Load` and read the transport key.
+//  3. Assert each variable reaches its value, and the key is not among the values.
+func TestEveryPeerVariableIsReachableFromTheEnvironment(t *testing.T) {
+	t.Setenv("DEVSHARD_PEER_ENABLED", "on")
+	t.Setenv("DEVSHARD_PEER_REGISTRY_CONTRACT", "gonka1contract")
+	t.Setenv("DEVSHARD_PEER_INSTANCE_ID", "instance-a")
+	t.Setenv("DEVSHARD_PEER_LISTEN", ":9443")
+	t.Setenv("DEVSHARD_PEER_ADVERTISE_URL", "https://a.example:8443")
+	t.Setenv("DEVSHARD_PEER_IDENTITY_KEY_ENV", "PEER_KEY")
+	t.Setenv("DEVSHARD_PEER_TRANSPORT_KEY", "pem")
+
+	values, err := Load()
+	if err != nil {
+		t.Fatalf("Load() = %v, want nil", err)
+	}
+	if values.PeerEnabled == nil || !*values.PeerEnabled {
+		t.Fatalf("PeerEnabled = %v", values.PeerEnabled)
+	}
+	for name, got := range map[string]*string{"gonka1contract": values.PeerRegistryContract, "instance-a": values.PeerInstanceID, ":9443": values.PeerListen, "https://a.example:8443": values.PeerAdvertiseURL, "PEER_KEY": values.PeerIdentityKeyEnv} {
+		if got == nil || *got != name {
+			t.Fatalf("a peer variable did not reach %q: %v", name, got)
+		}
+	}
+	key, err := PeerTransportKey()
+	if err != nil || key != "pem" {
+		t.Fatalf("PeerTransportKey() = %q, %v", key, err)
+	}
+}

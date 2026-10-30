@@ -85,6 +85,11 @@ func (l *ParticipantLimiter) windowsForLocked(participant, model string) ModelWi
 	}
 }
 
+// EarnedConcurrency is what a host of this weight earns at this price, for a reader outside the limiter.
+func EarnedConcurrency(per10000, weight float64) int64 {
+	return earnedConcurrency(per10000, weight)
+}
+
 // earnedConcurrency is how many requests at full price the chain's weight buys a host, never fewer than one.
 func earnedConcurrency(per10000, weight float64) int64 {
 	if per10000 <= 0 || weight <= 0 {

@@ -159,7 +159,7 @@ func (c *raceCoordinator) launch(assignment scheduler.Assignment, role, startRea
 	c.pending++
 	// Excluded on dispatch, not on failure: a sibling slot would cost a second nonce for one host's opinion.
 	c.exclude(attempt.participant)
-	c.deps.Perf.Acquire(attempt.participant)
+	c.deps.Perf.Acquire(attempt.participant, c.request.Model)
 	c.traceStep(RaceStep{
 		Kind: RaceStepNonceCommitted, RequestID: c.request.RequestID, EscrowID: assignment.Escrow, Nonce: nonce,
 		Participant: attempt.participant, Slot: attempt.hostIdx, Role: role, Reason: startReason,

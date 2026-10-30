@@ -40,6 +40,7 @@ graph TD
     end
     subgraph plumbing["plumbing"]
         CFG["config"]
+        PEER["peerload"]
         ENV["env"]
         STO["store"]
         MET["metrics"]
@@ -144,4 +145,4 @@ Three places, each with its own guard:
 
 ## What runs in the background
 
-Beyond the request path, the process runs: the chain phase observer, the escrow lifecycle manager (rotation, depletion, settlement), the nonce ledger's sweep, the escrow warmup, the host pings, the runtime-params feed and, when it is on, the height follower. Each is started by the composition root and stopped by it in order — the race's drain barrier right after the HTTP server, before anything it may still need to pay the chain what it owes ([`operations.md`](./operations.md), "Shutdown").
+Beyond the request path, the process runs: the chain phase observer, the escrow lifecycle manager (rotation, depletion, settlement), the nonce ledger's sweep, the escrow warmup, the host pings, the runtime-params feed and, when they are on, the height follower and the peer channel. Each is started by the composition root and stopped by it in order — the race's drain barrier right after the HTTP server, before anything it may still need to pay the chain what it owes ([`operations.md`](./operations.md), "Shutdown").

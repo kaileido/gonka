@@ -33,6 +33,23 @@ type Chain struct {
 	VersionsPollIntervalSeconds int64
 }
 
+const noRegistryContract = ""
+
+// Peer configures the gateway-to-gateway channel; the channel does nothing unless Active. See docs/peerload.md.
+type Peer struct {
+	Enabled          bool
+	RegistryContract string
+	InstanceID       string
+	Listen           string
+	AdvertiseURL     string
+	IdentityKeyEnv   string
+}
+
+// Active reports whether the channel was switched on and given a registry to read.
+func (p Peer) Active() bool {
+	return p.Enabled && p.RegistryContract != noRegistryContract
+}
+
 type Tx struct {
 	FeeDenom       string
 	FeeAmount      int64
@@ -229,6 +246,7 @@ type Config struct {
 	HeightSync HeightSync
 	Engine     Engine
 	Scheduler  Scheduler
+	Peer       Peer
 
 	TimeoutSweep TimeoutSweep
 

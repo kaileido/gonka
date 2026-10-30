@@ -19,7 +19,8 @@ type Tracker struct {
 	hosts         map[hostKey]*hostState
 	liveEjections []liveEjection
 	capability    *capabilityTracker
-	inflight      *inflightGauge
+	inflight      *inflightGauge[string]
+	modelInflight *inflightGauge[hostKey]
 	now           func() time.Time
 	narrator      hostNarrator
 	lastSweep     time.Time
@@ -62,11 +63,12 @@ type hostNarrator interface {
 
 func NewTracker(holder *config.Holder, now func() time.Time) *Tracker {
 	return &Tracker{
-		config:     holder,
-		now:        now,
-		hosts:      make(map[hostKey]*hostState),
-		capability: newCapabilityTracker(),
-		inflight:   newInflightGauge(),
+		config:        holder,
+		now:           now,
+		hosts:         make(map[hostKey]*hostState),
+		capability:    newCapabilityTracker(),
+		inflight:      newInflightGauge[string](),
+		modelInflight: newInflightGauge[hostKey](),
 	}
 }
 
@@ -263,12 +265,14 @@ func (t *Tracker) RecordOutputOverrun(participant, model string) {
 	t.capability.recordOutputOverrun(participant, model)
 }
 
-func (t *Tracker) Acquire(participant string) {
+func (t *Tracker) Acquire(participant, model string) {
 	t.inflight.acquire(participant)
+	t.modelInflight.acquire(hostKey{participant: participant, model: model})
 }
 
-func (t *Tracker) Release(participant string) {
+func (t *Tracker) Release(participant, model string) {
 	t.inflight.release(participant)
+	t.modelInflight.release(hostKey{participant: participant, model: model})
 }
 
 // HostState is one tracked participant/model pair as a reader sees it.
@@ -277,6 +281,7 @@ type HostState struct {
 	Model              string
 	Ejected            bool
 	Inflight           int
+	ModelInflight      int
 	TimePerOutputToken time.Duration
 }
 
@@ -304,6 +309,7 @@ func (t *Tracker) Snapshot() []HostState {
 			Model:              host.key.model,
 			Ejected:            view != nil && now.Before((*view)[host.key].ejectedUntil),
 			Inflight:           t.inflight.count(host.key.participant),
+			ModelInflight:      t.modelInflight.count(host.key),
 			TimePerOutputToken: decode,
 		})
 	}
