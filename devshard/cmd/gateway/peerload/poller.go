@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptrace"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -20,6 +21,8 @@ type peerLink struct {
 	client    *http.Client
 	transport *http.Transport
 	lastSeq   map[string]uint64
+
+	handshakeUncounted atomic.Bool
 }
 
 type poller struct {
@@ -123,7 +126,7 @@ func (p *poller) newLink(instance peerInstance) *peerLink {
 }
 
 func (p *poller) poll(ctx context.Context, link *peerLink, topic peerTopic) error {
-	traced := httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{TLSHandshakeDone: p.countCompleted})
+	traced := httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{TLSHandshakeDone: link.noteHandshake})
 	request, err := http.NewRequestWithContext(traced, http.MethodGet, link.instance.Endpoint+peerPathPrefix+topic.Name(), http.NoBody)
 	if err != nil {
 		return fmt.Errorf("peer %s: %w", link.instance.ID, err)
@@ -133,6 +136,9 @@ func (p *poller) poll(ctx context.Context, link *peerLink, topic peerTopic) erro
 		return fmt.Errorf("peer %s: %w", link.instance.ID, err)
 	}
 	defer func() { _ = response.Body.Close() }()
+	if link.handshakeUncounted.Swap(false) {
+		p.verifier.countAccepted()
+	}
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("peer %s: status %d", link.instance.ID, response.StatusCode)
 	}
@@ -152,9 +158,9 @@ func (p *poller) poll(ctx context.Context, link *peerLink, topic peerTopic) erro
 	return topic.Accept(link.instance.ID, envelope, now)
 }
 
-func (p *poller) countCompleted(_ tls.ConnectionState, err error) {
+func (l *peerLink) noteHandshake(_ tls.ConnectionState, err error) {
 	if err == nil {
-		p.verifier.countAccepted()
+		l.handshakeUncounted.Store(true)
 	}
 }
 

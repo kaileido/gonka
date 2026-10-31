@@ -142,3 +142,49 @@ func TestChangedEntryReplacesTheLink(t *testing.T) {
 		})
 	}
 }
+
+// Test flow:
+//  1. Start a listener whose allowlist leaves out the dialling address, and link the dialling instance to it over real TLS 1.3.
+//  2. Poll, so the dialling side finishes its handshake and the listener then refuses its certificate.
+//  3. Assert neither side counts accepted, the listener counts not_allowed, the poll failure is reported, and no snapshot arrives.
+func TestPollDoesNotCountAHandshakeTheListenerRefused(t *testing.T) {
+	registry := newFakeRegistry()
+	clock := newFakeClock()
+	listening := newLoopbackInstance(t, PeerID{Address: secondAddress, Instance: "listening"}, registry, clock, oneHostLoad(1), fixedConcurrency(1))
+	dialling := newLoopbackInstance(t, PeerID{Address: firstAddress, Instance: "dialling"}, registry, clock, oneHostLoad(1), fixedConcurrency(1))
+	t.Cleanup(func() { _ = dialling.listener.Close() })
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(func() {
+		cancel()
+		listening.plugin.Wait()
+	})
+	allowlist := []string{secondAddress}
+	listening.plugin.ObserveChain(allowlist, testHeight)
+	if err := listening.plugin.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	listening.plugin.refreshRegistry(ctx)
+	dialling.plugin.ObserveChain(allowlist, testHeight)
+	dialling.plugin.refreshRegistry(ctx)
+
+	dialling.plugin.pollPeers(ctx)
+
+	if got := dialling.dialer.count(listening.address); got != 1 {
+		t.Fatalf("dials = %d, want 1", got)
+	}
+	if got := dialling.plugin.HandshakeCounts()[HandshakeAccepted]; got != 0 {
+		t.Errorf("dialling accepted = %d, want 0 for a refused certificate", got)
+	}
+	if got := listening.plugin.HandshakeCounts()[HandshakeAccepted]; got != 0 {
+		t.Errorf("listening accepted = %d, want 0", got)
+	}
+	if got := listening.plugin.HandshakeCounts()[HandshakeNotAllowed]; got != 1 {
+		t.Errorf("listening not_allowed = %d, want 1", got)
+	}
+	if len(dialling.failures.messages) != 1 {
+		t.Errorf("reported failures = %v, want one", dialling.failures.messages)
+	}
+	if seen := dialling.plugin.View().LastSeenSeconds(); len(seen) != 0 {
+		t.Errorf("last seen = %v, want none", seen)
+	}
+}

@@ -38,7 +38,7 @@ Both sides run the same check once per connection, as `tls.Config.VerifyConnecti
 
 The dialling side also requires the certificate to name the instance it dialled. The registry accepts any host, so a peer's address goes through the dial guard that refuses private and link-local addresses, unless `DEVSHARD_ALLOW_PRIVATE_ADDRESSES` lifts it.
 
-TLS runs `VerifyConnection` before it checks the peer's signature, so a refusal is counted there and `accepted` only once the connection is past its handshake and inside its address's cap.
+TLS runs `VerifyConnection` before it checks the peer's signature, so a refusal is counted there. A listener counts `accepted` once the connection is past its handshake and inside its address's cap. A poller counts it at the first response on the connection, because under TLS 1.3 a client finishes its handshake before the listener checks its certificate; a refusal by the listener is counted by the listener and reaches the poller as a failed poll.
 
 Every request repeats steps 1 to 5 from the connection's state, without touching the registry, so a request off a verified connection or from a peer removed a moment ago answers 403. A poller applies these to a response before it reads the payload, in order: the body is read no further than the topic's cap; `topic` and `topic_version` match the request; `origin` and `instance` match the connection; `issued_at_ms` is within 30 s of now each way; `seq` is greater than the last one seen.
 
