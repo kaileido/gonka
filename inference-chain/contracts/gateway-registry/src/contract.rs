@@ -17,6 +17,7 @@ const CONTRACT_NAME: &str = "gateway-registry";
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 const INSTANCE_TTL_BLOCKS: u64 = 16200;
+const MAX_INSTANCE_TTL_BLOCKS: u64 = 5_913_000;
 const PRUNE_PER_WRITE: u32 = 10;
 const MAX_PRUNE_LIMIT: u32 = 100;
 const MAX_PAGE_LIMIT: u32 = 100;
@@ -87,6 +88,23 @@ pub fn execute(
         ExecuteMsg::SyncWriters { writers } => sync_writers(deps, env, info, writers),
         ExecuteMsg::SetPaused { paused } => set_paused(deps, info, paused),
         ExecuteMsg::SetOwner { owner } => set_owner(deps, info, owner),
+        ExecuteMsg::UpdateConfig {
+            max_endpoint_len,
+            max_topics,
+            max_instances_per_address,
+            min_update_interval_blocks,
+            instance_ttl_blocks,
+            prune_per_write,
+        } => update_config(
+            deps,
+            info,
+            max_endpoint_len,
+            max_topics,
+            max_instances_per_address,
+            min_update_interval_blocks,
+            instance_ttl_blocks,
+            prune_per_write,
+        ),
     }
 }
 
@@ -132,24 +150,31 @@ fn register_instance(
         }
         None => {
             let stored = load_instances(deps.storage, &info.sender)?;
-            if stored.len() as u32 >= config.max_instances_per_address {
-                // The address stays within the limit on disk: the oldest expired instance makes room.
-                let oldest_expired = stored
+            let excess =
+                (stored.len() + 1).saturating_sub(config.max_instances_per_address as usize);
+            if excess > 0 {
+                // The address stays within the limit on disk: oldest expired instances make room.
+                let mut expired: Vec<&Instance> = stored
                     .iter()
                     .filter(|instance| is_expired(instance, height, &config))
-                    .min_by_key(|instance| instance.updated_height)
-                    .ok_or(ContractError::TooManyInstances {
+                    .collect();
+                if expired.len() < excess {
+                    return Err(ContractError::TooManyInstances {
                         max: config.max_instances_per_address,
-                    })?;
-                remove_instance(
-                    deps.storage,
-                    &info.sender,
-                    &oldest_expired.instance_id,
-                    oldest_expired.updated_height,
-                );
-                response =
-                    response.add_event(expired_event(&info.sender, &oldest_expired.instance_id));
-                prune_budget = prune_budget.saturating_sub(1);
+                    });
+                }
+                expired.sort_by_key(|instance| instance.updated_height);
+                for oldest_expired in &expired[..excess] {
+                    remove_instance(
+                        deps.storage,
+                        &info.sender,
+                        &oldest_expired.instance_id,
+                        oldest_expired.updated_height,
+                    );
+                    response = response
+                        .add_event(expired_event(&info.sender, &oldest_expired.instance_id));
+                }
+                prune_budget = prune_budget.saturating_sub(excess as u32);
             }
         }
     }
@@ -274,6 +299,31 @@ fn set_owner(deps: DepsMut, info: MessageInfo, owner: String) -> Result<Response
         .add_attribute("owner", config.owner.as_str()))
 }
 
+#[allow(clippy::too_many_arguments)]
+fn update_config(
+    deps: DepsMut,
+    info: MessageInfo,
+    max_endpoint_len: u32,
+    max_topics: u32,
+    max_instances_per_address: u32,
+    min_update_interval_blocks: u64,
+    instance_ttl_blocks: u64,
+    prune_per_write: u32,
+) -> Result<Response, ContractError> {
+    let config = Config {
+        max_endpoint_len,
+        max_topics,
+        max_instances_per_address,
+        min_update_interval_blocks,
+        instance_ttl_blocks,
+        prune_per_write,
+        ..ensure_owner(deps.storage, &info.sender)?
+    };
+    validate_config(&config)?;
+    CONFIG.save(deps.storage, &config)?;
+    Ok(Response::new().add_attribute("action", "update_config"))
+}
+
 #[entry_point]
 pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> Result<Binary, ContractError> {
     let binary = match msg {
@@ -378,6 +428,8 @@ pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, C
 pub fn validate_config(config: &Config) -> Result<(), ContractError> {
     let reason = if config.instance_ttl_blocks == 0 {
         "instance_ttl_blocks must be positive"
+    } else if config.instance_ttl_blocks > MAX_INSTANCE_TTL_BLOCKS {
+        "instance_ttl_blocks is over its limit"
     } else if config.prune_per_write == 0 {
         "prune_per_write must be positive"
     } else if config.max_instances_per_address == 0 {

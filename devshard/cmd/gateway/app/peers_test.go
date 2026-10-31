@@ -71,8 +71,9 @@ func TestPeerChannelIsOffUnlessSwitchedOnWithAContract(t *testing.T) {
 }
 
 // Test flow:
-//  1. Switch the channel on without a chain connection, without a signing key, without a transport key, and with an invalid instance id.
-//  2. Assert each refuses to build, naming no key material.
+//  1. Switch the channel on without a chain connection, without a signing key, and with an invalid instance id.
+//  2. Assert each refuses to build.
+//  3. Build it complete from the signing key alone and assert it builds without reading the chain.
 func TestPeerChannelRefusesAnIncompleteConfiguration(t *testing.T) {
 	asked, reads := 0, 0
 	active := config.Peer{Enabled: true, RegistryContract: "gonka1contract", InstanceID: "instance-a", Listen: ":0", AdvertiseURL: "https://a.example:8443", IdentityKeyEnv: "TEST_PEER_KEY"}
@@ -83,13 +84,13 @@ func TestPeerChannelRefusesAnIncompleteConfiguration(t *testing.T) {
 	if _, err := newPeerChannel(active, peerChannelSources{signers: refusingSigners{asked: &asked}, registry: countingRegistry{reads: &reads}}); err == nil {
 		t.Fatal("no signing key: want an error")
 	}
-	t.Setenv("DEVSHARD_PEER_TRANSPORT_KEY", "")
-	if _, err := newPeerChannel(active, peerChannelSources{signers: fixedSigners{}, registry: countingRegistry{reads: &reads}}); err == nil {
-		t.Fatal("no transport key: want an error")
+	badInstance := active
+	badInstance.InstanceID = "UPPER"
+	if _, err := newPeerChannel(badInstance, peerChannelSources{signers: fixedSigners{}, registry: countingRegistry{reads: &reads}}); !errors.Is(err, peerload.ErrBadSettings) {
+		t.Fatalf("bad instance id: %v, want ErrBadSettings", err)
 	}
-	t.Setenv("DEVSHARD_PEER_TRANSPORT_KEY", "not a key")
-	if _, err := newPeerChannel(active, peerChannelSources{signers: fixedSigners{}, registry: countingRegistry{reads: &reads}}); !errors.Is(err, peerload.ErrBadSettings) {
-		t.Fatalf("bad transport key: %v, want ErrBadSettings", err)
+	if plugin, err := newPeerChannel(active, peerChannelSources{signers: fixedSigners{}, registry: countingRegistry{reads: &reads}}); err != nil || plugin == nil {
+		t.Fatalf("complete settings: %v, %v", plugin, err)
 	}
 	if reads != 0 {
 		t.Fatalf("building read the chain %d times", reads)

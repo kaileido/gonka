@@ -87,7 +87,7 @@ func TestRegistryCallsCarryADeadline(t *testing.T) {
 func TestAdvertiseURLFollowsTheContractGrammar(t *testing.T) {
 	registry := newFakeRegistry()
 	build := func(advertise string) error {
-		_, err := New(Settings{Self: PeerID{Address: firstAddress, Instance: "self"}, AdvertiseURL: advertise, TransportKeyPEM: newKeyPEM(t)}, Deps{Registry: registry, Registrar: registry.registrar(firstAddress), Now: newFakeClock().now})
+		_, err := New(Settings{Self: PeerID{Address: firstAddress, Instance: "self"}, AdvertiseURL: advertise, ChainKey: newChainKey(t)}, Deps{Registry: registry, Registrar: registry.registrar(firstAddress), Now: newFakeClock().now})
 		return err
 	}
 	longestHost := strings.Repeat("a", endpointLimit-len("https://:8443"))

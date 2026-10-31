@@ -173,12 +173,11 @@ Signing keys are addressed **by the name of the variable that holds them**, neve
 | Variable | Default | What it decides |
 | --- | --- | --- |
 | `DEVSHARD_PEER_ENABLED` | off | switches on the channel between gateways, with the contract below; off, nothing listens or dials ([`peerload.md`](peerload.md)) |
-| `DEVSHARD_PEER_REGISTRY_CONTRACT` | empty, channel off | the bech32 address of the gateway-registry contract |
+| `DEVSHARD_PEER_REGISTRY_CONTRACT` | empty, channel off | the bech32 address of the gateway-registry contract; [its README](../../../../inference-chain/contracts/gateway-registry/README.md) covers deploying it with an admin and upgrading it |
 | `DEVSHARD_PEER_INSTANCE_ID` | empty, required when on | this instance's name under its address, `[a-z0-9-]+`, at most 32 bytes, unique per address |
 | `DEVSHARD_PEER_LISTEN` | `:8443` | the mTLS listener's bind address, separate from the client API |
 | `DEVSHARD_PEER_ADVERTISE_URL` | empty, required when on | the `https://host:port` other instances dial, written to the registry; at most 256 bytes, no path, no userinfo, and a host of letters, digits, `.` and `-` or a bracketed IPv6, else the boot is refused |
-| `DEVSHARD_PEER_TRANSPORT_KEY` | empty, required when on | this instance's own transport key, PKCS#8 PEM, ed25519 or ECDSA; never the chain key, and logs name the variable, not the key |
-| `DEVSHARD_PEER_IDENTITY_KEY_ENV` | empty, required when on | the name of the variable holding the allowlisted chain key that signs `RegisterInstance` |
+| `DEVSHARD_PEER_IDENTITY_KEY_ENV` | empty, required when on | the name of the variable holding the allowlisted chain key that signs `RegisterInstance` and from which the instance's transport key is derived |
 | `DEVSHARD_PORT` | 8080 | the listening port |
 | `DEVSHARD_CHAIN_ID` | empty | the chain id the gateway signs its transactions for; empty asks the node over `DEVSHARD_CHAIN_GRPC`, and a configured value wins over the node |
 | `DEVSHARD_STORAGE_DIR` | `$HOME/.cache/gonka-gateway` | where `gateway.db` and the escrow storage live |

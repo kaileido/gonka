@@ -7,7 +7,7 @@ Every read from the network and every transaction the gateway signs passes throu
 - **The transaction client** (`txclient.go`, `tx_build.go`, `protoencode.go`, `grpc.go`) — build, sign, broadcast, confirm. A transaction is not assumed to have landed because it was accepted.
 - **The phase observer** (`observer.go`, `observer_fetch.go`, `observer_preservation.go`, `observer_publish.go`, `observer_health.go`, `snapshot.go`) — polls the network's public API and publishes an immutable `PhaseSnapshot`: the epoch, its phase, which participants are preserved through proof-of-compute, the host weights the capacity model scales by, and the context window governance gives each model.
 - **Escrow queries and settlement encoding** (`escrow_query.go`, `settlement.go`).
-- **The gateway-registry contract** (`registry.go`) — the `MembersOf` query and the `RegisterInstance` write of the peer channel.
+- **The gateway-registry contract** (`registry.go`) — the `MembersOf` query and the `RegisterInstance` write of the peer channel. Deploying and upgrading the contract is in [its README](../../../../inference-chain/contracts/gateway-registry/README.md).
 - **Protocol versions** (`versions.go`) — the gateway serves exactly one, fixed at build time.
 
 ## Boundaries

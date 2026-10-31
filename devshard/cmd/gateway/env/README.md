@@ -11,7 +11,7 @@ One typed table: name, type, and nothing else.
 ## Boundaries
 
 - **Defaults are not here, with one exception.** `LogFormat` answers `json` for an empty `DEVSHARD_LOG_FORMAT`, because logging is configured before `config` exists. Every other default belongs to [`config`](../config/), which is what makes "unset" and "set to zero" distinguishable.
-- **A chain key is addressed by name, not by value**: in `DEVSHARDS_JSON`, in the admin API, and here. A key pasted into a request body would reach the logs and the shell history. `DEVSHARD_PEER_TRANSPORT_KEY` is the one variable that holds a PEM by value: the peer channel's own transport key, never a chain key.
+- **A chain key is addressed by name, not by value**: in `DEVSHARDS_JSON`, in the admin API, and here. A key pasted into a request body would reach the logs and the shell history.
 - **An empty value counts as unset**, including for the `NODE_GRPC_URL` / `NODE_RPC_URL` fallbacks of the chain endpoints.
 - **Two tables are read elsewhere.** The runtime-params feed ([`../app/runtime_params.go`](../app/runtime_params.go)) reads its own knobs through `devshard/runtimeparams`, because they are fleet-shared `DEVSHARD_*` / `DEVSHARDD_*` names every devshard binary honours under the same spelling. Restating them here would give one knob two owners, which is the failure this package exists to prevent.
 - **Tracing reads its own switch the same way.** `DEVSHARD_OTEL_ENABLED`, `OTEL_ENDPOINT` and `OTEL_HEADERS` are read by `devshard/observability` when [`../app/tracing.go`](../app/tracing.go) starts it, because every devshard binary honours them under the same spelling; they are listed in [`../docs/operations.md`](../docs/operations.md) like any other knob.

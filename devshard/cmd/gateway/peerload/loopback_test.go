@@ -261,7 +261,7 @@ func TestNewTouchesNothingAndValidatesItsSettings(t *testing.T) {
 		t.Fatalf("New() touched the outside: %d reads, %d writes, %d dials", registry.callCount(), registry.registrationCount(), len(instance.dialer.dials))
 	}
 
-	good := Settings{Self: PeerID{Address: firstAddress, Instance: "good"}, AdvertiseURL: "https://good.example:8443", TransportKeyPEM: newKeyPEM(t)}
+	good := Settings{Self: PeerID{Address: firstAddress, Instance: "good"}, AdvertiseURL: "https://good.example:8443", ChainKey: newChainKey(t)}
 	deps := Deps{Registry: registry, Registrar: registry.registrar(firstAddress), Now: newFakeClock().now}
 	if _, err := New(good, deps); err != nil {
 		t.Fatalf("New(good) = %v", err)
@@ -269,7 +269,7 @@ func TestNewTouchesNothingAndValidatesItsSettings(t *testing.T) {
 	badInstance, badURL, badKey := good, good, good
 	badInstance.Self.Instance = "UPPER"
 	badURL.AdvertiseURL = "http://plain.example:8443"
-	badKey.TransportKeyPEM = "not a key"
+	badKey.ChainKey = []byte("not a key")
 	for name, settings := range map[string]Settings{"instance": badInstance, "url": badURL, "key": badKey} {
 		if _, err := New(settings, deps); !errors.Is(err, ErrBadSettings) {
 			t.Errorf("New(bad %s) = %v, want ErrBadSettings", name, err)

@@ -628,8 +628,8 @@ func TestTheDispatchQueueDepthIsReadStrictly(t *testing.T) {
 
 // Test flow:
 //  1. Set every peer variable.
-//  2. Call `Load` and read the transport key.
-//  3. Assert each variable reaches its value, and the key is not among the values.
+//  2. Call `Load`.
+//  3. Assert each variable reaches its value.
 func TestEveryPeerVariableIsReachableFromTheEnvironment(t *testing.T) {
 	t.Setenv("DEVSHARD_PEER_ENABLED", "on")
 	t.Setenv("DEVSHARD_PEER_REGISTRY_CONTRACT", "gonka1contract")
@@ -637,7 +637,6 @@ func TestEveryPeerVariableIsReachableFromTheEnvironment(t *testing.T) {
 	t.Setenv("DEVSHARD_PEER_LISTEN", ":9443")
 	t.Setenv("DEVSHARD_PEER_ADVERTISE_URL", "https://a.example:8443")
 	t.Setenv("DEVSHARD_PEER_IDENTITY_KEY_ENV", "PEER_KEY")
-	t.Setenv("DEVSHARD_PEER_TRANSPORT_KEY", "pem")
 
 	values, err := Load()
 	if err != nil {
@@ -650,9 +649,5 @@ func TestEveryPeerVariableIsReachableFromTheEnvironment(t *testing.T) {
 		if got == nil || *got != name {
 			t.Fatalf("a peer variable did not reach %q: %v", name, got)
 		}
-	}
-	key, err := PeerTransportKey()
-	if err != nil || key != "pem" {
-		t.Fatalf("PeerTransportKey() = %q, %v", key, err)
 	}
 }

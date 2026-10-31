@@ -36,6 +36,15 @@ pub enum ExecuteMsg {
     SetPaused { paused: bool },
     /// Owner only
     SetOwner { owner: String },
+    /// Owner only; replaces every limit, validated as at instantiate. Stored instances are kept; see the README
+    UpdateConfig {
+        max_endpoint_len: u32,
+        max_topics: u32,
+        max_instances_per_address: u32,
+        min_update_interval_blocks: u64,
+        instance_ttl_blocks: u64,
+        prune_per_write: u32,
+    },
 }
 
 #[cw_serde]

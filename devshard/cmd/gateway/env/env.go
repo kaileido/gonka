@@ -139,8 +139,6 @@ const (
 	LogFormatText = "text"
 
 	AllowPrivateAddressesVariable = "DEVSHARD_ALLOW_PRIVATE_ADDRESSES"
-
-	peerTransportKeyVariable = "DEVSHARD_PEER_TRANSPORT_KEY"
 )
 
 // ErrPrivateKeyMissing marks a devshard whose signing key the environment does not hold.
@@ -171,11 +169,6 @@ func PrivateKey(name string) (string, error) {
 		return key, nil
 	}
 	return "", fmt.Errorf("%w: %s is unset", ErrPrivateKeyMissing, name)
-}
-
-// PeerTransportKey reads the instance's transport key PEM; it stays out of Values so no config dump can carry it.
-func PeerTransportKey() (string, error) {
-	return PrivateKey(peerTransportKeyVariable)
 }
 
 func lookup(names ...string) string {

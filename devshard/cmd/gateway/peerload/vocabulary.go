@@ -20,6 +20,7 @@ const (
 	peerErrorUnknownTopic  = "unknown_topic"
 	peerErrorBodyForbidden = "body_forbidden"
 	peerErrorRefused       = "refused"
+	peerErrorRateLimited   = "rate_limited"
 
 	sanScheme       = "gonka"
 	idSeparator     = "/"
@@ -64,6 +65,16 @@ const (
 	serverHeaderTimeout = 5 * time.Second
 	serverIdleTimeout   = 60 * time.Second
 	maxHeaderBytes      = 16 << 10
+
+	requestBurstPerTopic     = 3
+	payloadCacheWindow       = time.Second
+	maxConnectedAddresses    = 64
+	maxConnectionsPerAddress = maxInstancesPerAddress
+	maxConnections           = maxConnectedAddresses * maxInstancesPerAddress
+	maxUnidentifiedPerSource = 8
+
+	transportKeyLabel = "gonka/gateway/peer-transport/v1"
+	chainKeyBytes     = 32
 
 	discountFloor   = 0.25
 	discountNeutral = 1.0

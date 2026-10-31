@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"time"
@@ -10,7 +11,6 @@ import (
 
 	"devshard/cmd/gateway/chain"
 	"devshard/cmd/gateway/config"
-	"devshard/cmd/gateway/env"
 	"devshard/cmd/gateway/internal/logkey"
 	"devshard/cmd/gateway/limits"
 	"devshard/cmd/gateway/peerload"
@@ -78,17 +78,17 @@ func newPeerChannel(settings config.Peer, sources peerChannelSources) (*peerload
 	if err != nil {
 		return nil, fmt.Errorf("peer identity key: %w", err)
 	}
-	transportKey, err := env.PeerTransportKey()
+	chainKey, err := hex.DecodeString(signer.PrivateKeyHex())
 	if err != nil {
-		return nil, fmt.Errorf("peer transport key: %w", err)
+		return nil, fmt.Errorf("decoding peer identity key: %w", err)
 	}
 	return peerload.New(peerload.Settings{
-		Self:            peerload.PeerID{Address: signer.Address(), Instance: settings.InstanceID},
-		AdvertiseURL:    settings.AdvertiseURL,
-		ListenAddress:   settings.Listen,
-		TransportKeyPEM: transportKey,
-		Rounding:        peerload.DefaultRounding(),
-		CommitPoll:      sources.commitPoll,
+		Self:          peerload.PeerID{Address: signer.Address(), Instance: settings.InstanceID},
+		AdvertiseURL:  settings.AdvertiseURL,
+		ListenAddress: settings.Listen,
+		ChainKey:      chainKey,
+		Rounding:      peerload.DefaultRounding(),
+		CommitPoll:    sources.commitPoll,
 	}, peerDeps(settings, signer, sources))
 }
 

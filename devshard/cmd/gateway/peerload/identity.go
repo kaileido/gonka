@@ -2,13 +2,12 @@ package peerload
 
 import (
 	"crypto"
-	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/hkdf"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/pem"
 	"fmt"
 	"math/big"
 	"net/url"
@@ -39,25 +38,15 @@ type transportIdentity struct {
 	Fingerprint spkiFingerprint
 }
 
-func loadTransportIdentity(keyPEM string, self PeerID) (transportIdentity, error) {
-	block, _ := pem.Decode([]byte(keyPEM))
-	if block == nil {
-		return transportIdentity{}, fmt.Errorf("%w: transport key is not PEM", ErrBadSettings)
+func deriveTransportIdentity(chainKey []byte, self PeerID) (transportIdentity, error) {
+	if len(chainKey) != chainKeyBytes {
+		return transportIdentity{}, fmt.Errorf("%w: chain key must be %d bytes", ErrBadSettings, chainKeyBytes)
 	}
-	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	seed, err := hkdf.Key(sha256.New, chainKey, nil, transportKeyLabel+idSeparator+self.String(), ed25519.SeedSize)
 	if err != nil {
-		return transportIdentity{}, fmt.Errorf("%w: transport key is not PKCS#8", ErrBadSettings)
+		return transportIdentity{}, fmt.Errorf("derive transport key: %w", err)
 	}
-	var signer crypto.Signer
-	switch key := parsed.(type) {
-	case ed25519.PrivateKey:
-		signer = key
-	case *ecdsa.PrivateKey:
-		signer = key
-	default:
-		return transportIdentity{}, fmt.Errorf("%w: transport key must be ed25519 or ECDSA", ErrBadSettings)
-	}
-	return issueIdentity(signer, self)
+	return issueIdentity(ed25519.NewKeyFromSeed(seed), self)
 }
 
 func issueIdentity(signer crypto.Signer, self PeerID) (transportIdentity, error) {

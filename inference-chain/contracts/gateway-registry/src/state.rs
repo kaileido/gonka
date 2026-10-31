@@ -4,7 +4,7 @@ use cw_storage_plus::{Item, Map};
 
 #[cw_serde]
 pub struct Config {
-    /// Only this account may SyncWriters, SetPaused and SetOwner
+    /// Only this account may SyncWriters, SetPaused, SetOwner and UpdateConfig
     pub owner: Addr,
     /// RegisterInstance is refused while paused; queries still answer
     pub paused: bool,

@@ -19,12 +19,12 @@ type Registrar interface {
 
 // Settings configures the channel. Shadow is the only mode: the discount reaches /metrics and nothing else.
 type Settings struct {
-	Self            PeerID
-	AdvertiseURL    string
-	ListenAddress   string
-	TransportKeyPEM string
-	Rounding        Rounding
-	CommitPoll      time.Duration
+	Self          PeerID
+	AdvertiseURL  string
+	ListenAddress string
+	ChainKey      []byte
+	Rounding      Rounding
+	CommitPoll    time.Duration
 }
 
 // Deps is what the plugin reads and writes outside itself.
@@ -70,7 +70,7 @@ func New(settings Settings, deps Deps) (*Plugin, error) {
 	if deps.Registry == nil || deps.Registrar == nil {
 		return nil, fmt.Errorf("%w: the channel needs a chain connection", ErrBadSettings)
 	}
-	identity, err := loadTransportIdentity(settings.TransportKeyPEM, settings.Self)
+	identity, err := deriveTransportIdentity(settings.ChainKey, settings.Self)
 	if err != nil {
 		return nil, err
 	}
@@ -78,6 +78,7 @@ func New(settings Settings, deps Deps) (*Plugin, error) {
 	verifier := newVerifier(members)
 	view := NewView(loadMaxAge, deps.Concurrency, deps.Now)
 	topic := newLoadTopic(deps.Samples, settings.Rounding, view)
+	settings.ChainKey = nil
 	return &Plugin{
 		settings: settings,
 		deps:     deps,

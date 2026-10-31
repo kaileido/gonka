@@ -7,7 +7,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
-	"encoding/pem"
 	"errors"
 	"net"
 	"sync"
@@ -153,22 +152,22 @@ func (f registrarFunc) RegisterInstance(ctx context.Context, registration chain.
 	return f(ctx, registration)
 }
 
-func newKeyPEM(t *testing.T) string {
+func newChainKey(t *testing.T) []byte {
+	t.Helper()
+	key := make([]byte, chainKeyBytes)
+	if _, err := rand.Read(key); err != nil {
+		t.Fatal(err)
+	}
+	return key
+}
+
+func newIdentity(t *testing.T, id PeerID) transportIdentity {
 	t.Helper()
 	_, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	der, err := x509.MarshalPKCS8PrivateKey(key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
-}
-
-func newIdentity(t *testing.T, id PeerID) transportIdentity {
-	t.Helper()
-	identity, err := loadTransportIdentity(newKeyPEM(t), id)
+	identity, err := issueIdentity(key, id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,11 +275,11 @@ func newLoopbackInstance(t *testing.T, id PeerID, registry *fakeRegistry, clock 
 	}
 	instance := &loopbackInstance{id: id, listener: listener, dialer: newRecordingDialer(), address: listener.Addr().String(), failures: &failureLog{}}
 	plugin, err := New(Settings{
-		Self:            id,
-		AdvertiseURL:    "https://" + instance.address,
-		ListenAddress:   instance.address,
-		TransportKeyPEM: newKeyPEM(t),
-		Rounding:        DefaultRounding(),
+		Self:          id,
+		AdvertiseURL:  "https://" + instance.address,
+		ListenAddress: instance.address,
+		ChainKey:      newChainKey(t),
+		Rounding:      DefaultRounding(),
 	}, Deps{
 		Registry:    registry,
 		Registrar:   registry.registrar(id.Address),
@@ -302,7 +301,7 @@ func newLoopbackInstance(t *testing.T, id PeerID, registry *fakeRegistry, clock 
 
 func newTestPlugin(t *testing.T, registry Registry, registrar Registrar, now func() time.Time) *Plugin {
 	t.Helper()
-	plugin, err := New(Settings{Self: PeerID{Address: firstAddress, Instance: "self"}, AdvertiseURL: selfEndpoint, TransportKeyPEM: newKeyPEM(t), Rounding: DefaultRounding()}, Deps{
+	plugin, err := New(Settings{Self: PeerID{Address: firstAddress, Instance: "self"}, AdvertiseURL: selfEndpoint, ChainKey: newChainKey(t), Rounding: DefaultRounding()}, Deps{
 		Registry:    registry,
 		Registrar:   registrar,
 		Samples:     oneHostLoad(1),

@@ -38,6 +38,15 @@ func (v *verifier) Authorize(state *tls.ConnectionState) (PeerID, error) {
 	return v.check(*state)
 }
 
+// Listed reports whether the instance is still in the allowlist and the registry.
+func (v *verifier) Listed(id PeerID) bool {
+	if !v.members.Allowed(id.Address) {
+		return false
+	}
+	_, known := v.members.Lookup(id)
+	return known
+}
+
 // HandshakeCounts copies the handshake results so far, by result.
 func (v *verifier) HandshakeCounts() map[string]uint64 {
 	v.mu.Lock()

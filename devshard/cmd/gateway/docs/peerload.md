@@ -8,7 +8,11 @@ The channel is off unless `DEVSHARD_PEER_ENABLED` is true **and** `DEVSHARD_PEER
 
 On, the channel runs in shadow. It serves and polls, and computes the discount, and `limits.Capacity.EscrowWeight`, the scheduler and the limiters read none of it. `app/peers.go` reads this gateway's own state for it, so `peerload` imports neither `limits` nor `perf`, and only the metrics collector reads the view; `peerload/boundary_test.go` parses the gateway's imports to keep it that way.
 
-When switched on, `DEVSHARD_PEER_INSTANCE_ID`, `DEVSHARD_PEER_ADVERTISE_URL`, `DEVSHARD_PEER_TRANSPORT_KEY` and `DEVSHARD_PEER_IDENTITY_KEY_ENV` are required; a missing or invalid one refuses the boot. So does a listener that cannot bind. The advertised URL is held to the contract's own grammar: `https://host:port`, at most 256 bytes, a host of letters, digits, `.` and `-` or a bracketed IPv6, a port from 1 to 65535. The gateway takes 256 as the `max_endpoint_len` the contract was instantiated with; a contract instantiated lower still refuses the write.
+When switched on, `DEVSHARD_PEER_INSTANCE_ID`, `DEVSHARD_PEER_ADVERTISE_URL` and `DEVSHARD_PEER_IDENTITY_KEY_ENV` are required; a missing or invalid one refuses the boot. So does a listener that cannot bind. The advertised URL is held to the contract's own grammar: `https://host:port`, at most 256 bytes, a host of letters, digits, `.` and `-` or a bracketed IPv6, a port from 1 to 65535. The gateway takes 256 as the contract's `max_endpoint_len`; a contract set lower still refuses the write. The [contract's README](../../../../inference-chain/contracts/gateway-registry/README.md) covers deploying it with an admin, upgrading it and changing its limits.
+
+## The transport key
+
+TLS in Go has no secp256k1, so the certificate carries an ed25519 key derived from the chain key that `DEVSHARD_PEER_IDENTITY_KEY_ENV` names: the seed is HKDF-SHA256 of the chain key, with no salt and the info `gonka/gateway/peer-transport/v1/<address>/<instance_id>`. The same key and instance id give the same transport key across restarts, so the registered fingerprint stays valid. Another instance id gives another key, and the derivation does not lead back to the chain key. Changing the chain key or the instance id changes the fingerprint, and the instance writes its new entry at the next registry read.
 
 ## Membership
 
@@ -34,13 +38,21 @@ Both sides run the same check once per connection, as `tls.Config.VerifyConnecti
 
 The dialling side also requires the certificate to name the instance it dialled. The registry accepts any host, so a peer's address goes through the dial guard that refuses private and link-local addresses, unless `DEVSHARD_ALLOW_PRIVATE_ADDRESSES` lifts it.
 
-TLS runs `VerifyConnection` before it checks the peer's signature, so a refusal is counted there and `accepted` only once the handshake has completed.
+TLS runs `VerifyConnection` before it checks the peer's signature, so a refusal is counted there and `accepted` only once the connection is past its handshake and inside its address's cap.
 
 Every request repeats steps 1 to 5 from the connection's state, without touching the registry, so a request off a verified connection or from a peer removed a moment ago answers 403. A poller applies these to a response before it reads the payload, in order: the body is read no further than the topic's cap; `topic` and `topic_version` match the request; `origin` and `instance` match the connection; `issued_at_ms` is within 30 s of now each way; `seq` is greater than the last one seen.
 
 ### Removal
 
 Each registry refresh, which an allowlist change triggers at once, closes server connections whose peer no longer passes and drops the poller's link to it, along with its snapshot. A new key under the same instance id is a new link.
+
+## Limits on the listener
+
+Every request for a known topic, whatever its answer, spends one allowance held per peer instance, by the name in its verified certificate, and per topic: one request per topic interval, with a burst of 3, so a restart or a retry passes and a peer asking faster answers 429 until it slows down. A request for anything else holds no allowance and answers 404, which costs no more to answer than a 429, so a peer cannot grow the set of allowances by naming topics. A peer's allowances are forgotten at the registry refresh that finds it gone.
+
+A topic's payload is built at most once per second, and concurrent requests wait for that one build. Each response is its own envelope around the shared payload: `seq` is new every time, so a second poll inside the second still passes the strictly increasing check, and `issued_at_ms` is when the payload was built, so its age stays honest. A failed build is not kept; the next request builds again.
+
+The listener holds at most 1024 connections, room for 64 addresses of 16 instances each, and closes any further one at accept, before its handshake. That count includes connections not yet identified: a connection is identified when its HTTP/2 preface arrives, after a handshake of at most 5 s of reads plus up to 5 s for one registry reread, and at most 10 s after that handshake. One remote IP holds at most 8 connections not yet identified and any further one from it is closed at accept, so one source cannot fill the listener. Peers behind one IP stay inside 8 because a handshake and a preface take moments, and one that is refused connects again at its next poll. Filling an empty listener takes 128 sources, so a distributed flood can still keep new peers out while it lasts; this risk remains, and established connections keep working. One address holds at most 16 identified connections, the `max_instances_per_address` the contract is deployed with, and any further one is closed after its HTTP/2 preface, at most 10 s after its handshake, and stops counting against its address at once. The gateway keeps its own copy: past 16, an address's further instances are not peers, so raising the limit on the contract needs a gateway release first. A replacement instance can be refused until the old connection's 60 s idle timeout frees its place; its polls fail meanwhile and the channel recovers without action.
 
 ## Channel contract
 
@@ -53,6 +65,7 @@ Each registry refresh, which an allowlist change triggers at once, closes server
 | 404, `Gonka-Peer-Error: unknown_topic`, empty body | the topic is unknown |
 | 400, `Gonka-Peer-Error: body_forbidden` | the request carries a body |
 | 405 | any other method |
+| 429, `Gonka-Peer-Error: rate_limited` | the peer is over its request allowance |
 | 500, empty body | the topic could not be built within its cap |
 
 A new topic is a `Topic` in the gateway release, and needs no contract change. Each sets its name, version, byte cap, interval and maximum age.

@@ -8,9 +8,10 @@ use gateway_registry::ContractError;
 
 const TTL: u64 = 16200;
 const MIN_INTERVAL: u64 = 100;
+const MAX_TTL: u64 = 5_913_000;
 
 fn contract() -> Box<dyn Contract<Empty>> {
-    Box::new(ContractWrapper::new(execute, instantiate, query))
+    Box::new(ContractWrapper::new(execute, instantiate, query).with_migrate(migrate))
 }
 
 struct Suite {
@@ -935,4 +936,396 @@ fn migrate_sets_contract_version() {
     let stored = cw2::get_contract_version(deps.as_ref().storage).unwrap();
     assert_eq!(stored.contract, "gateway-registry");
     assert_eq!(stored.version, env!("CARGO_PKG_VERSION"));
+}
+
+fn short_register(topics: Vec<String>) -> ExecuteMsg {
+    register_with("https://a.b:8443", HexBinary::from([7u8; 32]), topics)
+}
+
+fn update_config_msg(
+    max_instances_per_address: u32,
+    min_update_interval_blocks: u64,
+) -> ExecuteMsg {
+    ExecuteMsg::UpdateConfig {
+        max_endpoint_len: 256,
+        max_topics: 16,
+        max_instances_per_address,
+        min_update_interval_blocks,
+        instance_ttl_blocks: TTL,
+        prune_per_write: 10,
+    }
+}
+
+fn stored_config(suite: &Suite) -> Config {
+    suite
+        .app
+        .wrap()
+        .query_wasm_smart(&suite.contract, &QueryMsg::Config {})
+        .unwrap()
+}
+
+// Test flow:
+// 1. Update every tunable as the owner.
+// 2. Check the stored config carries them and keeps the owner and the pause state.
+#[test]
+fn update_config_by_owner_replaces_the_tunables() {
+    let mut suite = Suite::new(&[]);
+    let owner = suite.owner.clone();
+
+    suite
+        .exec(
+            &owner,
+            &ExecuteMsg::UpdateConfig {
+                max_endpoint_len: 128,
+                max_topics: 8,
+                max_instances_per_address: 4,
+                min_update_interval_blocks: 50,
+                instance_ttl_blocks: 8000,
+                prune_per_write: 5,
+            },
+        )
+        .unwrap();
+
+    assert_eq!(
+        stored_config(&suite),
+        Config {
+            owner,
+            paused: false,
+            max_endpoint_len: 128,
+            max_topics: 8,
+            max_instances_per_address: 4,
+            min_update_interval_blocks: 50,
+            instance_ttl_blocks: 8000,
+            prune_per_write: 5,
+            writers_source: WritersSource::ContractCopy,
+        }
+    );
+}
+
+// Test flow:
+// 1. Send UpdateConfig from a writer who is not the owner.
+// 2. Check the Unauthorized rejection and that the config did not move.
+#[test]
+fn update_config_rejects_a_non_owner() {
+    let writer = addr("writer");
+    let mut suite = Suite::new(&[&writer]);
+    let before = stored_config(&suite);
+
+    assert_err(
+        suite.exec(&writer, &update_config_msg(1, MIN_INTERVAL)),
+        ContractError::Unauthorized {},
+    );
+
+    assert_eq!(stored_config(&suite), before);
+}
+
+// Test flow:
+// 1. Send each config instantiate refuses as an UpdateConfig from the owner.
+// 2. Check the same InvalidConfig rejection and that the config did not move.
+#[test]
+fn update_config_rejects_what_instantiate_rejects() {
+    let mut suite = Suite::new(&[]);
+    let owner = suite.owner.clone();
+    let before = stored_config(&suite);
+
+    assert_err(
+        suite.exec(&owner, &update_config_msg(0, MIN_INTERVAL)),
+        ContractError::InvalidConfig {
+            reason: "max_instances_per_address must be positive".to_string(),
+        },
+    );
+    assert_err(
+        suite.exec(&owner, &update_config_msg(16, TTL)),
+        ContractError::InvalidConfig {
+            reason: "min_update_interval_blocks must be below instance_ttl_blocks".to_string(),
+        },
+    );
+
+    assert_eq!(stored_config(&suite), before);
+}
+
+// Test flow:
+// 1. Shrink max_topics and the endpoint limit, and raise the update interval.
+// 2. Check the next RegisterInstance is held to each new limit, and passes once it fits.
+#[test]
+fn update_config_applies_on_the_next_register() {
+    let writer = addr("writer");
+    let mut suite = Suite::new(&[&writer]);
+    let owner = suite.owner.clone();
+    suite.register(&writer, "a").unwrap();
+    let registered_at = suite.height();
+    suite
+        .exec(
+            &owner,
+            &ExecuteMsg::UpdateConfig {
+                max_endpoint_len: 16,
+                max_topics: 0,
+                max_instances_per_address: 16,
+                min_update_interval_blocks: MIN_INTERVAL * 2,
+                instance_ttl_blocks: TTL,
+                prune_per_write: 10,
+            },
+        )
+        .unwrap();
+
+    suite.advance(MIN_INTERVAL);
+    assert_err(suite.register(&writer, "a"), ContractError::BadEndpoint {});
+    assert_err(
+        suite.exec(&writer, &short_register(vec!["load@1".to_string()])),
+        ContractError::TooManyTopics {},
+    );
+    assert_err(
+        suite.exec(&writer, &short_register(vec![])),
+        ContractError::TooSoon {
+            next_height: registered_at + MIN_INTERVAL * 2,
+        },
+    );
+    suite.advance(MIN_INTERVAL);
+    suite.exec(&writer, &short_register(vec![])).unwrap();
+}
+
+// Test flow:
+// 1. Store three instances, then shrink max_instances_per_address to one.
+// 2. Check all three stay readable and each can still refresh.
+// 3. Check a new id is refused, and is still refused with two deregistered and one left at the limit.
+// 4. Deregister the last one and check the new id then fits.
+#[test]
+fn shrinking_max_instances_keeps_stored_instances_and_refuses_new_ids() {
+    let writer = addr("writer");
+    let mut suite = Suite::new(&[&writer]);
+    let owner = suite.owner.clone();
+    for id in ["a", "b", "c"] {
+        suite.register(&writer, id).unwrap();
+    }
+
+    suite
+        .exec(&owner, &update_config_msg(1, MIN_INTERVAL))
+        .unwrap();
+
+    assert_eq!(suite.member_ids(&writer), ["a", "b", "c"]);
+    suite.advance(MIN_INTERVAL);
+    for id in ["a", "b", "c"] {
+        suite.register(&writer, id).unwrap();
+    }
+    let too_many = || ContractError::TooManyInstances { max: 1 };
+    assert_err(suite.register(&writer, "d"), too_many());
+    for id in ["a", "b"] {
+        suite
+            .exec(
+                &writer,
+                &ExecuteMsg::DeregisterInstance {
+                    instance_id: id.to_string(),
+                },
+            )
+            .unwrap();
+    }
+    assert_err(suite.register(&writer, "d"), too_many());
+    suite
+        .exec(
+            &writer,
+            &ExecuteMsg::DeregisterInstance {
+                instance_id: "c".to_string(),
+            },
+        )
+        .unwrap();
+    suite.register(&writer, "d").unwrap();
+    assert_eq!(suite.member_ids(&writer), ["d"]);
+    suite.assert_index_consistent();
+}
+
+// Test flow:
+// 1. Store three instances, shrink the limit to two with prune_per_write one, then let two of them expire while the third stays fresh.
+// 2. Register a new id and check it replaces both expired ones, landing exactly on the limit even though the prune budget alone could not delete the second.
+// 3. Register another new id and check it is refused, because both stored instances are live.
+#[test]
+fn shrunken_limit_counts_after_every_expired_instance_is_replaced() {
+    let writer = addr("writer");
+    let mut suite = Suite::new(&[&writer]);
+    let owner = suite.owner.clone();
+    for id in ["a", "b", "c"] {
+        suite.register(&writer, id).unwrap();
+    }
+    suite
+        .exec(
+            &owner,
+            &ExecuteMsg::UpdateConfig {
+                max_endpoint_len: 256,
+                max_topics: 16,
+                max_instances_per_address: 2,
+                min_update_interval_blocks: MIN_INTERVAL,
+                instance_ttl_blocks: TTL,
+                prune_per_write: 1,
+            },
+        )
+        .unwrap();
+    suite.advance(TTL - 1);
+    suite.register(&writer, "c").unwrap();
+    suite.advance(1);
+
+    suite.register(&writer, "d").unwrap();
+
+    assert_eq!(suite.member_ids(&writer), ["c", "d"]);
+    assert_eq!(suite.stored_instances().len(), 2);
+    suite.assert_index_consistent();
+    assert_err(
+        suite.register(&writer, "e"),
+        ContractError::TooManyInstances { max: 2 },
+    );
+}
+
+// Test flow:
+// 1. Store three instances, shrink the limit to one, then let one of them expire while two stay fresh.
+// 2. Register a new id and check it is refused, because replacing the expired one still leaves it over the limit.
+// 3. Check the refused write deleted nothing.
+#[test]
+fn shrunken_limit_refuses_a_new_id_that_replacing_expired_does_not_fit() {
+    let writer = addr("writer");
+    let mut suite = Suite::new(&[&writer]);
+    let owner = suite.owner.clone();
+    for id in ["a", "b", "c"] {
+        suite.register(&writer, id).unwrap();
+    }
+    suite
+        .exec(&owner, &update_config_msg(1, MIN_INTERVAL))
+        .unwrap();
+    suite.advance(TTL - 1);
+    for id in ["b", "c"] {
+        suite.register(&writer, id).unwrap();
+    }
+    suite.advance(1);
+
+    assert_err(
+        suite.register(&writer, "d"),
+        ContractError::TooManyInstances { max: 1 },
+    );
+
+    assert_eq!(suite.member_ids(&writer), ["b", "c"]);
+    assert_eq!(suite.stored_instances().len(), 3);
+    suite.assert_index_consistent();
+}
+
+// Test flow:
+// 1. Store an instance one block before it expires, then shrink instance_ttl_blocks below its age.
+// 2. Check queries hide it at once and PruneExpired deletes it, index row included.
+#[test]
+fn shrinking_ttl_expires_at_once_by_the_new_value() {
+    let writer = addr("writer");
+    let mut suite = Suite::new(&[&writer]);
+    let owner = suite.owner.clone();
+    suite.register(&writer, "a").unwrap();
+    suite.advance(TTL - 1);
+    suite
+        .exec(
+            &owner,
+            &ExecuteMsg::UpdateConfig {
+                max_endpoint_len: 256,
+                max_topics: 16,
+                max_instances_per_address: 16,
+                min_update_interval_blocks: MIN_INTERVAL,
+                instance_ttl_blocks: TTL - 1,
+                prune_per_write: 10,
+            },
+        )
+        .unwrap();
+
+    assert!(suite.member_ids(&writer).is_empty());
+    suite
+        .exec(&writer, &ExecuteMsg::PruneExpired { limit: 10 })
+        .unwrap();
+    assert!(suite.stored_instances().is_empty());
+    suite.assert_index_consistent();
+}
+
+// Test flow:
+// 1. Store writers, a changed config and instances.
+// 2. Migrate to newly stored code as the wasm admin the suite instantiated with.
+// 3. Check the code id moved and writers, config, instances and the index are unchanged, and a refresh still works.
+#[test]
+fn migrate_keeps_writers_config_and_instances() {
+    let writer = addr("writer");
+    let mut suite = Suite::new(&[&writer]);
+    let owner = suite.owner.clone();
+    suite.register(&writer, "a").unwrap();
+    suite.register(&writer, "b").unwrap();
+    suite
+        .exec(&owner, &update_config_msg(8, MIN_INTERVAL))
+        .unwrap();
+    let config = stored_config(&suite);
+    let instances = suite.member(&writer);
+    let new_code_id = suite.app.store_code(contract());
+
+    suite
+        .app
+        .migrate_contract(
+            owner.clone(),
+            suite.contract.clone(),
+            &MigrateMsg {},
+            new_code_id,
+        )
+        .unwrap();
+
+    let info = suite.app.contract_data(&suite.contract).unwrap();
+    assert_eq!(info.code_id, new_code_id);
+    assert_eq!(stored_config(&suite), config);
+    assert_eq!(suite.member(&writer), instances);
+    let writers: Vec<String> = suite
+        .app
+        .wrap()
+        .query_wasm_smart(
+            &suite.contract,
+            &QueryMsg::Writers {
+                start_after: None,
+                limit: None,
+            },
+        )
+        .unwrap();
+    assert_eq!(writers, [writer.to_string()]);
+    suite.assert_index_consistent();
+    suite.advance(MIN_INTERVAL);
+    suite.register(&writer, "a").unwrap();
+}
+
+// Test flow:
+// 1. Send UpdateConfig with the ttl and the interval near u64::MAX and check the rejection.
+// 2. Send it with the ttl one block over its limit and check the rejection.
+// 3. Send it with the ttl at its limit and the interval one below and check it succeeds.
+#[test]
+fn update_config_rejects_a_ttl_past_its_limit() {
+    let mut suite = Suite::new(&[]);
+    let owner = suite.owner.clone();
+    let update = |instance_ttl_blocks, min_update_interval_blocks| ExecuteMsg::UpdateConfig {
+        max_endpoint_len: 256,
+        max_topics: 16,
+        max_instances_per_address: 16,
+        min_update_interval_blocks,
+        instance_ttl_blocks,
+        prune_per_write: 10,
+    };
+    let expected = || ContractError::InvalidConfig {
+        reason: "instance_ttl_blocks is over its limit".to_string(),
+    };
+
+    assert_err(
+        suite.exec(&owner, &update(u64::MAX, u64::MAX - 1)),
+        expected(),
+    );
+    assert_err(
+        suite.exec(&owner, &update(MAX_TTL + 1, MAX_TTL)),
+        expected(),
+    );
+    suite.exec(&owner, &update(MAX_TTL, MAX_TTL - 1)).unwrap();
+    assert_eq!(stored_config(&suite).instance_ttl_blocks, MAX_TTL);
+}
+
+// Test flow:
+// 1. Instantiate with min_update_interval_blocks of u64::MAX.
+// 2. Check the InvalidConfig rejection.
+#[test]
+fn instantiate_rejects_an_absurd_interval() {
+    assert_err(
+        instantiate_with(16, u64::MAX).map(|_| AppResponse::default()),
+        ContractError::InvalidConfig {
+            reason: "min_update_interval_blocks must be below instance_ttl_blocks".to_string(),
+        },
+    );
 }
