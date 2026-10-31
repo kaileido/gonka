@@ -173,7 +173,7 @@ Signing keys are addressed **by the name of the variable that holds them**, neve
 | Variable | Default | What it decides |
 | --- | --- | --- |
 | `DEVSHARD_PEER_ENABLED` | off | switches on the channel between gateways, with the contract below; off, nothing listens or dials ([`peerload.md`](peerload.md)) |
-| `DEVSHARD_PEER_REGISTRY_CONTRACT` | empty, channel off | the bech32 address of the gateway-registry contract; [its README](../../../../inference-chain/contracts/gateway-registry/README.md) covers deploying it with an admin and upgrading it |
+| `DEVSHARD_PEER_REGISTRY_CONTRACT` | empty, channel off | the bech32 address of the gateway-registry contract; [its README](https://github.com/qdanik/gateway-registry) covers deploying it with an admin and upgrading it |
 | `DEVSHARD_PEER_INSTANCE_ID` | empty, required when on | this instance's name under its address, `[a-z0-9-]+`, at most 32 bytes, unique per address |
 | `DEVSHARD_PEER_LISTEN` | `:8443` | the mTLS listener's bind address, separate from the client API |
 | `DEVSHARD_PEER_ADVERTISE_URL` | empty, required when on | the `https://host:port` other instances dial, written to the registry; at most 256 bytes, no path, no userinfo, and a host of letters, digits, `.` and `-` or a bracketed IPv6, else the boot is refused |
