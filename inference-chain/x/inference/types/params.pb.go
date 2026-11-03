@@ -2298,7 +2298,7 @@ type ConfirmationPoCParams struct {
 	ExpectedConfirmationsPerEpoch uint64 `protobuf:"varint,1,opt,name=expected_confirmations_per_epoch,json=expectedConfirmationsPerEpoch,proto3" json:"expected_confirmations_per_epoch,omitempty"`
 	// alpha_threshold is the minimum confirmed weight ratio (e.g., "0.70")
 	AlphaThreshold *Decimal `protobuf:"bytes,2,opt,name=alpha_threshold,json=alphaThreshold,proto3" json:"alpha_threshold,omitempty"`
-	// slash_fraction is the collateral slashed for failure (e.g., "0.10")
+	// slash_fraction is not used; confirmation PoC failure is slashed through collateral_params.slash_fraction_downtime.
 	SlashFraction *Decimal `protobuf:"bytes,3,opt,name=slash_fraction,json=slashFraction,proto3" json:"slash_fraction,omitempty"`
 	// upgrade_protection_window is blocks before/after upgrade to skip confirmation PoC (default: 500)
 	UpgradeProtectionWindow int64 `protobuf:"varint,4,opt,name=upgrade_protection_window,json=upgradeProtectionWindow,proto3" json:"upgrade_protection_window,omitempty"`

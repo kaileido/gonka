@@ -399,7 +399,7 @@ message ConfirmationPoCParams {
   // alpha_threshold is the minimum confirmed weight ratio (e.g., "0.70")
   Decimal alpha_threshold = 2;
 
-  // slash_fraction is the collateral slashed for failure (e.g., "0.10")
+  // slash_fraction is not used; confirmation PoC failure is slashed through collateral_params.slash_fraction_downtime.
   Decimal slash_fraction = 3;
 
   // upgrade_protection_window is blocks before/after upgrade to skip confirmation PoC (default: 500)
