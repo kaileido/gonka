@@ -160,7 +160,7 @@ func (am AppModule) checkConfirmationPoCTrigger(
 	windowBlocks := decimal.NewFromInt(triggerWindowLength)
 	triggerProbability := expectedConfirmations.Div(windowBlocks)
 
-	// Use block hash at H-1 as randomness source
+	// Use the current block hash (HeaderInfo().Hash) as randomness source
 	prevBlockHash := sdkCtx.HeaderInfo().Hash
 	if len(prevBlockHash) < 8 {
 		return fmt.Errorf("block hash too short: %d bytes", len(prevBlockHash))

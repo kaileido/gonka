@@ -1889,7 +1889,7 @@ type CollateralParams struct {
 	SlashFractionInvalid *Decimal `protobuf:"bytes,1,opt,name=slash_fraction_invalid,json=slashFractionInvalid,proto3" json:"slash_fraction_invalid,omitempty"`
 	// slash_fraction_downtime is the percentage of collateral to slash for downtime.
 	SlashFractionDowntime *Decimal `protobuf:"bytes,2,opt,name=slash_fraction_downtime,json=slashFractionDowntime,proto3" json:"slash_fraction_downtime,omitempty"`
-	// downtime_missed_percentage_threshold is the missed request percentage that triggers a downtime slash.
+	// downtime_missed_percentage_threshold is not read; the downtime slash follows a transition to INACTIVE.
 	DowntimeMissedPercentageThreshold *Decimal `protobuf:"bytes,3,opt,name=downtime_missed_percentage_threshold,json=downtimeMissedPercentageThreshold,proto3" json:"downtime_missed_percentage_threshold,omitempty"`
 	GracePeriodEndEpoch               uint64   `protobuf:"varint,4,opt,name=grace_period_end_epoch,json=gracePeriodEndEpoch,proto3" json:"grace_period_end_epoch,omitempty"`
 	// BaseWeightRatio is the portion of potential weight granted unconditionally (0-1)
@@ -2190,14 +2190,13 @@ type BandwidthLimitsParams struct {
 	KbPerInputToken *Decimal `protobuf:"bytes,2,opt,name=kb_per_input_token,json=kbPerInputToken,proto3" json:"kb_per_input_token,omitempty"`
 	// kb_per_output_token is the estimated KB per output token
 	KbPerOutputToken *Decimal `protobuf:"bytes,3,opt,name=kb_per_output_token,json=kbPerOutputToken,proto3" json:"kb_per_output_token,omitempty"`
-	// The total max simultaneous invalidations across the chain
+	// Not read; the invalidation cap it configured was removed in v0.2.14
 	InvalidationsLimit uint64 `protobuf:"varint,4,opt,name=invalidations_limit,json=invalidationsLimit,proto3" json:"invalidations_limit,omitempty"`
 	// The seconds to look back to determine inference rate for invalidations
 	InvalidationsSamplePeriod uint64 `protobuf:"varint,5,opt,name=invalidations_sample_period,json=invalidationsSamplePeriod,proto3" json:"invalidations_sample_period,omitempty"`
-	// The curve for the tanh function for determining how quickly traffic expands the
-	// max invalidations allowed
+	// Not read; was the tanh curve factor of the invalidation cap removed in v0.2.14
 	InvalidationsLimitCurve uint64 `protobuf:"varint,6,opt,name=invalidations_limit_curve,json=invalidationsLimitCurve,proto3" json:"invalidations_limit_curve,omitempty"`
-	// The least amount of concurrent invalidations
+	// Not read; was the floor of the invalidation cap removed in v0.2.14
 	MinimumConcurrentInvalidations uint32 `protobuf:"varint,7,opt,name=minimum_concurrent_invalidations,json=minimumConcurrentInvalidations,proto3" json:"minimum_concurrent_invalidations,omitempty"`
 	// max_inferences_per_block is the chain-wide limit on inference requests per block
 	MaxInferencesPerBlock uint64 `protobuf:"varint,8,opt,name=max_inferences_per_block,json=maxInferencesPerBlock,proto3" json:"max_inferences_per_block,omitempty"`
